@@ -263,6 +263,20 @@ class ApolloSimulator:
                     states[short_name] = float(self.data.ctrl[actuator_id])
         return states
 
+    def get_joint_limits(self) -> dict[str, tuple[float, float]]:
+        """Get joint limits from the MuJoCo model.
+
+        Returns:
+            Dictionary mapping joint names to (min, max) tuples
+        """
+        limits = {}
+        for short_name, full_name in self.JOINT_NAMES.items():
+            actuator_id = self._actuator_ids.get(full_name)
+            if actuator_id is not None:
+                ctrlrange = self.model.actuator_ctrlrange[actuator_id]
+                limits[short_name] = (float(ctrlrange[0]), float(ctrlrange[1]))
+        return limits
+
     def start_viewer(self, on_close: Callable[[], None] | None = None) -> None:
         """Start the MuJoCo viewer in a separate thread."""
         if self._running:
