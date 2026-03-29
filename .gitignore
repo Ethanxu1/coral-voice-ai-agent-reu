@@ -205,3 +205,23 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ===================
+# Project-specific
+# ===================
+
+# Robot model assets (cloned from mujoco_menagerie)
+# See README.md for setup instructions
+assets/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Nix
+result
+result-*
+
+# Claude Code
+.claude/
