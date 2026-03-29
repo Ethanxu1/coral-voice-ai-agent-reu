@@ -1,9 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 
+interface WaypointInfo {
+  waypoint_index: number
+  joints: { [key: string]: number }
+  speed: number
+}
+
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  commands?: string[]
+  waypoints?: WaypointInfo[]
 }
 
 interface ChatSidebarProps {
@@ -34,22 +40,31 @@ function ChatSidebar({
     }
   }
 
-  const highlightCommands = (content: string) => {
-    // Highlight [COMMAND:xxx] patterns
-    const pattern = /\[COMMAND:(\w+)\]/g
+  const highlightWaypoints = (content: string) => {
+    // Highlight [WAYPOINT: {...}, speed] patterns
+    const pattern = /(\[WAYPOINT:\s*\{[^}]+\}(?:\s*,\s*\d+(?:\.\d+)?)?\s*\])/gi
     const parts = content.split(pattern)
 
     return parts.map((part, index) => {
-      // Every odd index is a captured command
-      if (index % 2 === 1) {
+      if (pattern.test(part)) {
+        // Reset lastIndex since we're reusing the regex
+        pattern.lastIndex = 0
         return (
-          <span key={index} className="command-tag">
+          <span key={index} className="waypoint-tag">
             {part}
           </span>
         )
       }
+      // Reset lastIndex for next iteration
+      pattern.lastIndex = 0
       return part
     })
+  }
+
+  const formatWaypointSummary = (waypoint: WaypointInfo) => {
+    const jointCount = Object.keys(waypoint.joints).length
+    const speedLabel = waypoint.speed < 0.7 ? 'slow' : waypoint.speed > 1.5 ? 'fast' : 'normal'
+    return `${jointCount} joint${jointCount > 1 ? 's' : ''} (${speedLabel})`
   }
 
   return (
@@ -68,12 +83,13 @@ function ChatSidebar({
 
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
-            <div className="message-content">{highlightCommands(msg.content)}</div>
-            {msg.commands && msg.commands.length > 0 && (
-              <div className="message-commands">
-                {msg.commands.map((cmd, cmdIndex) => (
-                  <span key={cmdIndex} className="command-tag">
-                    {cmd}
+            <div className="message-content">{highlightWaypoints(msg.content)}</div>
+            {msg.waypoints && msg.waypoints.length > 0 && (
+              <div className="message-waypoints">
+                <span className="waypoints-label">Executed:</span>
+                {msg.waypoints.map((wp, wpIndex) => (
+                  <span key={wpIndex} className="waypoint-tag executed">
+                    WP{wp.waypoint_index + 1}: {formatWaypointSummary(wp)}
                   </span>
                 ))}
               </div>

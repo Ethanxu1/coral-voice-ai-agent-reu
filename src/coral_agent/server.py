@@ -4,6 +4,8 @@ import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import ollama
@@ -15,6 +17,10 @@ from pydantic import BaseModel
 
 from coral_agent.simulator import ApolloSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
+
+# Setup recordings directory
+RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
+RECORDINGS_DIR.mkdir(exist_ok=True)
 
 # Global simulator instance
 simulator: ApolloSimulator | None = None
@@ -74,117 +80,234 @@ class ChatMessage(BaseModel):
 connected_clients: set[WebSocket] = set()
 
 
-def extract_commands(text: str) -> list[str]:
-    """Extract robot commands from LLM response text.
+class ConversationRecorder:
+    """Records conversation interactions to a JSON file for debugging."""
 
-    Looks for commands in format [COMMAND:action] or common phrases.
+    def __init__(self):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.filepath = RECORDINGS_DIR / f"conversation_{timestamp}.json"
+        self.interactions: list[dict] = []
+        self.start_time = datetime.now().isoformat()
+        logger.info(f"Recording conversation to: {self.filepath}")
+
+    def log_interaction(
+        self,
+        user_message: str,
+        assistant_response: str,
+        waypoints_extracted: list[dict],
+        waypoints_executed: list[dict],
+    ) -> None:
+        """Log a single interaction (user message + assistant response)."""
+        interaction = {
+            "timestamp": datetime.now().isoformat(),
+            "user": user_message,
+            "assistant": assistant_response,
+            "waypoints_extracted": waypoints_extracted,
+            "waypoints_executed": waypoints_executed,
+        }
+        self.interactions.append(interaction)
+        self._save()
+
+    def _save(self) -> None:
+        """Save the recording to disk."""
+        data = {
+            "session_start": self.start_time,
+            "session_end": datetime.now().isoformat(),
+            "interaction_count": len(self.interactions),
+            "interactions": self.interactions,
+        }
+        with open(self.filepath, "w") as f:
+            json.dump(data, f, indent=2)
+        logger.debug(f"Saved {len(self.interactions)} interactions to {self.filepath}")
+
+
+class Waypoint:
+    """A single waypoint with target joint positions and speed."""
+
+    def __init__(self, joints: dict[str, float], speed: float = 1.0):
+        self.joints = joints  # {"joint_name": target_position}
+        self.speed = max(0.1, min(speed, 5.0))  # Clamp speed between 0.1 and 5.0
+
+
+def normalize_waypoint_joints(raw_joints: dict) -> dict[str, float]:
+    """Normalize waypoint joints to {joint_name: value} format.
+
+    Handles two formats:
+    1. Correct: {"neck_yaw": 0.7, "neck_pitch": 0.3}
+    2. LLM mistake: {"joint_name": "neck_yaw", "value": 0.7}
     """
-    commands = []
+    # Check if this is the incorrect format with "joint_name" and "value" keys
+    if "joint_name" in raw_joints and "value" in raw_joints:
+        joint_name = raw_joints["joint_name"]
+        value = raw_joints["value"]
+        if isinstance(joint_name, str) and isinstance(value, (int, float)):
+            return {joint_name: float(value)}
+        else:
+            logger.warning(f"Invalid joint_name/value types: {raw_joints}")
+            return {}
 
-    # Pattern 1: Explicit command tags [COMMAND:action]
-    pattern = r"\[COMMAND:(\w+)\]"
+    # Otherwise assume correct format - filter to only numeric values
+    normalized = {}
+    for key, val in raw_joints.items():
+        if key == "speed":
+            continue  # Skip speed if it was included in the joints object
+        if isinstance(val, (int, float)):
+            normalized[key] = float(val)
+        else:
+            logger.warning(f"Skipping non-numeric joint value: {key}={val}")
+
+    return normalized
+
+
+def extract_waypoints(text: str) -> list[Waypoint]:
+    """Extract waypoints from LLM response text.
+
+    Looks for waypoints in format [WAYPOINT: {"joint": value, ...}, speed]
+    or [WAYPOINT: {"joint": value, ...}] (speed defaults to 1.0)
+    """
+    waypoints = []
+
+    # Pattern to match [WAYPOINT: {json}, optional_speed]
+    # Handles both with and without speed parameter
+    pattern = r"\[WAYPOINT:\s*(\{[^}]+\})(?:\s*,\s*(\d+(?:\.\d+)?))?\s*\]"
     matches = re.findall(pattern, text, re.IGNORECASE)
-    commands.extend(matches)
 
-    # Pattern 2: Natural language command extraction
-    text_lower = text.lower()
+    for joints_str, speed_str in matches:
+        try:
+            raw_joints = json.loads(joints_str)
+            joints = normalize_waypoint_joints(raw_joints)
 
-    # Map natural language to commands
-    nl_mappings = [
-        # Head movements (independent!)
-        (r"turn.*head.*left|head.*left", "head_left"),
-        (r"turn.*head.*right|head.*right", "head_right"),
-        (r"look.*up|head.*up|tilt.*head.*up", "head_up"),
-        (r"look.*down|head.*down|tilt.*head.*down", "head_down"),
-        # Torso movements (separate from head)
-        (r"rotate.*torso.*left|turn.*body.*left|torso.*left", "torso_left"),
-        (r"rotate.*torso.*right|turn.*body.*right|torso.*right", "torso_right"),
-        (r"lean.*forward|bow", "lean_forward"),
-        (r"lean.*back", "lean_backward"),
-        (r"lean.*left", "lean_left"),
-        (r"lean.*right", "lean_right"),
-        # Arm movements
-        (r"raise.*left.*arm|left.*arm.*up|lift.*left.*arm", "left_arm_up"),
-        (r"lower.*left.*arm|left.*arm.*down", "left_arm_down"),
-        (r"raise.*right.*arm|right.*arm.*up|lift.*right.*arm", "right_arm_up"),
-        (r"lower.*right.*arm|right.*arm.*down", "right_arm_down"),
-        (r"move.*left.*arm.*out|left.*arm.*outward", "left_arm_out"),
-        (r"move.*left.*arm.*in|left.*arm.*inward", "left_arm_in"),
-        (r"move.*right.*arm.*out|right.*arm.*outward", "right_arm_out"),
-        (r"move.*right.*arm.*in|right.*arm.*inward", "right_arm_in"),
-        (r"bend.*left.*elbow", "left_elbow_bend"),
-        (r"extend.*left.*elbow|straighten.*left.*elbow", "left_elbow_extend"),
-        (r"bend.*right.*elbow", "right_elbow_bend"),
-        (r"extend.*right.*elbow|straighten.*right.*elbow", "right_elbow_extend"),
-        # Gestures
-        (r"\bwave\b|waving", "wave"),
-        (r"\bpoint\b|pointing", "point"),
-        (r"look.*around", "look_around"),
-        (r"\bnod\b|nodding|yes", "nod"),
-        (r"\bshake\b.*head|shaking.*head|say.*no", "shake"),
-        (r"\breset\b|default.*pose|standing.*pose", "reset"),
-    ]
+            if not joints:
+                logger.warning(f"No valid joints extracted from: {joints_str}")
+                continue
 
-    for pattern, cmd in nl_mappings:
-        if re.search(pattern, text_lower):
-            if cmd not in commands:
-                commands.append(cmd)
+            speed = float(speed_str) if speed_str else 1.0
+            waypoints.append(Waypoint(joints=joints, speed=speed))
+            logger.info(f"Extracted waypoint: joints={joints}, speed={speed}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse waypoint JSON: {joints_str}, error: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to process waypoint: {e}")
 
-    return commands
+    return waypoints
+
+
+async def execute_waypoints(
+    simulator: ApolloSimulator, waypoints: list[Waypoint]
+) -> list[dict]:
+    """Execute a sequence of waypoints with interpolation.
+
+    Each waypoint is reached by interpolating from current position to target.
+    Speed determines how fast the interpolation happens (higher = faster).
+
+    Returns a list of executed waypoint info.
+    """
+    executed = []
+    base_steps = 20  # Base number of interpolation steps at speed=1.0
+    step_delay = 0.02  # Delay between interpolation steps (seconds)
+
+    for i, waypoint in enumerate(waypoints):
+        # Calculate number of steps based on speed (faster = fewer steps)
+        num_steps = max(5, int(base_steps / waypoint.speed))
+
+        # Get current positions for joints we're going to move
+        current_positions = {}
+        for joint_name in waypoint.joints:
+            try:
+                current_positions[joint_name] = simulator.get_joint_position(joint_name)
+            except ValueError:
+                logger.warning(f"Unknown joint in waypoint: {joint_name}")
+                continue
+
+        # Interpolate from current to target
+        for step in range(1, num_steps + 1):
+            t = step / num_steps  # Progress from 0 to 1
+
+            for joint_name, target_pos in waypoint.joints.items():
+                if joint_name not in current_positions:
+                    continue
+
+                current = current_positions[joint_name]
+                # Linear interpolation
+                interpolated = current + (target_pos - current) * t
+                simulator.set_joint_position(joint_name, interpolated)
+
+            # Small delay for smooth animation
+            await asyncio.sleep(step_delay)
+
+        executed.append({
+            "waypoint_index": i,
+            "joints": waypoint.joints,
+            "speed": waypoint.speed,
+        })
+        logger.info(f"Executed waypoint {i}: {waypoint.joints} at speed {waypoint.speed}")
+
+    return executed
 
 
 def get_llm_response(user_message: str, history: list[dict]) -> str:
     """Get response from Ollama LLM (synchronous - run in thread)."""
-    system_prompt = """You are a helpful robot assistant controlling an Apptronik Apollo humanoid robot.
-When the user asks you to perform physical actions, include the command in your response using [COMMAND:action] format.
+    system_prompt = """You control an Apptronik Apollo humanoid robot by outputting WAYPOINTS.
 
-Available commands:
+### WAYPOINT FORMAT:
+[WAYPOINT: {"joint": value, "joint2": value2}, speed]
+- Combine related joints in ONE waypoint for coordinated movement
+- Speed: 0.5=slow, 1.0=normal, 2.0+=fast
+- NEVER exceed joint limits!
 
-HEAD (independent):
-- [COMMAND:head_left] - Turn head left
-- [COMMAND:head_right] - Turn head right
-- [COMMAND:head_up] - Tilt head up
-- [COMMAND:head_down] - Tilt head down
+### JOINT REFERENCE (values in radians):
 
-TORSO (separate from head):
-- [COMMAND:torso_left] - Rotate torso left
-- [COMMAND:torso_right] - Rotate torso right
-- [COMMAND:lean_forward] - Lean torso forward
-- [COMMAND:lean_backward] - Lean torso backward
-- [COMMAND:lean_left] - Lean torso left
-- [COMMAND:lean_right] - Lean torso right
+HEAD:
+- neck_yaw: [-0.7, 0.7] → positive=look LEFT, negative=look RIGHT
+- neck_pitch: [-0.5, 0.5] → positive=look DOWN, negative=look UP
 
-ARMS:
-- [COMMAND:left_arm_up] - Raise left arm
-- [COMMAND:left_arm_down] - Lower left arm
-- [COMMAND:left_arm_out] - Move left arm outward
-- [COMMAND:left_arm_in] - Move left arm inward
-- [COMMAND:left_elbow_bend] - Bend left elbow
-- [COMMAND:left_elbow_extend] - Extend left elbow
-- [COMMAND:right_arm_up] - Raise right arm
-- [COMMAND:right_arm_down] - Lower right arm
-- [COMMAND:right_arm_out] - Move right arm outward
-- [COMMAND:right_arm_in] - Move right arm inward
-- [COMMAND:right_elbow_bend] - Bend right elbow
-- [COMMAND:right_elbow_extend] - Extend right elbow
+TORSO:
+- torso_yaw: [-0.6, 0.6] → positive=rotate RIGHT, negative=rotate LEFT
+- torso_pitch: [-0.3, 0.5] → positive=lean FORWARD, negative=lean BACK
+- torso_roll: [-0.3, 0.3] → positive=lean RIGHT, negative=lean LEFT
 
-GESTURES:
-- [COMMAND:wave] - Wave gesture
-- [COMMAND:point] - Point forward
-- [COMMAND:look_around] - Look around
-- [COMMAND:nod] - Nod head (yes)
-- [COMMAND:shake] - Shake head (no)
-- [COMMAND:reset] - Reset to standing pose
+LEFT ARM:
+- l_shoulder_fe: [-1.5, 1.5] → negative=arm FORWARD/UP, positive=arm BACK
+- l_shoulder_aa: [-0.3, 2.0] → positive=arm OUT (away from body), negative=arm IN
+- l_elbow: [-2.0, 0.0] → negative=BEND elbow, 0=straight
 
-Example:
-User: "Can you wave at me?"
-Assistant: "Of course! I'll wave at you. [COMMAND:wave]"
+RIGHT ARM:
+- r_shoulder_fe: [-1.5, 1.5] → negative=arm FORWARD/UP, positive=arm BACK
+- r_shoulder_aa: [-2.0, 0.3] → negative=arm OUT (away from body), positive=arm IN
+- r_elbow: [-2.0, 0.0] → negative=BEND elbow, 0=straight
 
-User: "Look at me and nod"
-Assistant: "I'm looking at you now. [COMMAND:head_up] Yes, I understand! [COMMAND:nod]"
+NOTE: Left and right shoulder_aa have OPPOSITE signs for outward movement!
+- Left arm outward: l_shoulder_aa = POSITIVE (e.g., 1.5)
+- Right arm outward: r_shoulder_aa = NEGATIVE (e.g., -1.5)
 
-Be friendly and conversational while helping with robot control tasks."""
+### CRITICAL RULES:
+1. ALWAYS check CURRENT_STATE before moving - use it to return to previous positions
+2. NEVER output values outside joint limits
+3. Combine related joints (e.g., shoulder + elbow) in ONE waypoint
+4. Keep responses SHORT - just describe the action briefly
+5. For "raise arm outward/sideways": use shoulder_aa (NOT shoulder_fe)
+6. For "raise arm forward/up": use shoulder_fe with negative values
 
+### EXAMPLES:
+
+Right arm out to side (T-pose style):
+"Raising right arm out. [WAYPOINT: {"r_shoulder_fe": -1.5, "r_shoulder_aa": -1.5, "r_elbow": 0.0}, 1.0]"
+
+Left arm out to side:
+"Raising left arm out. [WAYPOINT: {"l_shoulder_fe": -1.5, "l_shoulder_aa": 1.5, "l_elbow": 0.0}, 1.0]"
+
+Both arms T-pose:
+"T-pose! [WAYPOINT: {"l_shoulder_fe": -1.5, "l_shoulder_aa": 1.5, "r_shoulder_fe": -1.5, "r_shoulder_aa": -1.5, "l_elbow": 0.0, "r_elbow": 0.0}, 1.0]"
+
+Return to neutral (check CURRENT_STATE for original values, typically near 0):
+"Returning to neutral. [WAYPOINT: {"l_shoulder_fe": 0.0, "l_shoulder_aa": 0.0, "r_shoulder_fe": 0.0, "r_shoulder_aa": 0.0, "l_elbow": 0.0, "r_elbow": 0.0}, 1.0]"
+
+Wave hello:
+"Waving! [WAYPOINT: {"r_shoulder_fe": -1.0, "r_shoulder_aa": -0.5, "r_elbow": -1.2}, 1.0]"
+
+Look right slowly:
+"Looking right. [WAYPOINT: {"neck_yaw": -0.5}, 0.5]"
+"""
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
     messages.append({"role": "user", "content": user_message})
@@ -257,6 +380,9 @@ async def websocket_endpoint(websocket: WebSocket):
     # Maintain chat history for this connection
     chat_history: list[dict] = []
 
+    # Create a recorder for this session
+    recorder = ConversationRecorder()
+
     try:
         while True:
             # Receive message from client
@@ -285,12 +411,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Chat message - get LLM response
                 user_message = message_data.get("content", "")
 
+                # Get current robot state as flat dict
+                robot_state = simulator.get_all_joint_states()
+
+                # Format state for LLM context
+                contextual_message = f"CURRENT_STATE: {json.dumps(robot_state)}\n\nUSER_REQUEST: {user_message}"
+
                 # Get LLM response
                 response = await asyncio.to_thread(
-                    get_llm_response, user_message, chat_history
+                    get_llm_response, contextual_message, chat_history
                 )
 
-                # Update history
+                # Update history (store original user message, not contextual)
                 chat_history.append({"role": "user", "content": user_message})
                 chat_history.append({"role": "assistant", "content": response})
 
@@ -298,14 +430,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 if len(chat_history) > 20:
                     chat_history = chat_history[-20:]
 
-                # Extract and execute commands
-                commands = extract_commands(response)
-                executed_commands = []
+                # Extract and execute waypoints
+                waypoints = extract_waypoints(response)
+                executed_waypoints = []
 
-                if simulator and commands:
-                    for cmd in commands:
-                        if execute_command(simulator, cmd):
-                            executed_commands.append(cmd)
+                if simulator and waypoints:
+                    executed_waypoints = await execute_waypoints(simulator, waypoints)
+
+                # Record the interaction
+                waypoints_extracted = [
+                    {"joints": wp.joints, "speed": wp.speed} for wp in waypoints
+                ]
+                recorder.log_interaction(
+                    user_message=user_message,
+                    assistant_response=response,
+                    waypoints_extracted=waypoints_extracted,
+                    waypoints_executed=executed_waypoints,
+                )
 
                 # Send response back
                 await websocket.send_json(
@@ -313,7 +454,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "chat_response",
                         "role": "assistant",
                         "content": response,
-                        "commands": executed_commands,
+                        "waypoints": executed_waypoints,
                         "joint_states": (
                             simulator.get_all_joint_states() if simulator else None
                         ),

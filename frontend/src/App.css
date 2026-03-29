@@ -142,6 +142,36 @@ body {
   font-weight: 600;
 }
 
+/* Waypoint styles */
+.message-waypoints {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.waypoints-label {
+  font-size: 0.7rem;
+  color: #888;
+  margin-right: 0.25rem;
+}
+
+.waypoint-tag {
+  background: #9b59b6;
+  color: #fff;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-family: monospace;
+}
+
+.waypoint-tag.executed {
+  background: #27ae60;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-weight: 600;
+}
+
 /* Chat input */
 .chat-input-container {
   display: flex;
