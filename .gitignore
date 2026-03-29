@@ -225,3 +225,5 @@ result-*
 
 # Claude Code
 .claude/
+
+recordings/

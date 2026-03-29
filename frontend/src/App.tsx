@@ -2,10 +2,16 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
 
+interface WaypointInfo {
+  waypoint_index: number
+  joints: { [key: string]: number }
+  speed: number
+}
+
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  commands?: string[]
+  waypoints?: WaypointInfo[]
 }
 
 interface JointStates {
@@ -42,7 +48,7 @@ function App() {
           {
             role: 'assistant',
             content: data.content,
-            commands: data.commands,
+            waypoints: data.waypoints,
           },
         ])
         if (data.joint_states) {
