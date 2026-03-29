@@ -30,6 +30,7 @@
             gcc
             pkg-config
             cmake
+            git
 
             # SSL/Crypto
             openssl
@@ -37,6 +38,21 @@
             # Additional audio libraries
             alsa-lib
             pulseaudio
+
+            # MuJoCo dependencies
+            mujoco
+            libGL
+            libGLU
+            glfw
+            xorg.libX11
+            xorg.libXi
+            xorg.libXrandr
+            xorg.libXcursor
+            xorg.libXinerama
+            mesa
+
+            # Node.js for frontend
+            nodejs_22
           ];
 
           shellHook = ''
@@ -46,10 +62,21 @@
               pkgs.alsa-lib
               pkgs.openssl
               pkgs.stdenv.cc.cc.lib
+              pkgs.libGL
+              pkgs.libGLU
+              pkgs.glfw
+              pkgs.xorg.libX11
+              pkgs.xorg.libXi
+              pkgs.xorg.libXrandr
+              pkgs.xorg.libXcursor
+              pkgs.xorg.libXinerama
+              pkgs.mesa
+              pkgs.mujoco
             ]}:$LD_LIBRARY_PATH"
 
             echo "Pipecat development environment activated!"
-            echo "Run 'uv init' to initialize project, then 'uv add pipecat-ai[daily,silero,openai]'"
+            echo "Run 'uv sync' to install dependencies"
+            echo "Run 'uv run server' to start the backend server"
           '';
         };
       }
