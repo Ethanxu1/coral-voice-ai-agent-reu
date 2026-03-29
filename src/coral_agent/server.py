@@ -48,9 +48,22 @@ from coral_agent.validation import (
 # Setup recordings directory
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Global simulator instance
 simulator: ApolloSimulator | None = None
+
+
+def get_router_prompt() -> str:
+    prompt_path = Path(__file__).parent / "prompts" / "router.md"
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def get_kinematics_prompt() -> str:
+    prompt_path = Path(__file__).parent / "prompts" / "kinematics.md"
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 @asynccontextmanager
@@ -233,7 +246,9 @@ def extract_waypoints(text: str) -> list[Waypoint]:
             wp = Waypoint(joints=validation.validated_joints, speed=speed)
             wp.validation_result = validation
             waypoints.append(wp)
-            logger.info(f"Extracted waypoint: joints={validation.validated_joints}, speed={speed}")
+            logger.info(
+                f"Extracted waypoint: joints={validation.validated_joints}, speed={speed}"
+            )
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse waypoint JSON: {joints_str}, error: {e}")
         except Exception as e:
@@ -299,10 +314,16 @@ def extract_structured_waypoints(text: str) -> list[Waypoint] | None:
                     wp.validation_result = validation
                     waypoints.append(wp)
                     if prim.name != wp_data.primitive.lower().replace(" ", "_"):
-                        logger.info(f"Fuzzy matched '{wp_data.primitive}' -> '{prim.name}'")
-                    logger.info(f"Resolved primitive '{prim.name}' to {len(joints)} joints: {list(joints.keys())}")
+                        logger.info(
+                            f"Fuzzy matched '{wp_data.primitive}' -> '{prim.name}'"
+                        )
+                    logger.info(
+                        f"Resolved primitive '{prim.name}' to {len(joints)} joints: {list(joints.keys())}"
+                    )
                 else:
-                    logger.warning(f"Unknown primitive '{wp_data.primitive}' - no match found. Available: {list(PRIMITIVES.keys())}")
+                    logger.warning(
+                        f"Unknown primitive '{wp_data.primitive}' - no match found. Available: {list(PRIMITIVES.keys())}"
+                    )
             elif wp_data.joints:
                 validation = validate_waypoint(wp_data.joints, clamp=True)
                 if validation.had_violations:
@@ -339,7 +360,7 @@ async def execute_waypoints(
     Returns a list of executed waypoint info.
     """
     executed = []
-    base_steps = 20  # Base number of interpolation steps at speed=1.0
+    base_steps = 20  # Base number of interpolation steps at speod=1.0
     step_delay = 0.02  # Delay between interpolation steps (seconds)
 
     for i, waypoint in enumerate(waypoints):
@@ -371,191 +392,39 @@ async def execute_waypoints(
             # Small delay for smooth animation
             await asyncio.sleep(step_delay)
 
-        executed.append({
-            "waypoint_index": i,
-            "joints": waypoint.joints,
-            "speed": waypoint.speed,
-        })
-        logger.info(f"Executed waypoint {i}: {waypoint.joints} at speed {waypoint.speed}")
+        executed.append(
+            {
+                "waypoint_index": i,
+                "joints": waypoint.joints,
+                "speed": waypoint.speed,
+            }
+        )
+        logger.info(
+            f"Executed waypoint {i}: {waypoint.joints} at speed {waypoint.speed}"
+        )
 
     return executed
 
 
 def build_system_prompt() -> str:
-    """Build the system prompt with CoT structure and primitives."""
+    """Build the system prompt by loading main.md and injecting primitives."""
     primitives_list = get_primitives_list()
 
-    return f"""You control an Apptronik Apollo humanoid robot. You MUST respond with structured JSON.
-
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║ ⚠️  CRITICAL SIGN RULES - CHECK BEFORE EVERY OUTPUT ⚠️                        ║
-╠═══════════════════════════════════════════════════════════════════════════════╣
-║                                                                               ║
-║  ARM SIGNS (THESE ARE OPPOSITE FOR LEFT VS RIGHT):                            ║
-║  ┌─────────────────┬──────────────────────┬──────────────────────┐            ║
-║  │ Joint           │ POSITIVE means       │ NEGATIVE means       │            ║
-║  ├─────────────────┼──────────────────────┼──────────────────────┤            ║
-║  │ l_shoulder_aa   │ arm OUT (sideways)   │ arm IN (towards body)│            ║
-║  │ r_shoulder_aa   │ arm IN (towards body)│ arm OUT (sideways)   │            ║
-║  └─────────────────┴──────────────────────┴──────────────────────┘            ║
-║                                                                               ║
-║  → LEFT arm out to side  = POSITIVE l_shoulder_aa (+0.79 for 45°, +1.57 for 90°)║
-║  → RIGHT arm out to side = NEGATIVE r_shoulder_aa (-0.79 for 45°, -1.57 for 90°)║
-║                                                                               ║
-║  HEAD SIGNS:                                                                  ║
-║  ┌─────────────────┬──────────────────────┬──────────────────────┐            ║
-║  │ Joint           │ POSITIVE (+) means   │ NEGATIVE (-) means   │            ║
-║  ├─────────────────┼──────────────────────┼──────────────────────┤            ║
-║  │ neck_yaw        │ look LEFT (+1.0)     │ look RIGHT (-1.0)    │            ║
-║  │ neck_pitch      │ look DOWN            │ look UP              │            ║
-║  └─────────────────┴──────────────────────┴──────────────────────┘            ║
-║                                                                               ║
-║  → Head LEFT  = neck_yaw POSITIVE (e.g., +1.0 or +1.65)                       ║
-║  → Head RIGHT = neck_yaw NEGATIVE (e.g., -1.0 or -1.65)                       ║
-║                                                                               ║
-║  DEGREE CONVERSIONS:  30°=0.52  45°=0.79  60°=1.05  90°=1.57  180°=3.14      ║
-║                                                                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-### PLURAL HANDLING (CRITICAL)
-When user says "arms" (plural), "both arms", or "left and right":
-→ You MUST include BOTH l_shoulder_* AND r_shoulder_* joints in the same waypoint
-→ Remember: l_shoulder_aa POSITIVE for left out, r_shoulder_aa NEGATIVE for right out
-→ Use primitives like "t_pose" or "both_arms_45_out" when available
-
-### OUTPUT FORMAT (REQUIRED):
-```json
-{{
-  "thought_process": "Step-by-step reasoning about what the user wants...",
-  "waypoints": [
-    {{"reasoning": "Why these joints", "primitive": "primitive_name", "speed": 1.0}},
-    // OR for raw joints:
-    {{"reasoning": "Why these values", "joints": {{"joint": value}}, "speed": 1.0}}
-  ],
-  "verbal_response": "Short response to speak to user"
-}}
-```
-
-### MOTION PRIMITIVES (USE THESE - they are tested and reliable):
-{primitives_list}
-
-IMPORTANT: Use EXACT primitive names from the list above. Do NOT invent new primitive names.
-
-### JOINT REFERENCE (only if no primitive fits):
-
-=== ARMS ===
-LEFT ARM:
-- l_shoulder_fe: NEGATIVE = arm FORWARD/UP (use -1.57 for 90° forward)
-- l_shoulder_aa: POSITIVE = arm OUT sideways (use +1.57 for 90° out, +0.79 for 45°)
-- l_elbow: NEGATIVE = BEND, ZERO = straight
-
-RIGHT ARM:
-- r_shoulder_fe: NEGATIVE = arm FORWARD/UP (use -1.57 for 90° forward)
-- r_shoulder_aa: NEGATIVE = arm OUT sideways (use -1.57 for 90° out, -0.79 for 45°)
-- r_elbow: NEGATIVE = BEND, ZERO = straight
-
-*** COMMON MISTAKES TO AVOID ***
-1. 45° = 0.79 rad, 90° = 1.57 rad (NOT 1.05 for 45° - that's 60°!)
-2. RIGHT arm out = NEGATIVE r_shoulder_aa (the OPPOSITE of left!)
-3. When user says "arms" (plural), include BOTH left AND right joints
-4. Use exact primitive names from the list, don't invent new ones
-5. HEAD LEFT = POSITIVE neck_yaw (+1.0), HEAD RIGHT = NEGATIVE neck_yaw (-1.0)
-
-*** BEFORE OUTPUTTING, DOUBLE-CHECK ***
-- If you wrote "left" in reasoning, is the value POSITIVE?
-- If you wrote "right" in reasoning, is the value NEGATIVE?
-- For neck_yaw: LEFT = + (plus), RIGHT = - (minus)
-
-### EXAMPLES:
-
-User: "Move your arms outward to the side by 45 degrees"
-```json
-{{
-  "thought_process": "User said 'arms' (PLURAL) so I must move BOTH arms. 45° = 0.79 rad. LEFT arm out = POSITIVE +0.79, RIGHT arm out = NEGATIVE -0.79. Using both_arms_45_out primitive.",
-  "waypoints": [
-    {{"reasoning": "PLURAL arms requested, using both_arms_45_out primitive", "primitive": "both_arms_45_out", "speed": 1.0}}
-  ],
-  "verbal_response": "Moving both arms outward 45 degrees."
-}}
-```
-
-User: "Put your right arm out to the side by 90 degrees"
-```json
-{{
-  "thought_process": "User wants RIGHT arm at 90° sideways. 90° = 1.57 rad. For RIGHT arm out, r_shoulder_aa must be NEGATIVE (-1.57).",
-  "waypoints": [
-    {{"reasoning": "90° = 1.57 rad, right arm out = NEGATIVE r_shoulder_aa", "joints": {{"r_shoulder_aa": -1.57, "r_shoulder_fe": -1.57, "r_elbow": 0.0}}, "speed": 1.0}}
-  ],
-  "verbal_response": "Extending right arm outward 90 degrees."
-}}
-```
-
-User: "Turn your head to the left"
-```json
-{{
-  "thought_process": "User wants head turned LEFT. Check sign table: neck_yaw POSITIVE = LEFT. So I need a POSITIVE value like +1.0.",
-  "waypoints": [
-    {{"reasoning": "LEFT turn = POSITIVE neck_yaw = +1.0", "joints": {{"neck_yaw": 1.0}}, "speed": 1.0}}
-  ],
-  "verbal_response": "Looking left."
-}}
-```
-
-User: "Turn your head to the right"
-```json
-{{
-  "thought_process": "User wants head turned RIGHT. Check sign table: neck_yaw NEGATIVE = RIGHT. So I need a NEGATIVE value like -1.0.",
-  "waypoints": [
-    {{"reasoning": "RIGHT turn = NEGATIVE neck_yaw = -1.0", "joints": {{"neck_yaw": -1.0}}, "speed": 1.0}}
-  ],
-  "verbal_response": "Looking right."
-}}
-```
-
-User: "Rotate your head all the way to the right"
-```json
-{{
-  "thought_process": "User wants head turned all the way right. neck_yaw NEGATIVE = RIGHT. Using look_far_right primitive or max value -1.65.",
-  "waypoints": [
-    {{"reasoning": "Using look_far_right for maximum right turn", "primitive": "look_far_right", "speed": 1.0}}
-  ],
-  "verbal_response": "Looking all the way right."
-}}
-```
-
-User: "Move your arms up and out to the side"
-```json
-{{
-  "thought_process": "User wants BOTH arms (plural) moved UP and OUT. Using arms_up_and_out primitive which combines upward and outward motion.",
-  "waypoints": [
-    {{"reasoning": "Using arms_up_and_out for combined up+out motion", "primitive": "arms_up_and_out", "speed": 1.0}}
-  ],
-  "verbal_response": "Moving arms up and out."
-}}
-```
-"""
-
-
-def get_llm_response(user_message: str, history: list[dict]) -> str:
-    """Get response from Ollama LLM (synchronous - run in thread)."""
-    system_prompt = build_system_prompt()
-
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
+    # Path to the prompts directory relative to server.py
+    prompt_path = Path(__file__).parent / "prompts" / "main.md"
 
     try:
-        logger.info(f"Sending to Ollama: {user_message[:50]}...")
-        response = ollama.chat(model="llama3.2", messages=messages)
-        content = response["message"]["content"]
-        logger.info(f"Ollama response: {content[:100]}...")
-        return content
-    except ollama.ResponseError as e:
-        logger.error(f"Ollama response error: {e}")
-        return f"Ollama error: {e}. Make sure the model 'llama3.2' is installed (run: ollama pull llama3.2)"
-    except Exception as e:
-        logger.error(f"Ollama connection error: {e}")
-        return f"Cannot connect to Ollama. Make sure Ollama is running (run: ollama serve). Error: {e}"
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt_template = f.read()
+
+        # Inject the primitives list using replace to avoid JSON bracket clashes
+        final_prompt = prompt_template.replace("{primitives_list}", primitives_list)
+        return final_prompt
+
+    except FileNotFoundError:
+        logger.error(f"Prompt file not found at {prompt_path}")
+        # Fallback to a minimal prompt if the file is missing
+        return "You are a robot controller. Output valid JSON."
 
 
 @app.post("/command", response_model=CommandResponse)
@@ -655,7 +524,9 @@ class HierarchicalMemory:
 
         # Add mid-term context summary if exists
         if self.mid_term_summaries:
-            summary = "Previous interactions: " + " | ".join(self.mid_term_summaries[-5:])
+            summary = "Previous interactions: " + " | ".join(
+                self.mid_term_summaries[-5:]
+            )
             context.append({"role": "system", "content": summary})
 
         # Add recent history
@@ -676,7 +547,9 @@ class HierarchicalMemory:
             if primitive:
                 summaries.append(f"Used primitive '{primitive}' at speed {speed}")
             else:
-                summaries.append(f"Moved {list(joints.keys())} to {list(joints.values())} at speed {speed}")
+                summaries.append(
+                    f"Moved {list(joints.keys())} to {list(joints.values())} at speed {speed}"
+                )
 
         return "Last executed: " + "; ".join(summaries)
 
@@ -712,7 +585,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 command = message_data.get("command", "")
                 if simulator:
                     # Save checkpoint before command
-                    state_manager.save_checkpoint(simulator, f"before_command:{command}")
+                    state_manager.save_checkpoint(
+                        simulator, f"before_command:{command}"
+                    )
                     success = execute_command(simulator, command)
                     await websocket.send_json(
                         {
@@ -735,7 +610,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 intent = quick_intent_check(user_message, has_previous)
 
                 if intent:
-                    logger.info(f"Fast-path intent: {intent.intent_type.value} ({intent.confidence:.2f})")
+                    logger.info(
+                        f"Fast-path intent: {intent.intent_type.value} ({intent.confidence:.2f})"
+                    )
                 else:
                     # Fall back to LLM classification
                     intent = await asyncio.to_thread(
@@ -744,37 +621,55 @@ async def websocket_endpoint(websocket: WebSocket):
                         memory.last_user_request,
                         memory.last_action_summary,
                     )
-                    logger.info(f"LLM intent: {intent.intent_type.value} ({intent.confidence:.2f})")
+                    logger.info(
+                        f"LLM intent: {intent.intent_type.value} ({intent.confidence:.2f})"
+                    )
 
                 # Handle based on intent type
                 if intent.intent_type == IntentType.UNDO and simulator:
                     # Simple undo - rollback without retry
-                    rollback_intent = RollbackIntent(command_type="undo", steps=1, confidence=intent.confidence)
-                    result = await execute_rollback(simulator, state_manager, rollback_intent)
-                    response = "Done! Rolled back to previous state." if result else "No previous state to go back to."
-                    await websocket.send_json({
-                        "type": "chat_response",
-                        "role": "assistant",
-                        "content": response,
-                        "waypoints": [],
-                        "intent": intent.intent_type.value,
-                        "joint_states": simulator.get_all_joint_states(),
-                    })
+                    rollback_intent = RollbackIntent(
+                        command_type="undo", steps=1, confidence=intent.confidence
+                    )
+                    result = await execute_rollback(
+                        simulator, state_manager, rollback_intent
+                    )
+                    response = (
+                        "Done! Rolled back to previous state."
+                        if result
+                        else "No previous state to go back to."
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "chat_response",
+                            "role": "assistant",
+                            "content": response,
+                            "waypoints": [],
+                            "intent": intent.intent_type.value,
+                            "joint_states": simulator.get_all_joint_states(),
+                        }
+                    )
                     continue
 
                 if intent.intent_type == IntentType.RESET and simulator:
                     # Reset to initial position
-                    rollback_intent = RollbackIntent(command_type="reset", steps=-1, confidence=intent.confidence)
-                    result = await execute_rollback(simulator, state_manager, rollback_intent)
+                    rollback_intent = RollbackIntent(
+                        command_type="reset", steps=-1, confidence=intent.confidence
+                    )
+                    result = await execute_rollback(
+                        simulator, state_manager, rollback_intent
+                    )
                     response = "Reset to initial position."
-                    await websocket.send_json({
-                        "type": "chat_response",
-                        "role": "assistant",
-                        "content": response,
-                        "waypoints": [],
-                        "intent": intent.intent_type.value,
-                        "joint_states": simulator.get_all_joint_states(),
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "chat_response",
+                            "role": "assistant",
+                            "content": response,
+                            "waypoints": [],
+                            "intent": intent.intent_type.value,
+                            "joint_states": simulator.get_all_joint_states(),
+                        }
+                    )
                     continue
 
                 # Note: CONVERSATION intent is no longer short-circuited here.
@@ -791,7 +686,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Build context based on intent type
                 if intent.intent_type == IntentType.ROLLBACK_AND_RETRY and simulator:
                     # First, rollback to previous state
-                    rollback_intent = RollbackIntent(command_type="undo", steps=1, confidence=intent.confidence)
+                    rollback_intent = RollbackIntent(
+                        command_type="undo", steps=1, confidence=intent.confidence
+                    )
                     await execute_rollback(simulator, state_manager, rollback_intent)
 
                     # Get fresh state after rollback
@@ -842,21 +739,89 @@ async def websocket_endpoint(websocket: WebSocket):
                         f"USER_REQUEST: {user_message}"
                     )
 
-                # Get LLM response from motion planner
+                # --- NEW TWO-AGENT MOTION PLANNING ---
                 chat_history = memory.get_context_for_llm()
-                response = await asyncio.to_thread(
-                    get_llm_response, contextual_message, chat_history
-                )
 
-                # Extract and execute waypoints
-                waypoints = extract_waypoints(response)
+                # Helper function for the router agent
+                def run_router():
+                    router_prompt = get_router_prompt().replace(
+                        "{primitives_list}", get_primitives_list()
+                    )
+                    return ollama.chat(
+                        model="llama3.2",
+                        messages=[
+                            {"role": "system", "content": router_prompt},
+                            {"role": "user", "content": contextual_message},
+                        ],
+                        format="json",
+                    )["message"]["content"]
+
+                # 1. Call Router
+                router_response_text = await asyncio.to_thread(run_router)
+                router_data = json.loads(router_response_text)
+
+                # 2. Handle Routing Decision
+                response = router_data.get("verbal_response", "Processing request.")
+
+                if router_data.get("status") == "PRIMITIVE":
+                    # Easy path! LLM picked a primitive.
+                    primitive_name = router_data.get("primitive_name")
+                    prim = get_primitive(primitive_name)
+
+                    if prim:
+                        # Construct waypoint directly from the primitive data
+                        validation = validate_waypoint(prim.joints, clamp=True)
+                        wp = Waypoint(
+                            joints=validation.validated_joints,
+                            speed=1.0,
+                            reasoning=router_data.get("reasoning", ""),
+                            primitive_name=prim.name,
+                        )
+                        wp.validation_result = validation
+                        waypoints = [wp]
+                        logger.info(f"Router selected primitive: {prim.name}")
+                    else:
+                        logger.warning(
+                            f"Router hallucinated primitive: {primitive_name}"
+                        )
+                        waypoints = []
+
+                elif router_data.get("status") == "RAW_REQUIRED":
+                    # Hard path! Call Kinematics agent
+                    def run_kinematics():
+                        kinematics_prompt = get_kinematics_prompt()
+                        return ollama.chat(
+                            model="llama3.2",
+                            messages=[{"role": "system", "content": kinematics_prompt}]
+                            + chat_history
+                            + [{"role": "user", "content": contextual_message}],
+                            format="json",
+                        )["message"]["content"]
+
+                    kinematics_response_text = await asyncio.to_thread(run_kinematics)
+
+                    # Extract waypoints from the kinematics response
+                    waypoints = extract_waypoints(kinematics_response_text)
+
+                    # Grab the verbal response from the kinematics agent
+                    try:
+                        kin_data = json.loads(kinematics_response_text)
+                        response = kin_data.get("verbal_response", response)
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    waypoints = []
+
+                # --- CONTINUE WITH EXISTING EXECUTION ---
                 executed_waypoints = []
                 validation_warnings = []
                 sign_warnings = []
 
                 if simulator and waypoints:
                     # Save checkpoint before executing waypoints
-                    state_manager.save_checkpoint(simulator, f"before:{user_message[:30]}")
+                    state_manager.save_checkpoint(
+                        simulator, f"before:{user_message[:30]}"
+                    )
 
                     # Collect validation warnings
                     for wp in waypoints:
@@ -864,7 +829,9 @@ async def websocket_endpoint(websocket: WebSocket):
                             validation_warnings.extend(wp.validation_result.violations)
 
                         # Check for sign convention errors
-                        motion_sign_issues = validate_motion_sign(user_message, wp.joints)
+                        motion_sign_issues = validate_motion_sign(
+                            user_message, wp.joints
+                        )
                         if motion_sign_issues:
                             sign_warnings.extend(motion_sign_issues)
                             for warning in motion_sign_issues:
@@ -932,6 +899,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         connected_clients.discard(websocket)
