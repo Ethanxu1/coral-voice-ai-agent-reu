@@ -280,3 +280,23 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #1a5276;
 }
+
+/* Primitives test button */
+.primitives-test-btn {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: linear-gradient(135deg, #533483, #0f3460);
+  color: #fff;
+  border: 2px solid #7b4bb9;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 0.5rem;
+}
+
+.primitives-test-btn:hover {
+  background: linear-gradient(135deg, #7b4bb9, #1a5276);
+  transform: translateY(-1px);
+}

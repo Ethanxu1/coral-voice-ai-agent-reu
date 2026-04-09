@@ -16,10 +16,23 @@ dependencies = [
     "websockets>=14.0",
 ]
 
+[project.optional-dependencies]
+training = [
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+    "peft>=0.10.0",
+    "bitsandbytes>=0.43.0",
+    "accelerate>=0.28.0",
+    "datasets>=2.18.0",
+    "trl>=0.8.0",
+]
+
 [project.scripts]
 bot-test = "coral_agent.bot:run"
 llm-test = "coral_agent.test_local:test_dialogue"
 server = "coral_agent.server:main"
+generate-dataset = "coral_agent.generate_dataset:main"
+train-lora = "coral_agent.train_lora:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
+import PrimitivesTest from './PrimitivesTest'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -23,6 +24,7 @@ function App() {
   const [jointStates, setJointStates] = useState<JointStates>({})
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [showPrimitivesTest, setShowPrimitivesTest] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
 
@@ -110,6 +112,10 @@ function App() {
     }
   }, [])
 
+  if (showPrimitivesTest) {
+    return <PrimitivesTest onBack={() => setShowPrimitivesTest(false)} isConnected={isConnected} />
+  }
+
   return (
     <div className="app">
       <div className="controls-panel">
@@ -118,6 +124,12 @@ function App() {
           isConnected={isConnected}
           jointStates={jointStates}
         />
+        <button
+          className="primitives-test-btn"
+          onClick={() => setShowPrimitivesTest(true)}
+        >
+          Test Primitives
+        </button>
       </div>
       <div className="chat-panel">
         <ChatSidebar
