@@ -9,6 +9,8 @@ import mujoco
 import mujoco.viewer
 from loguru import logger
 
+from coral_agent.validation import JOINT_LIMITS
+
 
 class ApolloSimulator:
     """MuJoCo simulator wrapper for the Apptronik Apollo humanoid robot.
@@ -109,19 +111,36 @@ class ApolloSimulator:
             return float(self.data.ctrl[actuator_id])
 
     def set_joint_position(self, joint_name: str, position: float) -> None:
-        """Set the target position of a joint."""
+        """Set the target position of a joint.
+
+        The position is clamped to joint limits to prevent invalid control values.
+        """
         full_name = self.JOINT_NAMES.get(joint_name, joint_name)
         actuator_id = self._actuator_ids.get(full_name)
         if actuator_id is None:
             raise ValueError(f"Unknown joint: {joint_name}")
+
+        # Clamp to joint limits if available
+        if joint_name in JOINT_LIMITS:
+            position = JOINT_LIMITS[joint_name].clamp(position)
+
         with self._lock:
             self.data.ctrl[actuator_id] = position
         logger.debug(f"Set {joint_name} to {position:.3f} rad")
 
     def move_joint(self, joint_name: str, delta: float) -> float:
-        """Move a joint by a delta amount (discrete step)."""
+        """Move a joint by a delta amount (discrete step).
+
+        The new position is clamped to joint limits to prevent the control
+        value from exceeding valid range.
+        """
         current = self.get_joint_position(joint_name)
         new_pos = current + delta
+
+        # Clamp to joint limits if available
+        if joint_name in JOINT_LIMITS:
+            new_pos = JOINT_LIMITS[joint_name].clamp(new_pos)
+
         self.set_joint_position(joint_name, new_pos)
         logger.info(f"Moved {joint_name}: {current:.2f} -> {new_pos:.2f}")
         return new_pos

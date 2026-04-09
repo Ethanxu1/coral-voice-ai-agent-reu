@@ -11,7 +11,7 @@ from coral_agent.validation import JOINT_LIMITS
 class WaypointOutput(BaseModel):
     """A single waypoint in the robot motion sequence.
 
-    Supports either named primitives OR raw joint values.
+    Supports either named primitives (with optional angle/direction) OR raw joint values.
     """
 
     reasoning: str = Field(
@@ -21,7 +21,17 @@ class WaypointOutput(BaseModel):
     )
     primitive: str | None = Field(
         default=None,
-        description="Name of a predefined motion primitive (e.g., 't_pose', 'wave_right')",
+        description="Name of a predefined motion primitive (e.g., 'left_arm_out', 'head_turn')",
+    )
+    angle: float | None = Field(
+        default=None,
+        ge=0,
+        le=180,
+        description="Angle in degrees for parameterized primitives (0-180)",
+    )
+    direction: str | None = Field(
+        default=None,
+        description="Direction for bidirectional primitives: 'left', 'right', 'up', 'down'",
     )
     joints: dict[str, float] | None = Field(
         default=None,
@@ -48,12 +58,31 @@ class WaypointOutput(BaseModel):
 
         return v
 
+    @field_validator("direction")
+    @classmethod
+    def validate_direction(cls, v: str | None) -> str | None:
+        """Validate direction is one of the allowed values."""
+        if v is None:
+            return v
+        v_lower = v.lower().strip()
+        allowed = {"left", "right", "up", "down"}
+        if v_lower not in allowed:
+            raise ValueError(f"direction must be one of {allowed}, got '{v}'")
+        return v_lower
+
     def model_post_init(self, __context) -> None:
-        """Ensure either primitive or joints is specified."""
+        """Ensure either primitive or joints is specified, and validate angle/direction usage."""
         if self.primitive is None and self.joints is None:
             raise ValueError("Either 'primitive' or 'joints' must be specified")
         if self.primitive is not None and self.joints is not None:
             raise ValueError("Specify either 'primitive' or 'joints', not both")
+
+        # angle and direction should only be used with primitive
+        if self.joints is not None:
+            if self.angle is not None:
+                raise ValueError("'angle' can only be used with 'primitive', not 'joints'")
+            if self.direction is not None:
+                raise ValueError("'direction' can only be used with 'primitive', not 'joints'")
 
 
 class LLMResponse(BaseModel):
@@ -95,17 +124,30 @@ class RollbackCommand(BaseModel):
 
 # Example of valid LLM output for documentation/prompting
 EXAMPLE_RESPONSE = {
-    "thought_process": "User wants a T-pose. This requires both arms extended horizontally. "
-    "For left arm outward: positive l_shoulder_aa. For right arm outward: negative r_shoulder_aa. "
-    "Both shoulder_fe should be slightly negative to lift arms to horizontal.",
+    "thought_process": "User wants right arm out 75 degrees. Using right_arm_out primitive with angle=75.",
     "waypoints": [
         {
-            "reasoning": "T-pose: both arms extended horizontally, elbows straight",
-            "primitive": "t_pose",
+            "reasoning": "Moving right arm sideways to 75 degrees",
+            "primitive": "right_arm_out",
+            "angle": 75,
             "speed": 1.0,
         }
     ],
-    "verbal_response": "Moving to T-pose position.",
+    "verbal_response": "Moving right arm out to 75 degrees.",
+}
+
+EXAMPLE_BIDIRECTIONAL = {
+    "thought_process": "User wants to look left 60 degrees. Using head_turn primitive with direction=left and angle=60.",
+    "waypoints": [
+        {
+            "reasoning": "Turning head 60 degrees to the left",
+            "primitive": "head_turn",
+            "angle": 60,
+            "direction": "left",
+            "speed": 2.0,
+        }
+    ],
+    "verbal_response": "Looking left.",
 }
 
 EXAMPLE_RAW_JOINTS = {

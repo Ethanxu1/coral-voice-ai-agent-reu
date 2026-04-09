@@ -288,6 +288,7 @@ def build_retry_context(
     intent: IntentResult,
     last_user_request: str,
     last_action_summary: str,
+    last_waypoints_summary: str = "",
 ) -> str:
     """Build context message for retrying a failed action.
 
@@ -295,9 +296,16 @@ def build_retry_context(
     """
     parts = [
         "## RETRY CONTEXT - Previous attempt failed",
+        "",
+        "**IMPORTANT: The robot position has been REVERTED to BEFORE the failed attempt.**",
+        "The CURRENT_STATE below reflects the position BEFORE the failed action.",
+        "",
         f"Original request: {last_user_request}",
-        f"What robot did: {last_action_summary}",
+        f"What robot attempted: {last_action_summary}",
     ]
+
+    if last_waypoints_summary:
+        parts.append(f"Failed waypoints: {last_waypoints_summary}")
 
     if intent.correction_context:
         parts.append(f"What was wrong: {intent.correction_context}")
@@ -309,7 +317,9 @@ def build_retry_context(
 
     parts.append(
         "\nIMPORTANT: The previous attempt was WRONG. "
-        "Double-check your joint signs and values before outputting."
+        "You are starting from the REVERTED position shown in CURRENT_STATE. "
+        "Double-check your joint signs and values before outputting. "
+        "Only move the joints that were originally requested - do NOT add extra joints."
     )
 
     return "\n".join(parts)
