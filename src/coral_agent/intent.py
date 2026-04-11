@@ -7,12 +7,14 @@ Stage 1 of the BrainBody architecture:
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import ollama
+from langfuse import observe
+from langfuse.openai import openai
 from loguru import logger
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -107,11 +109,12 @@ def get_intent_prompt() -> str:
         return f.read()
 
 
+@observe(name="classify_intent")
 def classify_intent(
     current_message: str,
     last_user_request: str | None = None,
     last_action_summary: str | None = None,
-    model: str = "llama3.2",
+    model: str = "gpt-4o-mini",
 ) -> IntentResult:
     """Classify the user's intent using an LLM.
 
@@ -119,7 +122,7 @@ def classify_intent(
         current_message: The user's current message
         last_user_request: The previous user request (if any)
         last_action_summary: Summary of what the robot did last (if any)
-        model: Ollama model to use for classification
+        model: OpenAI model to use for classification
 
     Returns:
         IntentResult with classified intent and context
@@ -145,16 +148,17 @@ def classify_intent(
 
         system_prompt = get_intent_prompt()
 
-        response = ollama.chat(
+        response = openai.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            format="json",
+            response_format={"type": "json_object"},
+            name="intent-classification",  # Langfuse generation name
         )
 
-        content = response["message"]["content"]
+        content = response.choices[0].message.content
         logger.debug(f"Intent classifier response: {content[:100]}...")
 
         # Parse JSON response
@@ -165,14 +169,6 @@ def classify_intent(
         )
         return result
 
-    except ollama.ResponseError as e:
-        logger.error(f"Ollama error in intent classifier: {e}")
-        # Fall back to motion command on error
-        return IntentResult(
-            intent_type=IntentType.MOTION_COMMAND,
-            confidence=0.5,
-            reasoning=f"Fallback due to error: {e}",
-        )
     except Exception as e:
         logger.error(f"Intent classification error: {e}")
         return IntentResult(

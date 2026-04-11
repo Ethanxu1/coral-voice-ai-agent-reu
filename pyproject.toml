@@ -6,33 +6,21 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2.1",
-    "loguru>=0.7.3",
-    "ollama>=0.6.1",
+    "openai>=1.0.0",
     "pipecat-ai[daily,openai,silero]>=0.0.108",
-    "python-dotenv>=1.2.2",
     "mujoco>=3.0.0",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
-    "websockets>=14.0",
-]
-
-[project.optional-dependencies]
-training = [
-    "torch>=2.0.0",
-    "transformers>=4.40.0",
-    "peft>=0.10.0",
-    "bitsandbytes>=0.43.0",
-    "accelerate>=0.28.0",
-    "datasets>=2.18.0",
-    "trl>=0.8.0",
+    "loguru>=0.7.3",
+    "python-dotenv>=1.2.2",
+    "fastapi>=0.135.3",
+    "uvicorn[standard]>=0.44.0",
+    "websockets>=15.0.1",
+    "langfuse>=4.1.0",
 ]
 
 [project.scripts]
 bot-test = "coral_agent.bot:run"
 llm-test = "coral_agent.test_local:test_dialogue"
 server = "coral_agent.server:main"
-generate-dataset = "coral_agent.generate_dataset:main"
-train-lora = "coral_agent.train_lora:main"
 
 [build-system]
 requires = ["hatchling"]

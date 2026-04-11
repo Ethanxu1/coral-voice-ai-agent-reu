@@ -2,13 +2,20 @@
 
 import asyncio
 import json
+import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import ollama
+from dotenv import load_dotenv
+
+# Load environment variables before initializing Langfuse
+load_dotenv()
+
+from langfuse import observe, get_client, Langfuse, propagate_attributes
+from langfuse.openai import openai
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,54 +53,6 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(value * 180 / 3.14159, 1) for joint, value in state.items()}
 
 
-def needs_previous_context(message: str) -> bool:
-    """Detect if user message references previous actions and needs LAST_ACTION context.
-
-    Returns True if the message contains words/phrases that reference the previous action,
-    such as "same", "again", "it", "that", "other arm", etc.
-
-    This prevents context contamination for fresh commands while preserving
-    context for follow-up requests.
-    """
-    msg_lower = message.lower()
-
-    # Reference words that indicate the user is referring to a previous action
-    reference_patterns = [
-        # Demonstrative pronouns referring to previous action
-        r"\bthat\b",
-        r"\bit\b",
-        r"\bthis\b",
-        # Repetition/continuation words
-        r"\bsame\b",
-        r"\bagain\b",
-        r"\brepeat\b",
-        r"\bcontinue\b",
-        # Relative modifiers (need to know what to modify)
-        r"\bother\s+(arm|side|hand|elbow)\b",
-        r"\bopposite\b",
-        # Degree modifiers (need baseline to adjust)
-        r"\bmore\b",
-        r"\bless\b",
-        r"\bhalf\b",
-        r"\btwice\b",
-        r"\bdouble\b",
-        r"\bfurther\b",
-        r"\ba\s+bit\b",
-        r"\blittle\s+(more|less)\b",
-        # Follow-up phrasing
-        r"\bnow\s+do\b",
-        r"\balso\b",
-        r"\btoo\b$",  # "left arm too"
-    ]
-
-    for pattern in reference_patterns:
-        if re.search(pattern, msg_lower):
-            logger.debug(f"Reference pattern detected: '{pattern}' in '{message[:50]}'")
-            return True
-
-    return False
-
-
 from coral_agent.schemas import LLMResponse, WaypointOutput
 from coral_agent.simulator import ApolloSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
@@ -126,18 +85,26 @@ def get_router_prompt() -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifespan - start/stop simulator."""
+    """Manage application lifespan - start/stop simulator and Langfuse."""
     global simulator
 
     logger.info("Starting Apollo simulator...")
     simulator = ApolloSimulator()
     simulator.start_viewer()
 
+    # Initialize Langfuse client for shutdown flush
+    langfuse_client = Langfuse()
+    logger.info("Langfuse tracing initialized")
+
     yield
 
     logger.info("Stopping Apollo simulator...")
     if simulator:
         simulator.stop_viewer()
+
+    # Flush pending Langfuse traces before shutdown
+    logger.info("Flushing Langfuse traces...")
+    langfuse_client.flush()
 
 
 app = FastAPI(title="Coral AI Agent", lifespan=lifespan)
@@ -511,27 +478,6 @@ async def execute_waypoints(
     return executed
 
 
-def build_system_prompt() -> str:
-    """Build the system prompt by loading main.md and injecting primitives."""
-    primitives_list = get_primitives_list()
-
-    # Path to the prompts directory relative to server.py
-    prompt_path = Path(__file__).parent / "prompts" / "main.md"
-
-    try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            prompt_template = f.read()
-
-        # Inject the primitives list using replace to avoid JSON bracket clashes
-        final_prompt = prompt_template.replace("{primitives_list}", primitives_list)
-        return final_prompt
-
-    except FileNotFoundError:
-        logger.error(f"Prompt file not found at {prompt_path}")
-        # Fallback to a minimal prompt if the file is missing
-        return "You are a robot controller. Output valid JSON."
-
-
 @app.post("/command", response_model=CommandResponse)
 async def execute_manual_command(request: CommandRequest) -> CommandResponse:
     """Execute a manual robot command."""
@@ -754,6 +700,8 @@ class HierarchicalMemory:
         self.last_action_summary: str | None = None
         self.short_term_limit = short_term_limit
         self.mid_term_limit = mid_term_limit
+        # Structured action history for Langfuse tracing
+        self.action_history: list[dict] = []
 
     def add_exchange(
         self, user_msg: str, assistant_msg: str, waypoints: list[dict]
@@ -782,6 +730,15 @@ class HierarchicalMemory:
             joint_names = []
             for wp in waypoints:
                 joint_names.extend(wp.get("joints", {}).keys())
+                # Add to structured action history
+                action_entry = {
+                    "user_request": user_msg,
+                    "primitive": wp.get("primitive"),
+                    "angle": wp.get("angle"),
+                    "direction": wp.get("direction"),
+                    "speed": wp.get("speed", 1.0),
+                }
+                self.action_history.append(action_entry)
             self.last_action_summary = f"Moved joints: {', '.join(set(joint_names))}"
         else:
             self.last_action_summary = "No motion executed"
@@ -833,6 +790,354 @@ class HierarchicalMemory:
 
         return "Last executed: " + "; ".join(summaries)
 
+    def get_structured_action_history(self) -> str:
+        """Get structured action history for Langfuse tracing.
+
+        Returns history in format: "primitive -> (angle: 90, speed: 1.0)"
+        """
+        if not self.action_history:
+            return ""
+
+        history_lines = []
+        for i, action in enumerate(self.action_history, 1):
+            primitive = action.get("primitive") or "direct_joints"
+            params = []
+            if action.get("angle") is not None:
+                params.append(f"angle: {action['angle']}")
+            if action.get("direction"):
+                params.append(f"direction: {action['direction']}")
+            if action.get("speed") is not None:
+                params.append(f"speed: {action['speed']}")
+
+            params_str = ", ".join(params) if params else "default"
+            history_lines.append(f"{i}. {primitive} -> ({params_str})")
+
+        return "ACTION_HISTORY:\n" + "\n".join(history_lines)
+
+
+@observe(name="process_chat_message")
+async def process_chat_message(
+    user_message: str,
+    memory: "HierarchicalMemory",
+    state_manager: "StateManager",
+    recorder: "ConversationRecorder",
+    simulator_instance: "ApolloSimulator | None",
+    session_id: str,
+) -> dict:
+    """Process a chat message with full Langfuse tracing.
+
+    Creates a parent trace for all LLM calls involved in processing a single user message.
+    """
+    # Get Langfuse client for trace updates
+    langfuse = get_client()
+
+    # Use propagate_attributes for session/user metadata (trace-level attributes)
+    with propagate_attributes(
+        session_id=session_id,
+        user_id="coral-user",
+        tags=["coral-agent", "robot-control"],
+    ):
+        # Update current span with input only
+        langfuse.update_current_span(input=user_message)
+
+        # === STAGE 1: Intent Classification ===
+        has_previous = memory.last_user_request is not None
+        intent = quick_intent_check(user_message, has_previous)
+
+        if intent:
+            logger.info(
+                f"Fast-path intent: {intent.intent_type.value} ({intent.confidence:.2f})"
+            )
+        else:
+            # Fall back to LLM classification
+            intent = await asyncio.to_thread(
+                classify_intent,
+                user_message,
+                memory.last_user_request,
+                memory.last_action_summary,
+            )
+            logger.info(
+                f"LLM intent: {intent.intent_type.value} ({intent.confidence:.2f})"
+            )
+
+        # Handle UNDO intent
+        if intent.intent_type == IntentType.UNDO and simulator_instance:
+            rollback_intent = RollbackIntent(
+                command_type="undo", steps=1, confidence=intent.confidence
+            )
+            result = await execute_rollback(
+                simulator_instance, state_manager, rollback_intent
+            )
+            response = (
+                "Done! Rolled back to previous state."
+                if result
+                else "No previous state to go back to."
+            )
+            langfuse.update_current_span(output=response)
+            return {
+                "type": "chat_response",
+                "role": "assistant",
+                "content": response,
+                "waypoints": [],
+                "intent": intent.intent_type.value,
+                "joint_states": simulator_instance.get_all_joint_states(),
+            }
+
+        # Handle RESET intent
+        if intent.intent_type == IntentType.RESET and simulator_instance:
+            rollback_intent = RollbackIntent(
+                command_type="reset", steps=-1, confidence=intent.confidence
+            )
+            result = await execute_rollback(
+                simulator_instance, state_manager, rollback_intent
+            )
+            response = "Reset to initial position."
+            langfuse.update_current_span(output=response)
+            return {
+                "type": "chat_response",
+                "role": "assistant",
+                "content": response,
+                "waypoints": [],
+                "intent": intent.intent_type.value,
+                "joint_states": simulator_instance.get_all_joint_states(),
+            }
+
+        # === STAGE 2: Motion Planning ===
+        robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
+        state_description = describe_joint_state(robot_state)
+
+        # Detect special patterns that need hints
+        degree_hint = detect_degrees_in_request(user_message)
+        plural_hint = detect_plural_arms(user_message)
+
+        # Build context based on intent type
+        if intent.intent_type == IntentType.ROLLBACK_AND_RETRY and simulator_instance:
+            pre_rollback_waypoints = memory.get_last_waypoints_summary()
+            rollback_intent = RollbackIntent(
+                command_type="undo", steps=1, confidence=intent.confidence
+            )
+            await execute_rollback(simulator_instance, state_manager, rollback_intent)
+            robot_state = simulator_instance.get_all_joint_states()
+            state_description = describe_joint_state(robot_state)
+
+            retry_context = build_retry_context(
+                intent,
+                memory.last_user_request or user_message,
+                memory.last_action_summary or "unknown",
+                last_waypoints_summary=pre_rollback_waypoints,
+            )
+            contextual_message = (
+                f"{retry_context}\n\n"
+                f"CURRENT_STATE (after revert): {json.dumps(convert_state_to_degrees(robot_state))}\n"
+                f"STATE_DESCRIPTION: {state_description}\n"
+                f"LAST_ACTION (failed, now reverted): {pre_rollback_waypoints}\n\n"
+                f"USER_REQUEST: {intent.retry_instruction or memory.last_user_request or user_message}"
+            )
+            logger.info(f"Retrying with context: {retry_context[:100]}...")
+
+        elif intent.intent_type == IntentType.CORRECTION:
+            correction_context = build_correction_context(intent, robot_state)
+            last_waypoints = memory.get_last_waypoints_summary()
+            contextual_message = (
+                f"{correction_context}\n\n"
+                f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
+                f"STATE_DESCRIPTION: {state_description}\n"
+                f"LAST_ACTION: {last_waypoints}\n"
+                f"PREVIOUS_REQUEST: {memory.last_user_request or 'unknown'}\n\n"
+                f"USER_REQUEST: {user_message}\n\n"
+                f"IMPORTANT: Only modify the joints from LAST_ACTION. Do NOT add new body parts."
+            )
+        else:
+            # Normal motion command
+            hints = []
+            if degree_hint:
+                hints.append(degree_hint)
+            if plural_hint:
+                hints.append(plural_hint)
+
+            hint_block = ""
+            if hints:
+                hint_block = "\n".join(hints) + "\n\n"
+
+            # Always include action history in the contextual message for Langfuse visibility
+            action_history_str = memory.get_structured_action_history()
+            history_block = f"{action_history_str}\n\n" if action_history_str else ""
+
+            contextual_message = (
+                f"{hint_block}"
+                f"{history_block}"
+                f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
+                f"STATE_DESCRIPTION: {state_description}\n\n"
+                f"USER_REQUEST: {user_message}"
+            )
+            logger.debug(f"Built contextual message with action history: {user_message[:50]}")
+
+        # --- ROUTER LLM CALL ---
+        @observe(name="router_llm")
+        def run_router():
+            router_prompt = get_router_prompt().replace(
+                "{primitives_list}", get_primitives_list()
+            )
+            # Build messages - action history is now included in contextual_message
+            messages = [
+                {"role": "system", "content": router_prompt},
+                {"role": "user", "content": contextual_message},
+            ]
+
+            response = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                response_format={"type": "json_object"},
+                name="motion-router",
+            )
+            return response.choices[0].message.content
+
+        router_response_text = await asyncio.to_thread(run_router)
+        router_data = json.loads(router_response_text)
+
+        # Handle Routing Decision
+        response = router_data.get("verbal_response", "Processing request.")
+
+        if router_data.get("status") == "PRIMITIVE":
+            primitive_name = router_data.get("primitive_name")
+            angle = router_data.get("angle")
+            direction = router_data.get("direction")
+
+            result = resolve_primitive(
+                primitive_name,
+                angle=angle,
+                direction=direction,
+                speed=1.0,
+            )
+
+            if result:
+                joints, speed, resolved_name = result
+                validation = validate_waypoint(joints, clamp=True)
+                wp = Waypoint(
+                    joints=validation.validated_joints,
+                    speed=speed,
+                    reasoning=router_data.get("reasoning", ""),
+                    primitive_name=resolved_name,
+                    angle=angle,
+                    direction=direction,
+                )
+                wp.validation_result = validation
+                waypoints = [wp]
+
+                angle_info = f" angle={angle}°" if angle else ""
+                dir_info = f" direction={direction}" if direction else ""
+                logger.info(f"Router selected primitive: {resolved_name}{angle_info}{dir_info}")
+            else:
+                prim = get_primitive(primitive_name)
+                if prim:
+                    validation = validate_waypoint(prim.joints, clamp=True)
+                    wp = Waypoint(
+                        joints=validation.validated_joints,
+                        speed=1.0,
+                        reasoning=router_data.get("reasoning", ""),
+                        primitive_name=prim.name,
+                        angle=angle,
+                        direction=direction,
+                    )
+                    wp.validation_result = validation
+                    waypoints = [wp]
+                    logger.info(f"Router selected legacy primitive: {prim.name}")
+                else:
+                    logger.warning(f"Router hallucinated primitive: {primitive_name}")
+                    waypoints = []
+        else:
+            waypoints = []
+
+        # Execute waypoints
+        executed_waypoints = []
+        validation_warnings = []
+        sign_warnings = []
+
+        if simulator_instance and waypoints:
+            state_manager.save_checkpoint(
+                simulator_instance, f"before:{user_message[:30]}"
+            )
+
+            for wp in waypoints:
+                if wp.validation_result and wp.validation_result.had_violations:
+                    validation_warnings.extend(wp.validation_result.violations)
+
+                motion_sign_issues = validate_motion_sign(user_message, wp.joints)
+                if motion_sign_issues:
+                    sign_warnings.extend(motion_sign_issues)
+                    for warning in motion_sign_issues:
+                        logger.warning(f"Sign validation: {warning}")
+
+            executed_waypoints = await execute_waypoints(simulator_instance, waypoints)
+
+        # Update memory and build detailed waypoint data
+        waypoints_data = []
+        for wp in waypoints:
+            joints_degrees = {
+                joint: round(value * 180 / 3.14159, 1)
+                for joint, value in wp.joints.items()
+            }
+            wp_data = {
+                "primitive": wp.primitive_name,
+                "angle": wp.angle,
+                "direction": wp.direction,
+                "speed": wp.speed,
+                "reasoning": wp.reasoning,
+                "joints_radians": wp.joints,
+                "joints_degrees": joints_degrees,
+            }
+            waypoints_data.append(wp_data)
+
+        memory.add_exchange(user_message, response, waypoints_data)
+
+        # Record the interaction
+        recorder.log_interaction(
+            user_message=user_message,
+            assistant_response=response,
+            waypoints_extracted=waypoints_data,
+            waypoints_executed=executed_waypoints,
+            router_response=router_data,
+        )
+
+        # Update Langfuse trace with output and structured action history
+        langfuse.update_current_span(
+            output=response,
+            metadata={
+                "intent": intent.intent_type.value,
+                "waypoints_count": len(waypoints),
+                "router_status": router_data.get("status"),
+                "action_history": [
+                    {
+                        "primitive": a.get("primitive"),
+                        "angle": a.get("angle"),
+                        "direction": a.get("direction"),
+                        "speed": a.get("speed"),
+                    }
+                    for a in memory.action_history
+                ],
+            },
+        )
+
+        # Build response
+        response_data = {
+            "type": "chat_response",
+            "role": "assistant",
+            "content": response,
+            "waypoints": executed_waypoints,
+            "intent": intent.intent_type.value,
+            "joint_states": (
+                simulator_instance.get_all_joint_states() if simulator_instance else None
+            ),
+        }
+
+        if validation_warnings:
+            response_data["validation_warnings"] = validation_warnings
+
+        if sign_warnings:
+            response_data["sign_warnings"] = sign_warnings
+
+        return response_data
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -847,6 +1152,7 @@ async def websocket_endpoint(websocket: WebSocket):
     memory = HierarchicalMemory()
     state_manager = StateManager(max_checkpoints=10)
     recorder = ConversationRecorder()
+    session_id = f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     # Save initial state as checkpoint
     if simulator:
@@ -881,338 +1187,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
 
             elif msg_type == "chat":
-                # Chat message - use two-stage LLM architecture
+                # Chat message - process with full Langfuse tracing
                 user_message = message_data.get("content", "")
-
-                # === STAGE 1: Intent Classification ===
-                # First try fast-path keyword detection
-                has_previous = memory.last_user_request is not None
-                intent = quick_intent_check(user_message, has_previous)
-
-                if intent:
-                    logger.info(
-                        f"Fast-path intent: {intent.intent_type.value} ({intent.confidence:.2f})"
-                    )
-                else:
-                    # Fall back to LLM classification
-                    intent = await asyncio.to_thread(
-                        classify_intent,
-                        user_message,
-                        memory.last_user_request,
-                        memory.last_action_summary,
-                    )
-                    logger.info(
-                        f"LLM intent: {intent.intent_type.value} ({intent.confidence:.2f})"
-                    )
-
-                # Handle based on intent type
-                if intent.intent_type == IntentType.UNDO and simulator:
-                    # Simple undo - rollback without retry
-                    rollback_intent = RollbackIntent(
-                        command_type="undo", steps=1, confidence=intent.confidence
-                    )
-                    result = await execute_rollback(
-                        simulator, state_manager, rollback_intent
-                    )
-                    response = (
-                        "Done! Rolled back to previous state."
-                        if result
-                        else "No previous state to go back to."
-                    )
-                    await websocket.send_json(
-                        {
-                            "type": "chat_response",
-                            "role": "assistant",
-                            "content": response,
-                            "waypoints": [],
-                            "intent": intent.intent_type.value,
-                            "joint_states": simulator.get_all_joint_states(),
-                        }
-                    )
-                    continue
-
-                if intent.intent_type == IntentType.RESET and simulator:
-                    # Reset to initial position
-                    rollback_intent = RollbackIntent(
-                        command_type="reset", steps=-1, confidence=intent.confidence
-                    )
-                    result = await execute_rollback(
-                        simulator, state_manager, rollback_intent
-                    )
-                    response = "Reset to initial position."
-                    await websocket.send_json(
-                        {
-                            "type": "chat_response",
-                            "role": "assistant",
-                            "content": response,
-                            "waypoints": [],
-                            "intent": intent.intent_type.value,
-                            "joint_states": simulator.get_all_joint_states(),
-                        }
-                    )
-                    continue
-
-                # Note: CONVERSATION intent is no longer short-circuited here.
-                # Let the LLM handle all messages to allow flexible interpretation.
-
-                # === STAGE 2: Motion Planning ===
-                robot_state = simulator.get_all_joint_states() if simulator else {}
-                state_description = describe_joint_state(robot_state)
-
-                # Detect special patterns that need hints
-                degree_hint = detect_degrees_in_request(user_message)
-                plural_hint = detect_plural_arms(user_message)
-
-                # Build context based on intent type
-                if intent.intent_type == IntentType.ROLLBACK_AND_RETRY and simulator:
-                    # Capture what was executed BEFORE rollback for context
-                    pre_rollback_waypoints = memory.get_last_waypoints_summary()
-
-                    # First, rollback to previous state
-                    rollback_intent = RollbackIntent(
-                        command_type="undo", steps=1, confidence=intent.confidence
-                    )
-                    await execute_rollback(simulator, state_manager, rollback_intent)
-
-                    # Get fresh state after rollback
-                    robot_state = simulator.get_all_joint_states()
-                    state_description = describe_joint_state(robot_state)
-
-                    # Build retry context with full information
-                    retry_context = build_retry_context(
-                        intent,
-                        memory.last_user_request or user_message,
-                        memory.last_action_summary or "unknown",
-                        last_waypoints_summary=pre_rollback_waypoints,
-                    )
-                    contextual_message = (
-                        f"{retry_context}\n\n"
-                        f"CURRENT_STATE (after revert): {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                        f"STATE_DESCRIPTION: {state_description}\n"
-                        f"LAST_ACTION (failed, now reverted): {pre_rollback_waypoints}\n\n"
-                        f"USER_REQUEST: {intent.retry_instruction or memory.last_user_request or user_message}"
-                    )
-                    logger.info(f"Retrying with context: {retry_context[:100]}...")
-
-                elif intent.intent_type == IntentType.CORRECTION:
-                    # Correction - modify current state
-                    correction_context = build_correction_context(intent, robot_state)
-                    last_waypoints = memory.get_last_waypoints_summary()
-                    contextual_message = (
-                        f"{correction_context}\n\n"
-                        f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                        f"STATE_DESCRIPTION: {state_description}\n"
-                        f"LAST_ACTION: {last_waypoints}\n"
-                        f"PREVIOUS_REQUEST: {memory.last_user_request or 'unknown'}\n\n"
-                        f"USER_REQUEST: {user_message}\n\n"
-                        f"IMPORTANT: Only modify the joints from LAST_ACTION. Do NOT add new body parts."
-                    )
-                else:
-                    # Normal motion command - add hints if detected
-                    hints = []
-                    if degree_hint:
-                        hints.append(degree_hint)
-                    if plural_hint:
-                        hints.append(plural_hint)
-
-                    hint_block = ""
-                    if hints:
-                        hint_block = "\n".join(hints) + "\n\n"
-
-                    # Only include LAST_ACTION if the message references previous actions
-                    # This prevents context contamination for fresh commands
-                    include_last_action = needs_previous_context(user_message)
-
-                    if include_last_action:
-                        contextual_message = (
-                            f"{hint_block}"
-                            f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                            f"STATE_DESCRIPTION: {state_description}\n"
-                            f"LAST_ACTION: {memory.get_last_waypoints_summary()}\n\n"
-                            f"USER_REQUEST: {user_message}"
-                        )
-                        logger.debug(f"Including LAST_ACTION context for: {user_message[:50]}")
-                    else:
-                        contextual_message = (
-                            f"{hint_block}"
-                            f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                            f"STATE_DESCRIPTION: {state_description}\n\n"
-                            f"USER_REQUEST: {user_message}"
-                        )
-                        logger.debug(f"Fresh command, no LAST_ACTION context: {user_message[:50]}")
-
-                # --- NEW TWO-AGENT MOTION PLANNING ---
-                chat_history = memory.get_context_for_llm()
-
-                # Helper function for the router agent
-                def run_router():
-                    router_prompt = get_router_prompt().replace(
-                        "{primitives_list}", get_primitives_list()
-                    )
-                    return ollama.chat(
-                        model="llama3.2",
-                        messages=[
-                            {"role": "system", "content": router_prompt},
-                            {"role": "user", "content": contextual_message},
-                        ],
-                        format="json",
-                    )["message"]["content"]
-
-                # 1. Call Router
-                router_response_text = await asyncio.to_thread(run_router)
-                router_data = json.loads(router_response_text)
-
-                # 2. Handle NEED_CONTEXT - router needs previous action info
-                if router_data.get("status") == "NEED_CONTEXT":
-                    logger.info("Router requested context, re-calling with LAST_ACTION")
-                    # Rebuild contextual_message with LAST_ACTION included
-                    last_action_summary = memory.get_last_waypoints_summary()
-                    contextual_message = (
-                        f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                        f"STATE_DESCRIPTION: {state_description}\n"
-                        f"LAST_ACTION: {last_action_summary}\n\n"
-                        f"USER_REQUEST: {user_message}"
-                    )
-                    # Re-call router with context
-                    router_response_text = await asyncio.to_thread(run_router)
-                    router_data = json.loads(router_response_text)
-
-                # 3. Handle Routing Decision
-                response = router_data.get("verbal_response", "Processing request.")
-
-                if router_data.get("status") == "PRIMITIVE":
-                    # Easy path! LLM picked a primitive with optional angle/direction
-                    primitive_name = router_data.get("primitive_name")
-                    angle = router_data.get("angle")
-                    direction = router_data.get("direction")
-
-                    # Use the new resolve_primitive function
-                    result = resolve_primitive(
-                        primitive_name,
-                        angle=angle,
-                        direction=direction,
-                        speed=1.0,
-                    )
-
-                    if result:
-                        joints, speed, resolved_name = result
-                        validation = validate_waypoint(joints, clamp=True)
-                        wp = Waypoint(
-                            joints=validation.validated_joints,
-                            speed=speed,
-                            reasoning=router_data.get("reasoning", ""),
-                            primitive_name=resolved_name,
-                            angle=angle,
-                            direction=direction,
-                        )
-                        wp.validation_result = validation
-                        waypoints = [wp]
-
-                        angle_info = f" angle={angle}°" if angle else ""
-                        dir_info = f" direction={direction}" if direction else ""
-                        logger.info(f"Router selected primitive: {resolved_name}{angle_info}{dir_info}")
-                    else:
-                        # Fall back to legacy get_primitive
-                        prim = get_primitive(primitive_name)
-                        if prim:
-                            validation = validate_waypoint(prim.joints, clamp=True)
-                            wp = Waypoint(
-                                joints=validation.validated_joints,
-                                speed=1.0,
-                                reasoning=router_data.get("reasoning", ""),
-                                primitive_name=prim.name,
-                                angle=angle,
-                                direction=direction,
-                            )
-                            wp.validation_result = validation
-                            waypoints = [wp]
-                            logger.info(f"Router selected legacy primitive: {prim.name}")
-                        else:
-                            logger.warning(
-                                f"Router hallucinated primitive: {primitive_name}"
-                            )
-                            waypoints = []
-
-                else:
-                    waypoints = []
-
-                # --- CONTINUE WITH EXISTING EXECUTION ---
-                executed_waypoints = []
-                validation_warnings = []
-                sign_warnings = []
-
-                if simulator and waypoints:
-                    # Save checkpoint before executing waypoints
-                    state_manager.save_checkpoint(
-                        simulator, f"before:{user_message[:30]}"
-                    )
-
-                    # Collect validation warnings
-                    for wp in waypoints:
-                        if wp.validation_result and wp.validation_result.had_violations:
-                            validation_warnings.extend(wp.validation_result.violations)
-
-                        # Check for sign convention errors
-                        motion_sign_issues = validate_motion_sign(
-                            user_message, wp.joints
-                        )
-                        if motion_sign_issues:
-                            sign_warnings.extend(motion_sign_issues)
-                            for warning in motion_sign_issues:
-                                logger.warning(f"Sign validation: {warning}")
-
-                    # Execute waypoints
-                    executed_waypoints = await execute_waypoints(simulator, waypoints)
-
-                # Update memory and build detailed waypoint data for recording
-                waypoints_data = []
-                for wp in waypoints:
-                    # Compute angles in degrees from joint values for debugging
-                    joints_degrees = {
-                        joint: round(value * 180 / 3.14159, 1)
-                        for joint, value in wp.joints.items()
-                    }
-
-                    wp_data = {
-                        "primitive": wp.primitive_name,
-                        "angle": wp.angle,
-                        "direction": wp.direction,
-                        "speed": wp.speed,
-                        "reasoning": wp.reasoning,
-                        "joints_radians": wp.joints,
-                        "joints_degrees": joints_degrees,
-                    }
-                    waypoints_data.append(wp_data)
-
-                memory.add_exchange(user_message, response, waypoints_data)
-
-                # Record the interaction with detailed control data
-                recorder.log_interaction(
+                response_data = await process_chat_message(
                     user_message=user_message,
-                    assistant_response=response,
-                    waypoints_extracted=waypoints_data,
-                    waypoints_executed=executed_waypoints,
-                    router_response=router_data,
+                    memory=memory,
+                    state_manager=state_manager,
+                    recorder=recorder,
+                    simulator_instance=simulator,
+                    session_id=session_id,
                 )
-
-                # Build response with validation info
-                response_data = {
-                    "type": "chat_response",
-                    "role": "assistant",
-                    "content": response,
-                    "waypoints": executed_waypoints,
-                    "intent": intent.intent_type.value,
-                    "joint_states": (
-                        simulator.get_all_joint_states() if simulator else None
-                    ),
-                }
-
-                if validation_warnings:
-                    response_data["validation_warnings"] = validation_warnings
-
-                if sign_warnings:
-                    response_data["sign_warnings"] = sign_warnings
-
                 await websocket.send_json(response_data)
 
             elif msg_type == "get_state":

@@ -227,3 +227,6 @@ result-*
 .claude/
 
 recordings/
+
+# training code
+training/

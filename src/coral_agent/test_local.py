@@ -8,7 +8,7 @@ import os
 
 from dotenv import load_dotenv
 from loguru import logger
-import ollama
+from openai import OpenAI
 
 load_dotenv()
 
@@ -35,8 +35,9 @@ When you have a complete command, output it in this format at the end of your re
 def test_dialogue():
     """Test the dialogue system with text input."""
 
-    model = os.getenv("OLLAMA_MODEL", "llama3.2")
+    model = "gpt-4o-mini"
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     logger.info("CORAL Dialogue Test")
     logger.info(f"Using model: {model}")
@@ -53,9 +54,9 @@ def test_dialogue():
 
             messages.append({"role": "user", "content": user_input})
 
-            response = ollama.chat(model=model, messages=messages)
+            response = client.chat.completions.create(model=model, messages=messages)
 
-            assistant_message = response["message"]["content"]
+            assistant_message = response.choices[0].message.content
             messages.append({"role": "assistant", "content": assistant_message})
 
             print(f"\nAssistant: {assistant_message}")

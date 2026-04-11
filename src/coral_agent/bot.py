@@ -16,7 +16,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.services.ollama.llm import OLLamaLLMService
+from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 
 load_dotenv()
@@ -70,24 +70,24 @@ async def main():
         ),
     )
 
-    # Configure Ollama LLM service
-    ollama_service = OLLamaLLMService(
-        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-        model=os.getenv("OLLAMA_MODEL", "llama3.2"),
+    # Configure OpenAI LLM service
+    openai_service = OpenAILLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        model="gpt-4o-mini",
     )
 
     # Set up conversation context
     context = OpenAILLMContext(
         messages=[{"role": "system", "content": SYSTEM_PROMPT}]
     )
-    context_aggregator = ollama_service.create_context_aggregator(context)
+    context_aggregator = openai_service.create_context_aggregator(context)
 
     # Build the pipeline
     pipeline = Pipeline(
         [
             transport.input(),
             context_aggregator.user(),
-            ollama_service,
+            openai_service,
             context_aggregator.assistant(),
             transport.output(),
         ]
