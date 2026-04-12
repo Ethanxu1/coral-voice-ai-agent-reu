@@ -39,7 +39,6 @@ from coral_agent.primitives import (
     PRIMITIVES,
     categorize_primitive,
     detect_degrees_in_request,
-    detect_plural_arms,
     get_parameterized_primitive,
     get_primitive,
     get_primitives_list,
@@ -908,7 +907,6 @@ async def process_chat_message(
 
         # Detect special patterns that need hints
         degree_hint = detect_degrees_in_request(user_message)
-        plural_hint = detect_plural_arms(user_message)
 
         # Build context based on intent type
         if intent.intent_type == IntentType.ROLLBACK_AND_RETRY and simulator_instance:
@@ -949,15 +947,9 @@ async def process_chat_message(
             )
         else:
             # Normal motion command
-            hints = []
-            if degree_hint:
-                hints.append(degree_hint)
-            if plural_hint:
-                hints.append(plural_hint)
-
             hint_block = ""
-            if hints:
-                hint_block = "\n".join(hints) + "\n\n"
+            if degree_hint:
+                hint_block = degree_hint + "\n\n"
 
             # Always include action history in the contextual message for Langfuse visibility
             action_history_str = memory.get_structured_action_history()
@@ -998,55 +990,62 @@ async def process_chat_message(
         # Handle Routing Decision
         response = router_data.get("verbal_response", "Processing request.")
 
+        waypoints = []
         if router_data.get("status") == "PRIMITIVE":
-            primitive_name = router_data.get("primitive_name")
-            angle = router_data.get("angle")
-            direction = router_data.get("direction")
+            for wp_entry in router_data.get("waypoints", []):
+                primitive_names = wp_entry.get("primitives", [])
+                angle = wp_entry.get("angle")
+                direction = wp_entry.get("direction")
+                speed = wp_entry.get("speed", 1.0)
 
-            result = resolve_primitive(
-                primitive_name,
-                angle=angle,
-                direction=direction,
-                speed=1.0,
-            )
+                # Resolve and merge all primitives in this entry into one simultaneous move
+                merged_joints: dict[str, float] = {}
+                resolved_names: list[str] = []
+                final_speed = speed
 
-            if result:
-                joints, speed, resolved_name = result
-                validation = validate_waypoint(joints, clamp=True)
-                wp = Waypoint(
-                    joints=validation.validated_joints,
-                    speed=speed,
-                    reasoning=router_data.get("reasoning", ""),
-                    primitive_name=resolved_name,
-                    angle=angle,
-                    direction=direction,
-                )
-                wp.validation_result = validation
-                waypoints = [wp]
+                for primitive_name in primitive_names:
+                    result = resolve_primitive(
+                        primitive_name,
+                        angle=angle,
+                        direction=direction,
+                        speed=speed,
+                    )
+                    if result:
+                        joints, prim_speed, resolved_name = result
+                        merged_joints.update(joints)
+                        resolved_names.append(resolved_name)
+                        final_speed = prim_speed  # all share the same speed
+                        angle_info = f" angle={angle}°" if angle else ""
+                        dir_info = f" direction={direction}" if direction else ""
+                        logger.info(
+                            f"Router resolved primitive: {resolved_name}{angle_info}{dir_info}"
+                        )
+                    else:
+                        # Fall back to legacy get_primitive
+                        prim = get_primitive(primitive_name)
+                        if prim:
+                            merged_joints.update(prim.joints)
+                            resolved_names.append(prim.name)
+                            logger.info(f"Router resolved legacy primitive: {prim.name}")
+                        else:
+                            logger.warning(f"Router hallucinated primitive: {primitive_name}")
 
-                angle_info = f" angle={angle}°" if angle else ""
-                dir_info = f" direction={direction}" if direction else ""
-                logger.info(f"Router selected primitive: {resolved_name}{angle_info}{dir_info}")
-            else:
-                prim = get_primitive(primitive_name)
-                if prim:
-                    validation = validate_waypoint(prim.joints, clamp=True)
+                if merged_joints:
+                    validation = validate_waypoint(merged_joints, clamp=True)
                     wp = Waypoint(
                         joints=validation.validated_joints,
-                        speed=1.0,
+                        speed=final_speed,
                         reasoning=router_data.get("reasoning", ""),
-                        primitive_name=prim.name,
+                        primitive_name=",".join(resolved_names),
                         angle=angle,
                         direction=direction,
                     )
                     wp.validation_result = validation
-                    waypoints = [wp]
-                    logger.info(f"Router selected legacy primitive: {prim.name}")
-                else:
-                    logger.warning(f"Router hallucinated primitive: {primitive_name}")
-                    waypoints = []
-        else:
-            waypoints = []
+                    waypoints.append(wp)
+                    logger.info(
+                        f"Built waypoint from [{', '.join(resolved_names)}] "
+                        f"with {len(merged_joints)} joints at speed {final_speed}"
+                    )
 
         # Execute waypoints
         executed_waypoints = []

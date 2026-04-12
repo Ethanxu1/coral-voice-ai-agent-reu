@@ -150,6 +150,18 @@ EXAMPLE_BIDIRECTIONAL = {
     "verbal_response": "Looking left.",
 }
 
+EXAMPLE_HEAD_SHAKE = {
+    "thought_process": "User wants to shake head. Using sequential head_turn waypoints alternating left/right.",
+    "waypoints": [
+        {"reasoning": "Turn left",         "primitive": "head_turn", "angle": 55, "direction": "left",  "speed": 5.0},
+        {"reasoning": "Turn right",        "primitive": "head_turn", "angle": 55, "direction": "right", "speed": 5.0},
+        {"reasoning": "Turn left again",   "primitive": "head_turn", "angle": 55, "direction": "left",  "speed": 5.0},
+        {"reasoning": "Turn right again",  "primitive": "head_turn", "angle": 55, "direction": "right", "speed": 5.0},
+        {"reasoning": "Return to center",  "primitive": "head_turn", "angle": 0,  "direction": "left",  "speed": 3.0},
+    ],
+    "verbal_response": "Shaking head.",
+}
+
 EXAMPLE_RAW_JOINTS = {
     "thought_process": "User wants to raise just the right arm forward. "
     "This uses r_shoulder_fe with a negative value to raise arm forward.",
