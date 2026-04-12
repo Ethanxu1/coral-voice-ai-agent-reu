@@ -41,18 +41,27 @@ This project provides a voice-based AI agent that helps translate spoken instruc
 
 ## Prerequisites
 
-- [Nix](https://nixos.org/download.html) with flakes enabled
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- Node.js 22+
 - [Ollama](https://ollama.ai/) for LLM inference
+- System libraries (see step 1 below)
 
 ## Setup
 
-### 1. Enter the Nix development environment
+### 1. Install system dependencies
+
+**Arch Linux:**
 
 ```bash
-nix develop
+sudo pacman -S --needed \
+  portaudio libsndfile ffmpeg \
+  alsa-lib libpulse \
+  base-devel pkg-config cmake openssl \
+  mesa glfw-x11 \
+  libx11 libxi libxrandr libxcursor libxinerama \
+  nodejs
 ```
-
-This provides Python 3.12, uv, Node.js 22, MuJoCo, and all required dependencies.
 
 ### 2. Install Python dependencies
 
@@ -62,18 +71,10 @@ uv sync
 
 ### 3. Download robot model assets
 
-The robot models are not included in the repository. Download the Apptronik Apollo model from MuJoCo Menagerie:
+The robot models are not included in the repository. Run the provided script to download the Apptronik Apollo model from MuJoCo Menagerie:
 
 ```bash
-# Clone MuJoCo Menagerie (temporarily)
-git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git /tmp/menagerie
-
-# Copy the Apollo model to assets/
-mkdir -p assets
-cp -r /tmp/menagerie/apptronik_apollo assets/
-
-# Clean up
-rm -rf /tmp/menagerie
+./scripts/download_assets.sh
 ```
 
 ### 4. Install frontend dependencies
@@ -165,7 +166,8 @@ coral-voice-ai-agent-reu/
 │   │   │   └── SimulatorControls.tsx
 │   │   └── ...
 │   └── ...
-├── flake.nix                     # Nix development environment
+├── scripts/
+│   └── download_assets.sh        # Downloads robot model assets
 ├── pyproject.toml                # Python dependencies
 └── README.md
 ```
