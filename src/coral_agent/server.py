@@ -248,12 +248,15 @@ async def execute_waypoints(
         executed.append(
             {
                 "waypoint_index": i,
+                "primitive_name": waypoint.primitive_name,
+                "angle": waypoint.angle,
                 "joints": waypoint.joints,
                 "speed": waypoint.speed,
             }
         )
         logger.info(
-            f"Executed waypoint {i}: {waypoint.joints} at speed {waypoint.speed}"
+            f"Executed waypoint {i}: {waypoint.primitive_name or 'direct'} "
+            f"angle={waypoint.angle} speed={waypoint.speed}"
         )
 
     return executed

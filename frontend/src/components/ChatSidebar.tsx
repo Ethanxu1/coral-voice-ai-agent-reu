@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 interface WaypointInfo {
   waypoint_index: number
+  primitive_name: string | null
+  angle: number | null
   joints: { [key: string]: number }
   speed: number
 }
@@ -62,9 +64,9 @@ function ChatSidebar({
   }
 
   const formatWaypointSummary = (waypoint: WaypointInfo) => {
-    const jointCount = Object.keys(waypoint.joints).length
-    const speedLabel = waypoint.speed < 0.7 ? 'slow' : waypoint.speed > 1.5 ? 'fast' : 'normal'
-    return `${jointCount} joint${jointCount > 1 ? 's' : ''} (${speedLabel})`
+    const name = waypoint.primitive_name ?? 'direct'
+    const angle = waypoint.angle != null ? ` ${waypoint.angle}°` : ''
+    return `${name}${angle} speed=${waypoint.speed}`
   }
 
   return (
