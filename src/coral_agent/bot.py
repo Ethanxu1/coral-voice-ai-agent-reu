@@ -21,6 +21,8 @@ from pipecat.transports.daily.transport import DailyParams, DailyTransport
 
 load_dotenv()
 
+from coral_agent.config import LLM_MODEL
+
 # System prompt for the CORAL dialogue agent
 SYSTEM_PROMPT = """You are a friendly robot teaching assistant helping children program robot movements.
 
@@ -73,7 +75,7 @@ async def main():
     # Configure OpenAI LLM service
     openai_service = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model="gpt-4o-mini",
+        model=LLM_MODEL,
     )
 
     # Set up conversation context

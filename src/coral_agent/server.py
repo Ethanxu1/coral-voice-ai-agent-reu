@@ -2,8 +2,8 @@
 
 import asyncio
 import json
+import math
 import os
-import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -22,43 +22,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel
 
-from coral_agent.intent import (
-    IntentResult,
-    IntentType,
-    build_correction_context,
-    build_retry_context,
-    classify_intent,
-    quick_intent_check,
-)
+from coral_agent.config import LLM_MODEL
 from coral_agent.gesture_library import (
     GESTURE_LIBRARY,
-    AnimatedGesture,
     get_gesture as get_library_gesture,
 )
 from coral_agent.primitives import (
-    PRIMITIVES,
-    categorize_primitive,
-    detect_degrees_in_request,
     get_parameterized_primitive,
     get_primitive,
-    get_primitives_list,
     get_primitives_metadata,
     resolve_primitive,
 )
 
 
 def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
-    """Convert joint state from radians to degrees for LLM context."""
-    return {joint: round(value * 180 / 3.14159, 1) for joint, value in state.items()}
+    return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
 
 
-from coral_agent.schemas import LLMResponse, WaypointOutput
 from coral_agent.simulator import ApolloSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
-    RollbackIntent,
     StateManager,
-    execute_rollback,
 )
 from coral_agent.validation import (
     ValidationResult,
@@ -76,10 +60,14 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 simulator: ApolloSimulator | None = None
 
 
+_router_prompt_cache: str | None = None
+
+
 def get_router_prompt() -> str:
-    prompt_path = Path(__file__).parent / "prompts" / "router.md"
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        return f.read()
+    global _router_prompt_cache
+    if _router_prompt_cache is None:
+        _router_prompt_cache = (Path(__file__).parent / "prompts" / "router.md").read_text(encoding="utf-8")
+    return _router_prompt_cache
 
 
 @asynccontextmanager
@@ -167,16 +155,9 @@ class ConversationRecorder:
         Args:
             user_message: The user's input message
             assistant_response: The verbal response to the user
-            waypoints_extracted: Detailed waypoint data including:
-                - primitive: Name of the primitive used
-                - angle: Requested angle in degrees (if parameterized)
-                - direction: Direction for bidirectional primitives
-                - speed: Movement speed multiplier
-                - reasoning: LLM's reasoning for this waypoint
-                - joints_radians: Joint values in radians
-                - joints_degrees: Joint values converted to degrees for readability
+            waypoints_extracted: Waypoint data (primitive, angle, direction, speed, joints_radians, joints_degrees)
             waypoints_executed: Execution results from the simulator
-            router_response: The router LLM's response (status, primitive selection)
+            router_response: The motion planner's raw JSON response
         """
         interaction = {
             "timestamp": datetime.now().isoformat(),
@@ -203,221 +184,22 @@ class ConversationRecorder:
 
 
 class Waypoint:
-    """A single waypoint with target joint positions and speed."""
-
     def __init__(
         self,
         joints: dict[str, float],
         speed: float = 1.0,
-        reasoning: str = "",
         primitive_name: str | None = None,
         angle: float | None = None,
         direction: str | None = None,
     ):
-        self.joints = joints  # {"joint_name": target_position}
-        self.speed = max(0.1, min(speed, 8.0))  # Clamp speed between 0.1 and 8.0
-        self.reasoning = reasoning
+        self.joints = joints
+        self.speed = max(0.1, min(speed, 8.0))
         self.primitive_name = primitive_name
-        self.angle = angle  # Angle in degrees (if using parameterized primitive)
-        self.direction = direction  # Direction for bidirectional primitives
+        self.angle = angle
+        self.direction = direction
         self.validation_result: ValidationResult | None = None
 
 
-def normalize_waypoint_joints(raw_joints: dict) -> dict[str, float]:
-    """Normalize waypoint joints to {joint_name: value} format.
-
-    Handles two formats:
-    1. Correct: {"neck_yaw": 0.7, "neck_pitch": 0.3}
-    2. LLM mistake: {"joint_name": "neck_yaw", "value": 0.7}
-    """
-    # Check if this is the incorrect format with "joint_name" and "value" keys
-    if "joint_name" in raw_joints and "value" in raw_joints:
-        joint_name = raw_joints["joint_name"]
-        value = raw_joints["value"]
-        if isinstance(joint_name, str) and isinstance(value, (int, float)):
-            return {joint_name: float(value)}
-        else:
-            logger.warning(f"Invalid joint_name/value types: {raw_joints}")
-            return {}
-
-    # Otherwise assume correct format - filter to only numeric values
-    normalized = {}
-    for key, val in raw_joints.items():
-        if key == "speed":
-            continue  # Skip speed if it was included in the joints object
-        if isinstance(val, (int, float)):
-            normalized[key] = float(val)
-        else:
-            logger.warning(f"Skipping non-numeric joint value: {key}={val}")
-
-    return normalized
-
-
-def extract_waypoints(text: str) -> list[Waypoint]:
-    """Extract waypoints from LLM response text.
-
-    Supports multiple formats:
-    1. New structured JSON: {"thought_process": ..., "waypoints": [...], "verbal_response": ...}
-    2. Legacy format: [WAYPOINT: {"joint": value, ...}, speed]
-    """
-    waypoints = []
-
-    # First, try to parse as structured JSON response
-    structured_waypoints = extract_structured_waypoints(text)
-    if structured_waypoints:
-        return structured_waypoints
-
-    # Fall back to legacy [WAYPOINT: ...] format
-    pattern = r"\[WAYPOINT:\s*(\{[^}]+\})(?:\s*,\s*(\d+(?:\.\d+)?))?\s*\]"
-    matches = re.findall(pattern, text, re.IGNORECASE)
-
-    for joints_str, speed_str in matches:
-        try:
-            raw_joints = json.loads(joints_str)
-            joints = normalize_waypoint_joints(raw_joints)
-
-            if not joints:
-                logger.warning(f"No valid joints extracted from: {joints_str}")
-                continue
-
-            speed = float(speed_str) if speed_str else 1.0
-
-            # Validate and clamp joint values
-            validation = validate_waypoint(joints, clamp=True)
-            if validation.had_violations:
-                for violation in validation.violations:
-                    logger.warning(f"Joint limit violation: {violation}")
-
-            wp = Waypoint(joints=validation.validated_joints, speed=speed)
-            wp.validation_result = validation
-            waypoints.append(wp)
-            logger.info(
-                f"Extracted waypoint: joints={validation.validated_joints}, speed={speed}"
-            )
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse waypoint JSON: {joints_str}, error: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to process waypoint: {e}")
-
-    return waypoints
-
-
-def extract_structured_waypoints(text: str) -> list[Waypoint] | None:
-    """Try to extract waypoints from structured JSON format.
-
-    Returns None if no structured format found.
-    """
-    # Look for JSON block in the response
-    json_pattern = r"```json\s*(.*?)\s*```"
-    json_match = re.search(json_pattern, text, re.DOTALL)
-
-    if json_match:
-        json_str = json_match.group(1)
-    else:
-        # Try to find raw JSON object
-        try:
-            # Look for object that starts with { and has thought_process
-            start = text.find('{"thought_process"')
-            if start == -1:
-                start = text.find('{\n  "thought_process"')
-            if start == -1:
-                return None
-
-            # Find matching closing brace
-            depth = 0
-            end = start
-            for i, char in enumerate(text[start:]):
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = start + i + 1
-                        break
-            json_str = text[start:end]
-        except Exception:
-            return None
-
-    try:
-        data = json.loads(json_str)
-        response = LLMResponse(**data)
-        waypoints = []
-
-        for wp_data in response.waypoints:
-            if wp_data.primitive:
-                # Use the new resolve_primitive function with angle/direction support
-                result = resolve_primitive(
-                    wp_data.primitive,
-                    angle=wp_data.angle,
-                    direction=wp_data.direction,
-                    speed=wp_data.speed,
-                )
-
-                if result:
-                    joints, speed, resolved_name = result
-                    validation = validate_waypoint(joints, clamp=True)
-                    wp = Waypoint(
-                        joints=validation.validated_joints,
-                        speed=speed,
-                        reasoning=wp_data.reasoning,
-                        primitive_name=resolved_name,
-                        angle=wp_data.angle,
-                        direction=wp_data.direction,
-                    )
-                    wp.validation_result = validation
-                    waypoints.append(wp)
-
-                    # Log details about what was resolved
-                    angle_info = f" angle={wp_data.angle}°" if wp_data.angle else ""
-                    dir_info = f" direction={wp_data.direction}" if wp_data.direction else ""
-                    logger.info(
-                        f"Resolved primitive '{wp_data.primitive}' -> '{resolved_name}'{angle_info}{dir_info} "
-                        f"with {len(joints)} joints: {list(joints.keys())}"
-                    )
-                else:
-                    # Fall back to legacy get_primitive for backward compatibility
-                    prim = get_primitive(wp_data.primitive)
-                    if prim:
-                        joints = prim.joints.copy()
-                        validation = validate_waypoint(joints, clamp=True)
-                        wp = Waypoint(
-                            joints=validation.validated_joints,
-                            speed=wp_data.speed,
-                            reasoning=wp_data.reasoning,
-                            primitive_name=prim.name,
-                        )
-                        wp.validation_result = validation
-                        waypoints.append(wp)
-                        logger.info(
-                            f"Legacy resolved primitive '{prim.name}' to {len(joints)} joints"
-                        )
-                    else:
-                        logger.warning(
-                            f"Unknown primitive '{wp_data.primitive}' - no match found"
-                        )
-            elif wp_data.joints:
-                validation = validate_waypoint(wp_data.joints, clamp=True)
-                if validation.had_violations:
-                    for violation in validation.violations:
-                        logger.warning(f"Joint limit violation: {violation}")
-
-                wp = Waypoint(
-                    joints=validation.validated_joints,
-                    speed=wp_data.speed,
-                    reasoning=wp_data.reasoning,
-                )
-                wp.validation_result = validation
-                waypoints.append(wp)
-
-        logger.info(f"Extracted {len(waypoints)} waypoints from structured response")
-        return waypoints if waypoints else None
-
-    except json.JSONDecodeError as e:
-        logger.debug(f"Failed to parse structured JSON: {e}")
-        return None
-    except Exception as e:
-        logger.debug(f"Failed to process structured response: {e}")
-        return None
 
 
 async def execute_waypoints(
@@ -687,70 +469,48 @@ class HierarchicalMemory:
     Maintains:
     - Short-term: Last 3-5 exchanges (full detail)
     - Mid-term: Summarized task history
-    - Last executed: Most recent waypoints for modification
-    - Last user request: For retry/correction context
+    - Action history: Structured log for Langfuse tracing and intent context
     """
 
     def __init__(self, short_term_limit: int = 6, mid_term_limit: int = 10):
         self.short_term: list[dict] = []
         self.mid_term_summaries: list[str] = []
-        self.last_executed_waypoints: list[dict] = []
-        self.last_user_request: str | None = None
-        self.last_action_summary: str | None = None
         self.short_term_limit = short_term_limit
         self.mid_term_limit = mid_term_limit
-        # Structured action history for Langfuse tracing
         self.action_history: list[dict] = []
 
     def add_exchange(
         self, user_msg: str, assistant_msg: str, waypoints: list[dict]
     ) -> None:
-        """Add a conversation exchange."""
         self.short_term.append({"role": "user", "content": user_msg})
 
-        # Include joint values in assistant message so LLM has full context
         if waypoints:
-            joints_info = []
-            for wp in waypoints:
-                joints = wp.get("joints", {})
-                if joints:
-                    joints_info.append(f"Joints set: {joints}")
-            joints_summary = " | ".join(joints_info) if joints_info else ""
+            joints_summary = " | ".join(
+                f"Joints set: {wp['joints']}" for wp in waypoints if wp.get("joints")
+            )
             full_response = f"{assistant_msg} [{joints_summary}]" if joints_summary else assistant_msg
         else:
             full_response = assistant_msg
 
         self.short_term.append({"role": "assistant", "content": full_response})
-        self.last_executed_waypoints = waypoints
-        self.last_user_request = user_msg
 
-        # Build action summary for intent classifier
-        if waypoints:
-            joint_names = []
-            for wp in waypoints:
-                joint_names.extend(wp.get("joints", {}).keys())
-                # Add to structured action history
-                action_entry = {
-                    "user_request": user_msg,
+        self.action_history.append({
+            "user_request": user_msg,
+            "waypoints": [
+                {
                     "primitive": wp.get("primitive"),
                     "angle": wp.get("angle"),
                     "direction": wp.get("direction"),
                     "speed": wp.get("speed", 1.0),
                 }
-                self.action_history.append(action_entry)
-            self.last_action_summary = f"Moved joints: {', '.join(set(joint_names))}"
-        else:
-            self.last_action_summary = "No motion executed"
+                for wp in waypoints
+            ],
+        })
 
-        # Roll over to mid-term if needed
         if len(self.short_term) > self.short_term_limit * 2:
-            # Summarize oldest exchanges
             old_user = self.short_term.pop(0)["content"]
-            old_assistant = self.short_term.pop(0)["content"]
-            summary = f"User asked: {old_user[:50]}... Robot responded with motion."
-            self.mid_term_summaries.append(summary)
-
-            # Keep mid-term bounded
+            self.short_term.pop(0)
+            self.mid_term_summaries.append(f"User asked: {old_user[:50]}... Robot responded with motion.")
             if len(self.mid_term_summaries) > self.mid_term_limit:
                 self.mid_term_summaries.pop(0)
 
@@ -770,48 +530,41 @@ class HierarchicalMemory:
 
         return context
 
-    def get_last_waypoints_summary(self) -> str:
-        """Get summary of last executed waypoints for modification requests."""
-        if not self.last_executed_waypoints:
-            return "No recent waypoints executed."
-
-        summaries = []
-        for wp in self.last_executed_waypoints:
-            joints = wp.get("joints", {})
-            speed = wp.get("speed", 1.0)
-            primitive = wp.get("primitive")
-            if primitive:
-                summaries.append(f"Used primitive '{primitive}' at speed {speed}")
-            else:
-                summaries.append(
-                    f"Moved {list(joints.keys())} to {list(joints.values())} at speed {speed}"
-                )
-
-        return "Last executed: " + "; ".join(summaries)
-
     def get_structured_action_history(self) -> str:
         """Get structured action history for Langfuse tracing.
 
-        Returns history in format: "primitive -> (angle: 90, speed: 1.0)"
+        Returns history in format:
+        "1. 'user request' → [primitive direction angle° speed X, ...]"
         """
         if not self.action_history:
             return ""
 
         history_lines = []
-        for i, action in enumerate(self.action_history, 1):
-            primitive = action.get("primitive") or "direct_joints"
-            params = []
-            if action.get("angle") is not None:
-                params.append(f"angle: {action['angle']}")
-            if action.get("direction"):
-                params.append(f"direction: {action['direction']}")
-            if action.get("speed") is not None:
-                params.append(f"speed: {action['speed']}")
-
-            params_str = ", ".join(params) if params else "default"
-            history_lines.append(f"{i}. {primitive} -> ({params_str})")
+        for i, seq in enumerate(self.action_history, 1):
+            user_req = seq.get("user_request", "unknown")
+            waypoints = seq.get("waypoints", [])
+            if waypoints:
+                wp_parts = []
+                for wp in waypoints:
+                    primitive = wp.get("primitive") or "direct_joints"
+                    parts = [primitive]
+                    if wp.get("direction"):
+                        parts.append(wp["direction"])
+                    if wp.get("angle") is not None:
+                        parts.append(f"{wp['angle']}°")
+                    if wp.get("speed") is not None:
+                        parts.append(f"speed {wp['speed']}")
+                    wp_parts.append(" ".join(parts))
+                wp_summary = ", ".join(wp_parts)
+                history_lines.append(f'{i}. "{user_req}" → [{wp_summary}]')
+            else:
+                history_lines.append(f'{i}. "{user_req}" → [no motion]')
 
         return "ACTION_HISTORY:\n" + "\n".join(history_lines)
+
+    def get_last_n_action_sequences(self, n: int = 5) -> list[dict]:
+        """Return the last N action sequences for the intent classifier."""
+        return self.action_history[-n:] if self.action_history else []
 
 
 @observe(name="process_chat_message")
@@ -823,231 +576,101 @@ async def process_chat_message(
     simulator_instance: "ApolloSimulator | None",
     session_id: str,
 ) -> dict:
-    """Process a chat message with full Langfuse tracing.
-
-    Creates a parent trace for all LLM calls involved in processing a single user message.
-    """
-    # Get Langfuse client for trace updates
+    """Process a user message: single LLM call → primitive resolution → joint execution."""
     langfuse = get_client()
 
-    # Use propagate_attributes for session/user metadata (trace-level attributes)
     with propagate_attributes(
         session_id=session_id,
         user_id="coral-user",
         tags=["coral-agent", "robot-control"],
     ):
-        # Update current span with input only
         langfuse.update_current_span(input=user_message)
 
-        # === STAGE 1: Intent Classification ===
-        has_previous = memory.last_user_request is not None
-        intent = quick_intent_check(user_message, has_previous)
-
-        if intent:
-            logger.info(
-                f"Fast-path intent: {intent.intent_type.value} ({intent.confidence:.2f})"
-            )
-        else:
-            # Fall back to LLM classification
-            intent = await asyncio.to_thread(
-                classify_intent,
-                user_message,
-                memory.last_user_request,
-                memory.last_action_summary,
-            )
-            logger.info(
-                f"LLM intent: {intent.intent_type.value} ({intent.confidence:.2f})"
-            )
-
-        # Handle UNDO intent
-        if intent.intent_type == IntentType.UNDO and simulator_instance:
-            rollback_intent = RollbackIntent(
-                command_type="undo", steps=1, confidence=intent.confidence
-            )
-            result = await execute_rollback(
-                simulator_instance, state_manager, rollback_intent
-            )
-            response = (
-                "Done! Rolled back to previous state."
-                if result
-                else "No previous state to go back to."
-            )
-            langfuse.update_current_span(output=response)
-            return {
-                "type": "chat_response",
-                "role": "assistant",
-                "content": response,
-                "waypoints": [],
-                "intent": intent.intent_type.value,
-                "joint_states": simulator_instance.get_all_joint_states(),
-            }
-
-        # Handle RESET intent
-        if intent.intent_type == IntentType.RESET and simulator_instance:
-            rollback_intent = RollbackIntent(
-                command_type="reset", steps=-1, confidence=intent.confidence
-            )
-            result = await execute_rollback(
-                simulator_instance, state_manager, rollback_intent
-            )
-            response = "Reset to initial position."
-            langfuse.update_current_span(output=response)
-            return {
-                "type": "chat_response",
-                "role": "assistant",
-                "content": response,
-                "waypoints": [],
-                "intent": intent.intent_type.value,
-                "joint_states": simulator_instance.get_all_joint_states(),
-            }
-
-        # === STAGE 2: Motion Planning ===
         robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
         state_description = describe_joint_state(robot_state)
 
-        # Detect special patterns that need hints
-        degree_hint = detect_degrees_in_request(user_message)
+        contextual_message = (
+            f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
+            f"STATE_DESCRIPTION: {state_description}\n\n"
+            f"USER_REQUEST: {user_message}"
+        )
 
-        # Build context based on intent type
-        if intent.intent_type == IntentType.ROLLBACK_AND_RETRY and simulator_instance:
-            pre_rollback_waypoints = memory.get_last_waypoints_summary()
-            rollback_intent = RollbackIntent(
-                command_type="undo", steps=1, confidence=intent.confidence
-            )
-            await execute_rollback(simulator_instance, state_manager, rollback_intent)
-            robot_state = simulator_instance.get_all_joint_states()
-            state_description = describe_joint_state(robot_state)
-
-            retry_context = build_retry_context(
-                intent,
-                memory.last_user_request or user_message,
-                memory.last_action_summary or "unknown",
-                last_waypoints_summary=pre_rollback_waypoints,
-            )
-            contextual_message = (
-                f"{retry_context}\n\n"
-                f"CURRENT_STATE (after revert): {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                f"STATE_DESCRIPTION: {state_description}\n"
-                f"LAST_ACTION (failed, now reverted): {pre_rollback_waypoints}\n\n"
-                f"USER_REQUEST: {intent.retry_instruction or memory.last_user_request or user_message}"
-            )
-            logger.info(f"Retrying with context: {retry_context[:100]}...")
-
-        elif intent.intent_type == IntentType.CORRECTION:
-            correction_context = build_correction_context(intent, robot_state)
-            last_waypoints = memory.get_last_waypoints_summary()
-            contextual_message = (
-                f"{correction_context}\n\n"
-                f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                f"STATE_DESCRIPTION: {state_description}\n"
-                f"LAST_ACTION: {last_waypoints}\n"
-                f"PREVIOUS_REQUEST: {memory.last_user_request or 'unknown'}\n\n"
-                f"USER_REQUEST: {user_message}\n\n"
-                f"IMPORTANT: Only modify the joints from LAST_ACTION. Do NOT add new body parts."
-            )
-        else:
-            # Normal motion command
-            hint_block = ""
-            if degree_hint:
-                hint_block = degree_hint + "\n\n"
-
-            # Always include action history in the contextual message for Langfuse visibility
-            action_history_str = memory.get_structured_action_history()
-            history_block = f"{action_history_str}\n\n" if action_history_str else ""
-
-            contextual_message = (
-                f"{hint_block}"
-                f"{history_block}"
-                f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
-                f"STATE_DESCRIPTION: {state_description}\n\n"
-                f"USER_REQUEST: {user_message}"
-            )
-            logger.debug(f"Built contextual message with action history: {user_message[:50]}")
-
-        # --- ROUTER LLM CALL ---
-        @observe(name="router_llm")
-        def run_router():
-            router_prompt = get_router_prompt().replace(
-                "{primitives_list}", get_primitives_list()
-            )
-            # Build messages - action history is now included in contextual_message
+        # --- SINGLE LLM CALL: Motion Planner ---
+        @observe(name="motion_planner_llm")
+        def run_motion_planner():
+            prompt = get_router_prompt()
             messages = [
-                {"role": "system", "content": router_prompt},
+                {"role": "system", "content": prompt},
                 {"role": "user", "content": contextual_message},
             ]
-
-            response = openai.chat.completions.create(
-                model="gpt-4o-mini",
+            llm_response = openai.chat.completions.create(
+                model=LLM_MODEL,
                 messages=messages,
                 response_format={"type": "json_object"},
-                name="motion-router",
+                name="motion-planner",
             )
-            return response.choices[0].message.content
+            return llm_response.choices[0].message.content
 
-        router_response_text = await asyncio.to_thread(run_router)
-        router_data = json.loads(router_response_text)
+        planner_response_text = await asyncio.to_thread(run_motion_planner)
+        plan_data = json.loads(planner_response_text)
 
-        # Handle Routing Decision
-        response = router_data.get("verbal_response", "Processing request.")
+        response = ""
 
         waypoints = []
-        if router_data.get("status") == "PRIMITIVE":
-            for wp_entry in router_data.get("waypoints", []):
-                primitive_names = wp_entry.get("primitives", [])
-                angle = wp_entry.get("angle")
-                direction = wp_entry.get("direction")
-                speed = wp_entry.get("speed", 1.0)
+        for wp_entry in plan_data.get("waypoints", []):
+            primitive_names = wp_entry.get("primitives", [])
+            angle = wp_entry.get("angle")
+            direction = wp_entry.get("direction")
+            speed = wp_entry.get("speed", 1.0)
 
-                # Resolve and merge all primitives in this entry into one simultaneous move
-                merged_joints: dict[str, float] = {}
-                resolved_names: list[str] = []
-                final_speed = speed
+            # Resolve and merge all primitives in this entry into one simultaneous move
+            merged_joints: dict[str, float] = {}
+            resolved_names: list[str] = []
+            final_speed = speed
 
-                for primitive_name in primitive_names:
-                    result = resolve_primitive(
-                        primitive_name,
-                        angle=angle,
-                        direction=direction,
-                        speed=speed,
-                    )
-                    if result:
-                        joints, prim_speed, resolved_name = result
-                        merged_joints.update(joints)
-                        resolved_names.append(resolved_name)
-                        final_speed = prim_speed  # all share the same speed
-                        angle_info = f" angle={angle}°" if angle else ""
-                        dir_info = f" direction={direction}" if direction else ""
-                        logger.info(
-                            f"Router resolved primitive: {resolved_name}{angle_info}{dir_info}"
-                        )
-                    else:
-                        # Fall back to legacy get_primitive
-                        prim = get_primitive(primitive_name)
-                        if prim:
-                            merged_joints.update(prim.joints)
-                            resolved_names.append(prim.name)
-                            logger.info(f"Router resolved legacy primitive: {prim.name}")
-                        else:
-                            logger.warning(f"Router hallucinated primitive: {primitive_name}")
-
-                if merged_joints:
-                    validation = validate_waypoint(merged_joints, clamp=True)
-                    wp = Waypoint(
-                        joints=validation.validated_joints,
-                        speed=final_speed,
-                        reasoning=router_data.get("reasoning", ""),
-                        primitive_name=",".join(resolved_names),
-                        angle=angle,
-                        direction=direction,
-                    )
-                    wp.validation_result = validation
-                    waypoints.append(wp)
+            for primitive_name in primitive_names:
+                result = resolve_primitive(
+                    primitive_name,
+                    angle=angle,
+                    direction=direction,
+                    speed=speed,
+                )
+                if result:
+                    joints, prim_speed, resolved_name = result
+                    merged_joints.update(joints)
+                    resolved_names.append(resolved_name)
+                    final_speed = prim_speed
+                    angle_info = f" angle={angle}°" if angle else ""
+                    dir_info = f" direction={direction}" if direction else ""
                     logger.info(
-                        f"Built waypoint from [{', '.join(resolved_names)}] "
-                        f"with {len(merged_joints)} joints at speed {final_speed}"
+                        f"Planner resolved primitive: {resolved_name}{angle_info}{dir_info}"
                     )
+                else:
+                    # Fall back to legacy get_primitive
+                    prim = get_primitive(primitive_name)
+                    if prim:
+                        merged_joints.update(prim.joints)
+                        resolved_names.append(prim.name)
+                        logger.info(f"Planner resolved legacy primitive: {prim.name}")
+                    else:
+                        logger.warning(f"Planner hallucinated primitive: {primitive_name}")
 
-        # Execute waypoints
+            if merged_joints:
+                validation = validate_waypoint(merged_joints, clamp=True)
+                wp = Waypoint(
+                    joints=validation.validated_joints,
+                    speed=final_speed,
+                    primitive_name=",".join(resolved_names),
+                    angle=angle,
+                    direction=direction,
+                )
+                wp.validation_result = validation
+                waypoints.append(wp)
+                logger.info(
+                    f"Built waypoint from [{', '.join(resolved_names)}] "
+                    f"with {len(merged_joints)} joints at speed {final_speed}"
+                )
+
         executed_waypoints = []
         validation_warnings = []
         sign_warnings = []
@@ -1056,74 +679,49 @@ async def process_chat_message(
             state_manager.save_checkpoint(
                 simulator_instance, f"before:{user_message[:30]}"
             )
-
             for wp in waypoints:
                 if wp.validation_result and wp.validation_result.had_violations:
                     validation_warnings.extend(wp.validation_result.violations)
-
                 motion_sign_issues = validate_motion_sign(user_message, wp.joints)
                 if motion_sign_issues:
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
-
             executed_waypoints = await execute_waypoints(simulator_instance, waypoints)
 
-        # Update memory and build detailed waypoint data
-        waypoints_data = []
-        for wp in waypoints:
-            joints_degrees = {
-                joint: round(value * 180 / 3.14159, 1)
-                for joint, value in wp.joints.items()
-            }
-            wp_data = {
+        waypoints_data = [
+            {
                 "primitive": wp.primitive_name,
                 "angle": wp.angle,
                 "direction": wp.direction,
                 "speed": wp.speed,
-                "reasoning": wp.reasoning,
                 "joints_radians": wp.joints,
-                "joints_degrees": joints_degrees,
+                "joints_degrees": convert_state_to_degrees(wp.joints),
             }
-            waypoints_data.append(wp_data)
+            for wp in waypoints
+        ]
 
         memory.add_exchange(user_message, response, waypoints_data)
-
-        # Record the interaction
         recorder.log_interaction(
             user_message=user_message,
             assistant_response=response,
             waypoints_extracted=waypoints_data,
             waypoints_executed=executed_waypoints,
-            router_response=router_data,
+            router_response=plan_data,
         )
-
-        # Update Langfuse trace with output and structured action history
         langfuse.update_current_span(
             output=response,
             metadata={
-                "intent": intent.intent_type.value,
                 "waypoints_count": len(waypoints),
-                "router_status": router_data.get("status"),
-                "action_history": [
-                    {
-                        "primitive": a.get("primitive"),
-                        "angle": a.get("angle"),
-                        "direction": a.get("direction"),
-                        "speed": a.get("speed"),
-                    }
-                    for a in memory.action_history
-                ],
+                "action_history": memory.action_history,
             },
         )
 
-        # Build response
         response_data = {
             "type": "chat_response",
             "role": "assistant",
             "content": response,
             "waypoints": executed_waypoints,
-            "intent": intent.intent_type.value,
             "joint_states": (
                 simulator_instance.get_all_joint_states() if simulator_instance else None
             ),
