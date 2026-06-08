@@ -1,9 +1,11 @@
 """FastAPI server for the Coral AI agent with MuJoCo simulation."""
 
 import asyncio
+import base64
 import json
 import math
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -130,6 +132,30 @@ class ChatMessage(BaseModel):
 
 # Store connected websocket clients
 connected_clients: set[WebSocket] = set()
+
+_whisper_model = None
+
+
+def _get_whisper_model():
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        logger.info("Loading Whisper model (base)...")
+        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        logger.info("Whisper model loaded.")
+    return _whisper_model
+
+
+def transcribe_audio(audio_bytes: bytes) -> str:
+    model = _get_whisper_model()
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+        f.write(audio_bytes)
+        tmp_path = f.name
+    try:
+        segments, _ = model.transcribe(tmp_path, language="en")
+        return " ".join(seg.text.strip() for seg in segments).strip()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 class ConversationRecorder:
@@ -798,6 +824,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     session_id=session_id,
                 )
                 await websocket.send_json(response_data)
+
+            elif msg_type == "audio":
+                audio_b64 = message_data.get("data", "")
+                audio_bytes = base64.b64decode(audio_b64)
+                transcribed_text = await asyncio.to_thread(transcribe_audio, audio_bytes)
+                await websocket.send_json({"type": "transcription", "text": transcribed_text})
+                if transcribed_text.strip():
+                    response_data = await process_chat_message(
+                        user_message=transcribed_text,
+                        memory=memory,
+                        state_manager=state_manager,
+                        recorder=recorder,
+                        simulator_instance=simulator,
+                        session_id=session_id,
+                    )
+                    await websocket.send_json(response_data)
 
             elif msg_type == "get_state":
                 # Request current robot state
