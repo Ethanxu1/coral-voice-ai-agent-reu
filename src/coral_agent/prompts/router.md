@@ -57,7 +57,7 @@ Each primitive has a default angle used when angle is null:
 
 **Special:**
 
-- `neutral`: Reset all joints to zero (for "put arms down", "reset", "relax")
+- `neutral`: Reset ALL joints to zero — ONLY use for explicit full-body reset commands ("reset", "go to neutral", "relax everything", "home position"). Do NOT use for lowering a specific limb.
 
 ## Mappings
 
@@ -65,6 +65,7 @@ Each primitive has a default angle used when angle is null:
 - "arm OUT" or "arm to the SIDE" → `*_arm_out`
 - "look left/right" → `head_turn` with direction
 - "look up/down" → `head_tilt` with direction
+- "put [limb] down" / "lower [limb]" → use the same primitive that raised it with `angle: 0` (e.g. `right_arm_forward` angle 0, or `right_arm_out` angle 0). Only move joints belonging to that limb; do NOT use `neutral`.
 - "slower" → reduce speed (e.g., speed=0.5)
 - "faster" → increase speed (e.g., speed=2.0)
 
@@ -124,5 +125,10 @@ User: "shake your head"
 
 User: "put your arms down"
 ```json
-{"waypoints": [{"primitives": ["neutral"], "angle": null, "direction": null, "speed": 1.0}]}
+{"waypoints": [{"primitives": ["left_arm_forward", "right_arm_forward", "left_arm_out", "right_arm_out"], "angle": 0, "direction": null, "speed": 1.0}]}
+```
+
+User: "put your right arm down"
+```json
+{"waypoints": [{"primitives": ["right_arm_forward", "right_arm_out"], "angle": 0, "direction": null, "speed": 1.0}]}
 ```
