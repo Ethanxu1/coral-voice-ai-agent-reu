@@ -7,7 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "faster-whisper>=1.2.1",
     "openai>=1.0.0",
-    "pipecat-ai[daily,openai,silero]>=0.0.108",
     "mujoco>=3.0.0",
     "loguru>=0.7.3",
     "python-dotenv>=1.2.2",
@@ -18,8 +17,6 @@ dependencies = [
 ]
 
 [project.scripts]
-bot-test = "coral_agent.bot:run"
-llm-test = "coral_agent.test_local:test_dialogue"
 server = "coral_agent.server:main"
 
 [build-system]
