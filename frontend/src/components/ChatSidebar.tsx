@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -12,11 +12,13 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   waypoints?: WaypointInfo[]
+  audioUrl?: string
 }
 
 interface ChatSidebarProps {
   messages: Message[]
   onSendMessage: (message: string) => void
+  onSendAudio?: (blob: Blob) => void
   isConnected: boolean
   isLoading: boolean
 }
@@ -24,11 +26,16 @@ interface ChatSidebarProps {
 function ChatSidebar({
   messages,
   onSendMessage,
+  onSendAudio,
   isConnected,
   isLoading,
 }: ChatSidebarProps) {
   const [input, setInput] = useState('')
+  const [isRecording, setIsRecording] = useState(false)
+  const [isInitializing, setIsInitializing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -41,6 +48,35 @@ function ChatSidebar({
       setInput('')
     }
   }
+
+  const startRecording = useCallback(async () => {
+    setIsInitializing(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      audioChunksRef.current = []
+      const recorder = new MediaRecorder(stream)
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
+      }
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        onSendAudio?.(blob)
+        stream.getTracks().forEach((t) => t.stop())
+        setIsRecording(false)
+      }
+      recorder.start()
+      mediaRecorderRef.current = recorder
+      setIsInitializing(false)
+      setIsRecording(true)
+    } catch {
+      console.error('Microphone access denied')
+      setIsInitializing(false)
+    }
+  }, [onSendAudio])
+
+  const stopRecording = useCallback(() => {
+    mediaRecorderRef.current?.stop()
+  }, [])
 
   const highlightWaypoints = (content: string) => {
     // Highlight [WAYPOINT: {...}, speed] patterns
@@ -86,6 +122,18 @@ function ChatSidebar({
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
             <div className="message-content">{highlightWaypoints(msg.content)}</div>
+            {msg.audioUrl && (
+              <button
+                className="audio-playback-btn"
+                onClick={() => new Audio(msg.audioUrl).play()}
+                title="Play recorded audio"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                  <polygon points="2,1 11,6 2,11" />
+                </svg>
+                Play recording
+              </button>
+            )}
             {msg.waypoints && msg.waypoints.length > 0 && (
               <div className="message-waypoints">
                 <span className="waypoints-label">Executed:</span>
@@ -115,14 +163,45 @@ function ChatSidebar({
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={isConnected ? 'Type a message...' : 'Connecting...'}
+          placeholder={
+            isInitializing ? 'Starting microphone...' :
+            isRecording ? 'Listening...' :
+            isConnected ? 'Type a message...' : 'Connecting...'
+          }
           className="chat-input"
-          disabled={!isConnected || isLoading}
+          disabled={!isConnected || isLoading || isRecording || isInitializing}
         />
+        {onSendAudio && (
+          <button
+            type="button"
+            className={`mic-btn${isInitializing ? ' initializing' : isRecording ? ' recording' : ''}`}
+            disabled={!isConnected || isLoading || isInitializing}
+            onClick={isRecording ? stopRecording : startRecording}
+            title={isInitializing ? 'Starting microphone...' : isRecording ? 'Stop recording' : 'Start recording'}
+          >
+            {isInitializing ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="20 10">
+                  <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.8s" repeatCount="indefinite" />
+                </circle>
+              </svg>
+            ) : isRecording ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="3" y="3" width="10" height="10" rx="2" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="5" y="1" width="6" height="9" rx="3" />
+                <path d="M2.5 8a5.5 5.5 0 0 0 11 0h-1.5a4 4 0 0 1-8 0H2.5z" />
+                <rect x="7.25" y="13" width="1.5" height="2" />
+              </svg>
+            )}
+          </button>
+        )}
         <button
           type="submit"
           className="send-btn"
-          disabled={!isConnected || isLoading || !input.trim()}
+          disabled={!isConnected || isLoading || !input.trim() || isRecording}
         >
           Send
         </button>

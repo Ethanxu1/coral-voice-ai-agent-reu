@@ -13,6 +13,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   waypoints?: WaypointInfo[]
+  audioUrl?: string
 }
 
 interface JointStates {
@@ -27,6 +28,7 @@ function App() {
   const [showPrimitivesTest, setShowPrimitivesTest] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
+  const pendingAudioUrlRef = useRef<string | null>(null)
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -44,7 +46,16 @@ function App() {
       const data = JSON.parse(event.data)
       console.log('Received:', data)
 
-      if (data.type === 'chat_response') {
+      if (data.type === 'transcription') {
+        if (data.text?.trim()) {
+          const audioUrl = pendingAudioUrlRef.current ?? undefined
+          pendingAudioUrlRef.current = null
+          setMessages((prev) => [...prev, { role: 'user', content: data.text, audioUrl }])
+          setIsLoading(true)
+        } else {
+          pendingAudioUrlRef.current = null
+        }
+      } else if (data.type === 'chat_response') {
         setMessages((prev) => [
           ...prev,
           {
@@ -112,6 +123,18 @@ function App() {
     }
   }, [])
 
+  const sendAudio = useCallback((blob: Blob) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      pendingAudioUrlRef.current = URL.createObjectURL(blob)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(',')[1]
+        wsRef.current?.send(JSON.stringify({ type: 'audio', data: base64, format: 'webm' }))
+      }
+      reader.readAsDataURL(blob)
+    }
+  }, [])
+
   if (showPrimitivesTest) {
     return <PrimitivesTest onBack={() => setShowPrimitivesTest(false)} isConnected={isConnected} />
   }
@@ -135,6 +158,7 @@ function App() {
         <ChatSidebar
           messages={messages}
           onSendMessage={sendMessage}
+          onSendAudio={sendAudio}
           isConnected={isConnected}
           isLoading={isLoading}
         />
