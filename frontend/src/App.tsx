@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { Routes, Route, Link } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
 import PrimitivesTest from './PrimitivesTest'
+import PoseVisualization from './pages/PoseVisualization'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -135,11 +137,9 @@ function App() {
     }
   }, [])
 
-  if (showPrimitivesTest) {
-    return <PrimitivesTest onBack={() => setShowPrimitivesTest(false)} isConnected={isConnected} />
-  }
-
-  return (
+  const mainView = showPrimitivesTest ? (
+    <PrimitivesTest onBack={() => setShowPrimitivesTest(false)} isConnected={isConnected} />
+  ) : (
     <div className="app">
       <div className="controls-panel">
         <SimulatorControls
@@ -147,12 +147,17 @@ function App() {
           isConnected={isConnected}
           jointStates={jointStates}
         />
-        <button
-          className="primitives-test-btn"
-          onClick={() => setShowPrimitivesTest(true)}
-        >
-          Test Primitives
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <button
+            className="primitives-test-btn"
+            onClick={() => setShowPrimitivesTest(true)}
+          >
+            Test Primitives
+          </button>
+          <Link to="/pose" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">Pose Tracking</button>
+          </Link>
+        </div>
       </div>
       <div className="chat-panel">
         <ChatSidebar
@@ -164,6 +169,13 @@ function App() {
         />
       </div>
     </div>
+  )
+
+  return (
+    <Routes>
+      <Route path="/" element={mainView} />
+      <Route path="/pose" element={<PoseVisualization />} />
+    </Routes>
   )
 }
 

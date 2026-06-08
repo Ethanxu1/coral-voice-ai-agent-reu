@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import time
+from contextlib import asynccontextmanager
+from typing import Optional
+
+import uvicorn
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+from .frame_broadcaster import FrameBroadcaster
+from .pose_estimator import PoseEstimator
+
+_estimator: Optional[PoseEstimator] = None
+_broadcaster: Optional[FrameBroadcaster] = None
+_vision_thread: Optional[threading.Thread] = None
+_loop: Optional[asyncio.AbstractEventLoop] = None
+_pose_throttle_fps = 15
+_last_pose_time = 0.0
+
+
+def _vision_loop():
+    assert _estimator is not None and _broadcaster is not None
+    _estimator.open()
+    global _last_pose_time
+    while _estimator.is_running:
+        result = _estimator.process_frame()
+        if result is None:
+            time.sleep(0.033)
+            continue
+
+        _broadcaster.publish_video(result.jpeg_bytes)
+
+        now = time.time()
+        if now - _last_pose_time >= 1.0 / _pose_throttle_fps:
+            _last_pose_time = now
+            pose_dict = result.to_pose_dict()
+            if _estimator.pnp_fail_count > 10:
+                pose_dict["type"] = "tracking_lost"
+                pose_dict["reason"] = "no_person_detected"
+            _broadcaster.publish_pose(pose_dict)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _estimator, _broadcaster, _vision_thread, _loop
+    _loop = asyncio.get_running_loop()
+    _estimator = PoseEstimator()
+    _broadcaster = FrameBroadcaster(_loop)
+    _vision_thread = threading.Thread(target=_vision_loop, daemon=True)
+    _vision_thread.start()
+    yield
+    if _estimator:
+        _estimator.close()
+
+
+app = FastAPI(title="Coral Vision Service", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+async def _mjpeg_generator(q: asyncio.Queue):
+    boundary = b"--frame"
+    try:
+        while True:
+            jpeg = await asyncio.wait_for(q.get(), timeout=5.0)
+            yield boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+    except (asyncio.TimeoutError, GeneratorExit):
+        pass
+    finally:
+        if _broadcaster:
+            _broadcaster.unsubscribe_video(q)
+
+
+@app.get("/video_feed")
+async def video_feed():
+    assert _broadcaster is not None
+    q = _broadcaster.subscribe_video()
+    return StreamingResponse(
+        _mjpeg_generator(q),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.websocket("/ws/pose")
+async def websocket_pose(websocket: WebSocket):
+    await websocket.accept()
+    assert _broadcaster is not None
+    q = _broadcaster.subscribe_pose()
+    try:
+        while True:
+            data = await asyncio.wait_for(q.get(), timeout=5.0)
+            await websocket.send_text(json.dumps(data))
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        pass
+    except Exception:
+        pass
+    finally:
+        _broadcaster.unsubscribe_pose(q)
+
+
+@app.post("/calibrate/start")
+async def calibrate_start():
+    assert _estimator is not None
+    _estimator.calibration.start()
+    return {"status": "collecting", "message": "Calibration started"}
+
+
+@app.post("/calibrate/reset")
+async def calibrate_reset():
+    assert _estimator is not None
+    _estimator.calibration.reset()
+    return {"status": "idle", "message": "Calibration reset"}
+
+
+@app.get("/health")
+async def health():
+    cal = _estimator.calibration.to_dict() if _estimator else {}
+    return {"status": "ok", "calibrated": cal.get("state") == "calibrated", "calibration": cal}
+
+
+def main():
+    uvicorn.run("coral_agent.vision.vision_server:app", host="0.0.0.0", port=8001, reload=False)
+
+
+if __name__ == "__main__":
+    main()
