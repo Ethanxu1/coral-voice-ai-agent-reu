@@ -66,6 +66,8 @@ function ChatSidebar({
       }
       recorder.start()
       mediaRecorderRef.current = recorder
+      // Brief warmup delay so the mic hardware is actually capturing before we signal "ready"
+      await new Promise((resolve) => setTimeout(resolve, 400))
       setIsInitializing(false)
       setIsRecording(true)
     } catch {

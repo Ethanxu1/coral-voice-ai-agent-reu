@@ -41,7 +41,7 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
 
 
-from coral_agent.simulator import ApolloSimulator
+from coral_agent.simulator import AiNexSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
     StateManager,
@@ -59,7 +59,7 @@ RECORDINGS_DIR.mkdir(exist_ok=True)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Global simulator instance
-simulator: ApolloSimulator | None = None
+simulator: AiNexSimulator | None = None
 
 
 _router_prompt_cache: str | None = None
@@ -77,8 +77,8 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
     global simulator
 
-    logger.info("Starting Apollo simulator...")
-    simulator = ApolloSimulator()
+    logger.info("Starting AiNex simulator...")
+    simulator = AiNexSimulator()
     simulator.start_viewer()
 
     # Initialize Langfuse client for shutdown flush
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("Stopping Apollo simulator...")
+    logger.info("Stopping AiNex simulator...")
     if simulator:
         simulator.stop_viewer()
 
@@ -229,7 +229,7 @@ class Waypoint:
 
 
 async def execute_waypoints(
-    simulator: ApolloSimulator, waypoints: list[Waypoint]
+    simulator: AiNexSimulator, waypoints: list[Waypoint]
 ) -> list[dict]:
     """Execute a sequence of waypoints with interpolation.
 
@@ -602,7 +602,7 @@ async def process_chat_message(
     memory: "HierarchicalMemory",
     state_manager: "StateManager",
     recorder: "ConversationRecorder",
-    simulator_instance: "ApolloSimulator | None",
+    simulator_instance: "AiNexSimulator | None",
     session_id: str,
 ) -> dict:
     """Process a user message: single LLM call → primitive resolution → joint execution."""
@@ -656,6 +656,7 @@ async def process_chat_message(
             merged_joints: dict[str, float] = {}
             resolved_names: list[str] = []
             final_speed = speed
+            resolved_angle = angle  # may be overwritten with primitive default below
 
             for primitive_name in primitive_names:
                 result = resolve_primitive(
@@ -669,7 +670,11 @@ async def process_chat_message(
                     merged_joints.update(joints)
                     resolved_names.append(resolved_name)
                     final_speed = prim_speed
-                    angle_info = f" angle={angle}°" if angle else ""
+                    # Use actual angle applied (default when LLM output null)
+                    if angle is None:
+                        prim_info = get_parameterized_primitive(resolved_name)
+                        resolved_angle = prim_info.default_angle if prim_info else None
+                    angle_info = f" angle={resolved_angle}°" if resolved_angle is not None else ""
                     dir_info = f" direction={direction}" if direction else ""
                     logger.info(
                         f"Planner resolved primitive: {resolved_name}{angle_info}{dir_info}"
@@ -690,7 +695,7 @@ async def process_chat_message(
                     joints=validation.validated_joints,
                     speed=final_speed,
                     primitive_name=",".join(resolved_names),
-                    angle=angle,
+                    angle=resolved_angle,
                     direction=direction,
                 )
                 wp.validation_result = validation
