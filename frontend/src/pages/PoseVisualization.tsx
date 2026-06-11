@@ -52,13 +52,15 @@ export default function PoseVisualization() {
         {/* Camera feed */}
         <div>
           <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Camera (with overlay)</div>
-          <CameraFeed />
+          <div style={{ aspectRatio: '4/3', background: '#111', borderRadius: 8, overflow: 'hidden' }}>
+            <CameraFeed />
+          </div>
         </div>
 
         {/* Skeleton canvas */}
         <div>
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Skeleton</div>
-          <div style={{ height: 360 }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>3D Skeleton — drag to rotate, scroll to zoom</div>
+          <div style={{ aspectRatio: '4/3' }}>
             <SkeletonCanvas
               landmarks={bodyLandmarks}
               faceLandmarks={faceLandmarks}

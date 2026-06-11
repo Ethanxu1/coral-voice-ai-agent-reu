@@ -17,20 +17,34 @@ export function usePoseWebSocket() {
   const [trackingLost, setTrackingLost] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectRef = useRef<number | null>(null)
+  const genRef = useRef(0)
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    // Close any existing connection that isn't already closed
+    if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+      wsRef.current.onclose = null
+      wsRef.current.close()
+    }
+    const gen = ++genRef.current
     const ws = new WebSocket(VISION_WS)
     wsRef.current = ws
 
-    ws.onopen = () => setIsConnected(true)
+    ws.onopen = () => {
+      if (gen !== genRef.current) return
+      console.log('[pose ws] connected')
+      setIsConnected(true)
+    }
     ws.onclose = () => {
+      if (gen !== genRef.current) return
+      console.log('[pose ws] disconnected — retrying in 2s')
       setIsConnected(false)
       reconnectRef.current = window.setTimeout(connect, 2000)
     }
     ws.onerror = () => ws.close()
     ws.onmessage = (event) => {
+      if (gen !== genRef.current) return
       const data = JSON.parse(event.data)
+      if (data.type === 'ping') return
       if (data.type === 'pose_update') {
         setTrackingLost(false)
         if (data.body_landmarks?.length) setBodyLandmarks(data.body_landmarks)
@@ -48,8 +62,14 @@ export function usePoseWebSocket() {
   useEffect(() => {
     connect()
     return () => {
+      // Invalidate the current generation so no stale callbacks fire
+      genRef.current++
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
-      wsRef.current?.close()
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.close()
+        wsRef.current = null
+      }
     }
   }, [connect])
 

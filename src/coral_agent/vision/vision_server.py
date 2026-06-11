@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -15,6 +16,9 @@ from fastapi.responses import StreamingResponse
 from .frame_broadcaster import FrameBroadcaster
 from .pose_estimator import PoseEstimator
 
+logger = logging.getLogger("vision")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+
 _estimator: Optional[PoseEstimator] = None
 _broadcaster: Optional[FrameBroadcaster] = None
 _vision_thread: Optional[threading.Thread] = None
@@ -25,7 +29,9 @@ _last_pose_time = 0.0
 
 def _vision_loop():
     assert _estimator is not None and _broadcaster is not None
+    logger.info("Vision thread started — loading models and opening camera...")
     _estimator.open()
+    logger.info("Vision thread ready — publishing frames")
     global _last_pose_time
     while _estimator.is_running:
         result = _estimator.process_frame()
@@ -49,10 +55,12 @@ def _vision_loop():
 async def lifespan(app: FastAPI):
     global _estimator, _broadcaster, _vision_thread, _loop
     _loop = asyncio.get_running_loop()
+    logger.info("Vision server starting — initialising estimator and broadcaster")
     _estimator = PoseEstimator()
     _broadcaster = FrameBroadcaster(_loop)
     _vision_thread = threading.Thread(target=_vision_loop, daemon=True)
     _vision_thread.start()
+    logger.info("Vision server ready on port 8001 (models loading in background)")
     yield
     if _estimator:
         _estimator.close()
@@ -95,16 +103,23 @@ async def video_feed():
 @app.websocket("/ws/pose")
 async def websocket_pose(websocket: WebSocket):
     await websocket.accept()
+    client = websocket.client
+    logger.info("WebSocket client connected: %s", client)
     assert _broadcaster is not None
     q = _broadcaster.subscribe_pose()
     try:
         while True:
-            data = await asyncio.wait_for(q.get(), timeout=5.0)
-            await websocket.send_text(json.dumps(data))
-    except (asyncio.TimeoutError, WebSocketDisconnect):
-        pass
-    except Exception:
-        pass
+            try:
+                data = await asyncio.wait_for(q.get(), timeout=2.0)
+                await websocket.send_text(json.dumps(data))
+            except asyncio.TimeoutError:
+                # Send a keepalive ping so the browser doesn't close the connection
+                # while the vision system is still warming up
+                await websocket.send_text(json.dumps({"type": "ping"}))
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected: %s", client)
+    except Exception as exc:
+        logger.warning("WebSocket error for %s: %s", client, exc)
     finally:
         _broadcaster.unsubscribe_pose(q)
 

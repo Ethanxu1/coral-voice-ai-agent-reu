@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -51,6 +52,38 @@ _LEFT_EAR_IDX = 7
 _RIGHT_EAR_IDX = 8
 _MOUTH_LEFT_IDX = 9
 _MOUTH_RIGHT_IDX = 10
+
+
+class OneEuroFilter:
+    """Adaptive low-pass filter: low cutoff when still (kills jitter), high cutoff when moving (preserves responsiveness)."""
+
+    def __init__(self, min_cutoff: float = 1.0, beta: float = 0.1, d_cutoff: float = 1.0):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self._x_prev: Optional[float] = None
+        self._dx_hat: float = 0.0
+        self._t_prev: Optional[float] = None
+
+    def _alpha(self, cutoff: float, dt: float) -> float:
+        tau = 1.0 / (2 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def filter(self, x: float, t: float) -> float:
+        if self._t_prev is None:
+            self._t_prev = t
+            self._x_prev = x
+            return x
+        dt = max(t - self._t_prev, 1e-6)
+        dx = (x - self._x_prev) / dt  # type: ignore[operator]
+        alpha_d = self._alpha(self.d_cutoff, dt)
+        self._dx_hat = alpha_d * dx + (1 - alpha_d) * self._dx_hat
+        cutoff = self.min_cutoff + self.beta * abs(self._dx_hat)
+        alpha = self._alpha(cutoff, dt)
+        x_hat = alpha * x + (1 - alpha) * self._x_prev  # type: ignore[operator]
+        self._x_prev = x_hat
+        self._t_prev = t
+        return x_hat
 
 
 def _download_model(url: str, dest: Path):
@@ -110,19 +143,31 @@ class PoseEstimator:
         self._pose_detector: Optional[mp_vision.PoseLandmarker] = None
         self._face_detector: Optional[mp_vision.FaceLandmarker] = None
         self.calibration = CalibrationManager()
+        self._yaw_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
+        self._pitch_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
+        self._roll_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
+        # Per-landmark filters: 33 landmarks × 3 axes (x, y, z)
+        self._lm_filters: list[list[OneEuroFilter]] = [
+            [OneEuroFilter(min_cutoff=0.5, beta=0.05) for _ in range(3)]
+            for _ in range(33)
+        ]
         self._pnp_fail_count = 0
         self._frame_width = 640
         self._frame_height = 480
         self._running = False
 
     def open(self):
-        # Download models if needed
+        import logging as _log
+        log = _log.getLogger("vision")
+
         pose_model = _MODELS_DIR / "pose_landmarker_lite.task"
         face_model = _MODELS_DIR / "face_landmarker.task"
+        log.info("Checking/downloading models...")
         _download_model(_POSE_MODEL_URL, pose_model)
         _download_model(_FACE_MODEL_URL, face_model)
+        log.info("Models ready")
 
-        # Build pose landmarker
+        log.info("Loading pose landmarker...")
         pose_opts = mp_vision.PoseLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(pose_model)),
             running_mode=mp_vision.RunningMode.IMAGE,
@@ -132,8 +177,9 @@ class PoseEstimator:
             min_tracking_confidence=0.5,
         )
         self._pose_detector = mp_vision.PoseLandmarker.create_from_options(pose_opts)
+        log.info("Pose landmarker loaded")
 
-        # Build face landmarker
+        log.info("Loading face landmarker...")
         face_opts = mp_vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(face_model)),
             running_mode=mp_vision.RunningMode.IMAGE,
@@ -145,14 +191,16 @@ class PoseEstimator:
             output_facial_transformation_matrixes=False,
         )
         self._face_detector = mp_vision.FaceLandmarker.create_from_options(face_opts)
+        log.info("Face landmarker loaded")
 
-        # Open camera
+        log.info("Opening camera %d...", self._camera_index)
         self._cap = cv2.VideoCapture(self._camera_index)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self._cap.set(cv2.CAP_PROP_FPS, self._target_fps)
         self._frame_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._frame_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        log.info("Camera ready at %dx%d", self._frame_width, self._frame_height)
         self._running = True
 
     def close(self):
@@ -236,11 +284,15 @@ class PoseEstimator:
         raw_pose_lms = None
         if pose_result.pose_landmarks:
             raw_pose_lms = pose_result.pose_landmarks[0]
-            for lm in raw_pose_lms:
+            t_lm = time.time()
+            for i, lm in enumerate(raw_pose_lms):
+                fx = self._lm_filters[i][0].filter(lm.x, t_lm)
+                fy = self._lm_filters[i][1].filter(lm.y, t_lm)
+                fz = self._lm_filters[i][2].filter(lm.z, t_lm)
                 body_landmarks.append({
-                    "x": round(lm.x, 4),
-                    "y": round(lm.y, 4),
-                    "z": round(lm.z, 4),
+                    "x": round(fx, 4),
+                    "y": round(fy, 4),
+                    "z": round(fz, 4),
                     "visibility": round(lm.visibility or 0.0, 3),
                 })
             self._draw_pose_skeleton(overlay, raw_pose_lms)
@@ -256,6 +308,11 @@ class PoseEstimator:
             if pnp_result is not None:
                 self._pnp_fail_count = 0
                 raw_yaw, raw_pitch, raw_roll, rvec, tvec = pnp_result
+
+                t_now = time.time()
+                raw_yaw = self._yaw_f.filter(raw_yaw, t_now)
+                raw_pitch = self._pitch_f.filter(raw_pitch, t_now)
+                raw_roll = self._roll_f.filter(raw_roll, t_now)
 
                 if self.calibration.state == CalibrationState.COLLECTING:
                     self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
