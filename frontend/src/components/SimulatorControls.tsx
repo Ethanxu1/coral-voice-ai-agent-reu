@@ -18,12 +18,12 @@ function SimulatorControls({
       <div className="panel">
         <div className="status">
           <span className={`status-dot ${isConnected ? 'connected' : ''}`} />
-          {isConnected ? 'Connected to Apollo' : 'Disconnected'}
+          {isConnected ? 'Connected to AiNex' : 'Disconnected'}
         </div>
-        <h2>Apollo Robot Controls</h2>
+        <h2>AiNex Robot Controls</h2>
 
         <div className="control-group">
-          <h3>Head (Independent)</h3>
+          <h3>Head</h3>
           <div className="button-row">
             <button
               className="control-btn"
@@ -52,40 +52,6 @@ function SimulatorControls({
               disabled={!isConnected}
             >
               Look Down
-            </button>
-          </div>
-        </div>
-
-        <div className="control-group">
-          <h3>Torso (Separate 3-DOF)</h3>
-          <div className="button-row">
-            <button
-              className="control-btn"
-              onClick={() => onCommand('torso_left')}
-              disabled={!isConnected}
-            >
-              Rotate Left
-            </button>
-            <button
-              className="control-btn"
-              onClick={() => onCommand('torso_right')}
-              disabled={!isConnected}
-            >
-              Rotate Right
-            </button>
-            <button
-              className="control-btn"
-              onClick={() => onCommand('lean_forward')}
-              disabled={!isConnected}
-            >
-              Lean Fwd
-            </button>
-            <button
-              className="control-btn"
-              onClick={() => onCommand('lean_backward')}
-              disabled={!isConnected}
-            >
-              Lean Back
             </button>
           </div>
         </div>
@@ -137,6 +103,36 @@ function SimulatorControls({
             >
               Extend Elbow
             </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_elbow_rotate_in')}
+              disabled={!isConnected}
+            >
+              Rotate In
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_elbow_rotate_out')}
+              disabled={!isConnected}
+            >
+              Rotate Out
+            </button>
+          </div>
+          <div className="button-row" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_gripper_open')}
+              disabled={!isConnected}
+            >
+              Open Gripper
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_gripper_close')}
+              disabled={!isConnected}
+            >
+              Close Gripper
+            </button>
           </div>
         </div>
 
@@ -186,6 +182,36 @@ function SimulatorControls({
               disabled={!isConnected}
             >
               Extend Elbow
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_elbow_rotate_in')}
+              disabled={!isConnected}
+            >
+              Rotate In
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_elbow_rotate_out')}
+              disabled={!isConnected}
+            >
+              Rotate Out
+            </button>
+          </div>
+          <div className="button-row" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_gripper_open')}
+              disabled={!isConnected}
+            >
+              Open Gripper
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_gripper_close')}
+              disabled={!isConnected}
+            >
+              Close Gripper
             </button>
           </div>
         </div>
