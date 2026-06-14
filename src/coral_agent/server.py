@@ -710,6 +710,7 @@ async def process_chat_message(
             prompt = get_router_prompt()
             messages = [
                 {"role": "system", "content": prompt},
+                *memory.get_context_for_llm(),
                 {"role": "user", "content": contextual_message},
             ]
             llm_response = openai.chat.completions.create(
@@ -723,7 +724,7 @@ async def process_chat_message(
         planner_response_text = await asyncio.to_thread(run_motion_planner)
         plan_data = json.loads(planner_response_text)
 
-        response = ""
+        response = plan_data.get("verbal_response", "")
 
         # Each step is either a single Waypoint (sequential) or a list of parallel tracks.
         # A parallel track is itself a list[Waypoint] that executes concurrently with siblings.
