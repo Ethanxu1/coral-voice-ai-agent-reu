@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useAudioVAD } from '../utils/useAudioVAD'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -33,9 +34,20 @@ function ChatSidebar({
   const [input, setInput] = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const [isInitializing, setIsInitializing] = useState(false)
+  const [isAutoListening, setIsAutoListening] = useState(false)
+  const [vadSpeechActive, setVadSpeechActive] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+
+  const vad = useAudioVAD({
+    onSpeechStart: () => setVadSpeechActive(true),
+    onSpeechEnd: (blob: Blob) => {
+      setVadSpeechActive(false)
+      if (!isConnected || isLoading) return
+      onSendAudio?.(blob)
+    },
+  })
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -79,6 +91,18 @@ function ChatSidebar({
   const stopRecording = useCallback(() => {
     mediaRecorderRef.current?.stop()
   }, [])
+
+  const toggleAutoListen = useCallback(() => {
+    if (isAutoListening) {
+      vad.pause()
+      setIsAutoListening(false)
+      setVadSpeechActive(false)
+    } else {
+      if (isRecording || isInitializing) return
+      vad.start()
+      setIsAutoListening(true)
+    }
+  }, [isAutoListening, isRecording, isInitializing, vad])
 
   const highlightWaypoints = (content: string) => {
     // Highlight [WAYPOINT: {...}, speed] patterns
@@ -167,17 +191,19 @@ function ChatSidebar({
           onChange={(e) => setInput(e.target.value)}
           placeholder={
             isInitializing ? 'Starting microphone...' :
-            isRecording ? 'Listening...' :
+            isRecording ? 'Listening (push-to-talk)...' :
+            isAutoListening ? (vadSpeechActive ? 'Speaking detected...' : 'Listening for speech...') :
             isConnected ? 'Type a message...' : 'Connecting...'
           }
           className="chat-input"
-          disabled={!isConnected || isLoading || isRecording || isInitializing}
+          disabled={!isConnected || isLoading || isRecording || isInitializing || isAutoListening}
         />
         {onSendAudio && (
+          <>
           <button
             type="button"
             className={`mic-btn${isInitializing ? ' initializing' : isRecording ? ' recording' : ''}`}
-            disabled={!isConnected || isLoading || isInitializing}
+            disabled={!isConnected || isLoading || isInitializing || isAutoListening}
             onClick={isRecording ? stopRecording : startRecording}
             title={isInitializing ? 'Starting microphone...' : isRecording ? 'Stop recording' : 'Start recording'}
           >
@@ -199,6 +225,22 @@ function ChatSidebar({
               </svg>
             )}
           </button>
+          <button
+            type="button"
+            className={`mic-btn${isAutoListening ? (vadSpeechActive ? ' recording' : ' auto-listening') : ''}`}
+            disabled={!isConnected || isLoading || isRecording || isInitializing}
+            onClick={toggleAutoListen}
+            title={isAutoListening ? 'Stop auto-listen' : 'Auto-listen (VAD)'}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="1" y="5" width="2" height="6" rx="1"/>
+              <rect x="4" y="3" width="2" height="10" rx="1"/>
+              <rect x="7" y="1" width="2" height="14" rx="1"/>
+              <rect x="10" y="3" width="2" height="10" rx="1"/>
+              <rect x="13" y="5" width="2" height="6" rx="1"/>
+            </svg>
+          </button>
+          </>
         )}
         <button
           type="submit"
