@@ -152,8 +152,10 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         f.write(audio_bytes)
         tmp_path = f.name
     try:
-        segments, _ = model.transcribe(tmp_path, language="en")
-        return " ".join(seg.text.strip() for seg in segments).strip()
+        segments, _ = model.transcribe(tmp_path, language="en", no_speech_threshold=0.6)
+        return " ".join(
+            seg.text.strip() for seg in segments if seg.no_speech_prob < 0.6
+        ).strip()
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
