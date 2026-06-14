@@ -105,6 +105,15 @@ class AiNexSimulator:
         with self._lock:
             return float(self.data.ctrl[actuator_id])
 
+    def get_physical_joint_position(self, joint_name: str) -> float:
+        """Read the actual physics position from qpos (not the ctrl target)."""
+        joint_id = self._joint_ids.get(joint_name)
+        if joint_id is None:
+            raise ValueError(f"Unknown joint: {joint_name}")
+        qpos_addr = self.model.jnt_qposadr[joint_id]
+        with self._lock:
+            return float(self.data.qpos[qpos_addr])
+
     def set_joint_position(self, joint_name: str, position: float) -> None:
         full_name = self.JOINT_NAMES.get(joint_name, joint_name)
         actuator_id = self._actuator_ids.get(full_name)
@@ -262,10 +271,14 @@ class AiNexSimulator:
 
         def run_viewer():
             logger.info("Starting MuJoCo viewer")
+            # Run 5 physics steps per render frame so simulation runs at ~1x real-time.
+            # timestep=0.002s × 5 = 0.01s simulation per 0.01s sleep = real-time.
+            _steps_per_frame = 5
             with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
                 while viewer.is_running() and self._running:
                     with self._lock:
-                        mujoco.mj_step(self.model, self.data)
+                        for _ in range(_steps_per_frame):
+                            mujoco.mj_step(self.model, self.data)
                     viewer.sync()
                     time.sleep(0.01)
 
