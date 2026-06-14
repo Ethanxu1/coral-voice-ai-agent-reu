@@ -228,48 +228,61 @@ class Waypoint:
 
 
 
+_COMPLETION_TOLERANCE = 0.05  # rad (~3°): how close qpos must be to ctrl target
+_COMPLETION_POLL = 0.02       # seconds between completion checks
+_COMPLETION_TIMEOUT = 5.0     # maximum seconds to wait per waypoint
+
+
 async def execute_waypoints(
     simulator: AiNexSimulator, waypoints: list[Waypoint]
 ) -> list[dict]:
     """Execute a sequence of waypoints with interpolation.
 
-    Each waypoint is reached by interpolating from current position to target.
-    Speed determines how fast the interpolation happens (higher = faster).
+    Each waypoint smoothly ramps the ctrl target, then waits for the physics
+    (qpos) to actually reach that target before starting the next waypoint.
+    Speed controls how fast the ctrl ramp runs (higher = fewer ramp steps).
 
     Returns a list of executed waypoint info.
     """
     executed = []
-    base_steps = 20  # Base number of interpolation steps at speod=1.0
-    step_delay = 0.02  # Delay between interpolation steps (seconds)
+    base_steps = 20  # ramp steps at speed=1.0
+    step_delay = 0.02  # seconds per ramp step
 
     for i, waypoint in enumerate(waypoints):
-        # Calculate number of steps based on speed (faster = fewer steps)
         num_steps = max(5, int(base_steps / waypoint.speed))
 
-        # Get current positions for joints we're going to move
+        # --- 1. Ramp ctrl target from current to goal ---
         current_positions = {}
         for joint_name in waypoint.joints:
             try:
                 current_positions[joint_name] = simulator.get_joint_position(joint_name)
             except ValueError:
                 logger.warning(f"Unknown joint in waypoint: {joint_name}")
-                continue
 
-        # Interpolate from current to target
         for step in range(1, num_steps + 1):
-            t = step / num_steps  # Progress from 0 to 1
-
+            t = step / num_steps
             for joint_name, target_pos in waypoint.joints.items():
                 if joint_name not in current_positions:
                     continue
-
-                current = current_positions[joint_name]
-                # Linear interpolation
-                interpolated = current + (target_pos - current) * t
+                interpolated = current_positions[joint_name] + (target_pos - current_positions[joint_name]) * t
                 simulator.set_joint_position(joint_name, interpolated)
-
-            # Small delay for smooth animation
             await asyncio.sleep(step_delay)
+
+        # --- 2. Wait for physics (qpos) to reach the ctrl target ---
+        deadline = asyncio.get_event_loop().time() + _COMPLETION_TIMEOUT
+        while asyncio.get_event_loop().time() < deadline:
+            reached = True
+            for joint_name, target_pos in waypoint.joints.items():
+                try:
+                    actual = simulator.get_physical_joint_position(joint_name)
+                    if abs(actual - target_pos) > _COMPLETION_TOLERANCE:
+                        reached = False
+                        break
+                except (ValueError, AttributeError):
+                    break
+            if reached:
+                break
+            await asyncio.sleep(_COMPLETION_POLL)
 
         executed.append(
             {
@@ -286,6 +299,20 @@ async def execute_waypoints(
         )
 
     return executed
+
+
+async def execute_parallel_tracks(
+    simulator: AiNexSimulator,
+    tracks: list[list[Waypoint]],
+) -> list[dict]:
+    """Execute multiple waypoint tracks concurrently using asyncio.gather.
+
+    Tracks should operate on disjoint joint sets to avoid conflicts.
+    """
+    results = await asyncio.gather(
+        *[execute_waypoints(simulator, track) for track in tracks]
+    )
+    return [wp for track_result in results for wp in track_result]
 
 
 @app.post("/command", response_model=CommandResponse)
@@ -596,6 +623,59 @@ class HierarchicalMemory:
         return self.action_history[-n:] if self.action_history else []
 
 
+def resolve_wp_entry(entry: dict) -> "Waypoint | None":
+    """Resolve a single flat waypoint entry dict into a Waypoint."""
+    primitive_names = entry.get("primitives", [])
+    angle = entry.get("angle")
+    direction = entry.get("direction")
+    speed = entry.get("speed", 1.0)
+
+    merged_joints: dict[str, float] = {}
+    resolved_names: list[str] = []
+    final_speed = speed
+    resolved_angle = angle
+
+    for primitive_name in primitive_names:
+        result = resolve_primitive(primitive_name, angle=angle, direction=direction, speed=speed)
+        if result:
+            joints, prim_speed, resolved_name = result
+            merged_joints.update(joints)
+            resolved_names.append(resolved_name)
+            final_speed = prim_speed
+            if angle is None:
+                prim_info = get_parameterized_primitive(resolved_name)
+                resolved_angle = prim_info.default_angle if prim_info else None
+            angle_info = f" angle={resolved_angle}°" if resolved_angle is not None else ""
+            dir_info = f" direction={direction}" if direction else ""
+            logger.info(f"Planner resolved primitive: {resolved_name}{angle_info}{dir_info}")
+        else:
+            prim = get_primitive(primitive_name)
+            if prim:
+                merged_joints.update(prim.joints)
+                resolved_names.append(prim.name)
+                logger.info(f"Planner resolved legacy primitive: {prim.name}")
+            else:
+                logger.warning(f"Planner hallucinated primitive: {primitive_name}")
+
+    if not merged_joints:
+        return None
+
+    validation = validate_waypoint(merged_joints, clamp=True)
+    wp = Waypoint(
+        joints=validation.validated_joints,
+        speed=final_speed,
+        primitive_name=",".join(resolved_names),
+        angle=resolved_angle,
+        direction=direction,
+    )
+    wp.validation_result = validation
+    logger.info(
+        f"Built waypoint from [{', '.join(resolved_names)}] "
+        f"with {len(merged_joints)} joints at speed {final_speed}"
+    )
+    return wp
+
+
 @observe(name="process_chat_message")
 async def process_chat_message(
     user_message: str,
@@ -645,75 +725,47 @@ async def process_chat_message(
 
         response = ""
 
-        waypoints = []
-        for wp_entry in plan_data.get("waypoints", []):
-            primitive_names = wp_entry.get("primitives", [])
-            angle = wp_entry.get("angle")
-            direction = wp_entry.get("direction")
-            speed = wp_entry.get("speed", 1.0)
+        # Each step is either a single Waypoint (sequential) or a list of parallel tracks.
+        # A parallel track is itself a list[Waypoint] that executes concurrently with siblings.
+        motion_steps: list[Waypoint | list[list[Waypoint]]] = []
 
-            # Resolve and merge all primitives in this entry into one simultaneous move
-            merged_joints: dict[str, float] = {}
-            resolved_names: list[str] = []
-            final_speed = speed
-            resolved_angle = angle  # may be overwritten with primitive default below
+        for entry in plan_data.get("waypoints", []):
+            if "parallel" in entry:
+                tracks: list[list[Waypoint]] = []
+                for track_data in entry["parallel"]:
+                    track_wps = [
+                        wp
+                        for raw in track_data.get("track", [])
+                        if (wp := resolve_wp_entry(raw)) is not None
+                    ]
+                    if track_wps:
+                        tracks.append(track_wps)
+                if tracks:
+                    motion_steps.append(tracks)
+                    logger.info(f"Built parallel group with {len(tracks)} tracks")
+            else:
+                wp = resolve_wp_entry(entry)
+                if wp:
+                    motion_steps.append(wp)
 
-            for primitive_name in primitive_names:
-                result = resolve_primitive(
-                    primitive_name,
-                    angle=angle,
-                    direction=direction,
-                    speed=speed,
-                )
-                if result:
-                    joints, prim_speed, resolved_name = result
-                    merged_joints.update(joints)
-                    resolved_names.append(resolved_name)
-                    final_speed = prim_speed
-                    # Use actual angle applied (default when LLM output null)
-                    if angle is None:
-                        prim_info = get_parameterized_primitive(resolved_name)
-                        resolved_angle = prim_info.default_angle if prim_info else None
-                    angle_info = f" angle={resolved_angle}°" if resolved_angle is not None else ""
-                    dir_info = f" direction={direction}" if direction else ""
-                    logger.info(
-                        f"Planner resolved primitive: {resolved_name}{angle_info}{dir_info}"
-                    )
-                else:
-                    # Fall back to legacy get_primitive
-                    prim = get_primitive(primitive_name)
-                    if prim:
-                        merged_joints.update(prim.joints)
-                        resolved_names.append(prim.name)
-                        logger.info(f"Planner resolved legacy primitive: {prim.name}")
-                    else:
-                        logger.warning(f"Planner hallucinated primitive: {primitive_name}")
-
-            if merged_joints:
-                validation = validate_waypoint(merged_joints, clamp=True)
-                wp = Waypoint(
-                    joints=validation.validated_joints,
-                    speed=final_speed,
-                    primitive_name=",".join(resolved_names),
-                    angle=resolved_angle,
-                    direction=direction,
-                )
-                wp.validation_result = validation
-                waypoints.append(wp)
-                logger.info(
-                    f"Built waypoint from [{', '.join(resolved_names)}] "
-                    f"with {len(merged_joints)} joints at speed {final_speed}"
-                )
+        # Flatten all waypoints for validation and logging
+        all_waypoints: list[Waypoint] = []
+        for step in motion_steps:
+            if isinstance(step, list):
+                for track in step:
+                    all_waypoints.extend(track)
+            else:
+                all_waypoints.append(step)
 
         executed_waypoints = []
         validation_warnings = []
         sign_warnings = []
 
-        if simulator_instance and waypoints:
+        if simulator_instance and motion_steps:
             state_manager.save_checkpoint(
                 simulator_instance, f"before:{user_message[:30]}"
             )
-            for wp in waypoints:
+            for wp in all_waypoints:
                 if wp.validation_result and wp.validation_result.had_violations:
                     validation_warnings.extend(wp.validation_result.violations)
                 motion_sign_issues = validate_motion_sign(user_message, wp.joints)
@@ -721,7 +773,25 @@ async def process_chat_message(
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
-            executed_waypoints = await execute_waypoints(simulator_instance, waypoints)
+
+            # Execute motion steps: batch consecutive Waypoints together so
+            # sequential movements run in one tight interpolation loop (matching
+            # original behavior), while parallel groups are dispatched with gather.
+            idx = 0
+            while idx < len(motion_steps):
+                step = motion_steps[idx]
+                if isinstance(step, list):
+                    result = await execute_parallel_tracks(simulator_instance, step)
+                    executed_waypoints.extend(result)
+                    idx += 1
+                else:
+                    # Collect all consecutive plain Waypoints into one batch
+                    batch: list[Waypoint] = []
+                    while idx < len(motion_steps) and not isinstance(motion_steps[idx], list):
+                        batch.append(motion_steps[idx])
+                        idx += 1
+                    result = await execute_waypoints(simulator_instance, batch)
+                    executed_waypoints.extend(result)
 
         waypoints_data = [
             {
@@ -732,7 +802,7 @@ async def process_chat_message(
                 "joints_radians": wp.joints,
                 "joints_degrees": convert_state_to_degrees(wp.joints),
             }
-            for wp in waypoints
+            for wp in all_waypoints
         ]
 
         memory.add_exchange(user_message, response, waypoints_data)
@@ -746,7 +816,7 @@ async def process_chat_message(
         langfuse.update_current_span(
             output=response,
             metadata={
-                "waypoints_count": len(waypoints),
+                "waypoints_count": len(all_waypoints),
                 "action_history": memory.action_history,
             },
         )
@@ -867,6 +937,16 @@ async def websocket_endpoint(websocket: WebSocket):
         import traceback
 
         traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "chat_response",
+                "role": "assistant",
+                "content": "Sorry, an error occurred processing your request.",
+                "waypoints": [],
+                "joint_states": simulator.get_all_joint_states() if simulator else None,
+            })
+        except Exception:
+            pass
     finally:
         connected_clients.discard(websocket)
         logger.info(

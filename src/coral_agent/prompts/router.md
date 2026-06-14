@@ -97,9 +97,37 @@ If the user does not specify left/right arm, use **conversation history** and **
 
 ## Multi-Waypoint Sequences
 
-Each entry in the `waypoints` array has a `primitives` list:
-- **Multiple names in one entry** → joints are **merged and executed simultaneously**
-- **Multiple entries** → executed **sequentially**
+Each entry in the `waypoints` array is one of two forms:
+
+### Plain waypoint (for sequential or per-step simultaneous motion)
+- **Multiple names in one entry** → joints merged, executed simultaneously in one step
+- **Multiple entries** → executed sequentially, one after another
+
+```json
+{"primitives": ["primitive_name"], "angle": <degrees or null>, "direction": "left/right/up/down/in/out or null", "speed": <number>}
+```
+
+### Parallel group (for two or more sequential tracks that run at the same time)
+Use this when the user wants motion X **while** doing motion Y, and each motion is itself a sequence of steps (e.g., "shake head while pumping arm up and down").
+
+```json
+{
+  "parallel": [
+    {"track": [
+      {"primitives": [...], "angle": ..., "direction": ..., "speed": ...},
+      {"primitives": [...], "angle": ..., "direction": ..., "speed": ...}
+    ]},
+    {"track": [
+      {"primitives": [...], "angle": ..., "direction": ..., "speed": ...}
+    ]}
+  ]
+}
+```
+
+**Rules for parallel groups:**
+- Each `track` is a sequential list of plain waypoints.
+- Tracks **must operate on disjoint joint sets** — never move the same joint in two tracks at once.
+- Use a parallel group only when each body part needs its own multi-step sequence running concurrently. If a single step covers everything (e.g., "raise both arms"), use a plain waypoint with multiple primitives instead.
 
 **Default speeds:** Most primitives default to `speed=1.0`. Head primitives (`head_turn`, `head_tilt`) default to `speed=2.0`.
 
@@ -112,6 +140,8 @@ Respond with ONLY this JSON structure — no other text, no reasoning, no verbal
   {"primitives": ["primitive_name"], "angle": <degrees or null>, "direction": "left/right/up/down/in/out or null", "speed": <number>}
 ]}
 ```
+
+Plain waypoints and parallel groups may be freely mixed in the top-level `waypoints` array.
 
 For no motion, return: `{"waypoints": []}`
 
@@ -167,4 +197,27 @@ User: "put your arms down"
 User: "put your right arm down"
 ```json
 {"waypoints": [{"primitives": ["right_arm_forward", "right_arm_out"], "angle": 0, "direction": null, "speed": 1.0}]}
+```
+
+User: "shake your head while moving your right arm up and down 3 times"
+```json
+{"waypoints": [
+  {"parallel": [
+    {"track": [
+      {"primitives": ["head_turn"], "angle": 55, "direction": "left",  "speed": 5.0},
+      {"primitives": ["head_turn"], "angle": 55, "direction": "right", "speed": 5.0},
+      {"primitives": ["head_turn"], "angle": 55, "direction": "left",  "speed": 5.0},
+      {"primitives": ["head_turn"], "angle": 55, "direction": "right", "speed": 5.0},
+      {"primitives": ["head_turn"], "angle": 0,  "direction": "left",  "speed": 3.0}
+    ]},
+    {"track": [
+      {"primitives": ["right_arm_forward"], "angle": 90, "direction": null, "speed": 1.5},
+      {"primitives": ["right_arm_forward"], "angle": 0,  "direction": null, "speed": 1.5},
+      {"primitives": ["right_arm_forward"], "angle": 90, "direction": null, "speed": 1.5},
+      {"primitives": ["right_arm_forward"], "angle": 0,  "direction": null, "speed": 1.5},
+      {"primitives": ["right_arm_forward"], "angle": 90, "direction": null, "speed": 1.5},
+      {"primitives": ["right_arm_forward"], "angle": 0,  "direction": null, "speed": 1.5}
+    ]}
+  ]}
+]}
 ```

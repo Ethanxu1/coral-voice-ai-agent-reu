@@ -85,10 +85,36 @@ class WaypointOutput(BaseModel):
                 raise ValueError("'direction' can only be used with 'primitive', not 'joints'")
 
 
+class TrackOutput(BaseModel):
+    """A single sequential track within a parallel group."""
+
+    track: list[WaypointOutput] = Field(
+        ...,
+        description="Sequential list of waypoints that form one parallel track",
+    )
+
+
+class ParallelGroup(BaseModel):
+    """A group of tracks that execute concurrently.
+
+    Each track operates on disjoint joint sets. Use this when two or more body
+    parts each need their own multi-step sequence running at the same time
+    (e.g., shaking head while pumping an arm).
+    """
+
+    parallel: list[TrackOutput] = Field(
+        ...,
+        description="Two or more tracks to run simultaneously",
+        min_length=2,
+    )
+
+
 class LLMResponse(BaseModel):
     """Complete structured response from the LLM.
 
     Enforces chain-of-thought reasoning before action.
+    The waypoints list may contain plain WaypointOutput entries (sequential) or
+    ParallelGroup entries (concurrent tracks). Both may be freely mixed.
     """
 
     thought_process: str = Field(
@@ -96,9 +122,9 @@ class LLMResponse(BaseModel):
         description="Step-by-step reasoning about what the user wants and how to achieve it",
         min_length=10,
     )
-    waypoints: list[WaypointOutput] = Field(
+    waypoints: list[WaypointOutput | ParallelGroup] = Field(
         default_factory=list,
-        description="Sequence of waypoints to execute (can be empty for conversational responses)",
+        description="Sequence of waypoints/parallel groups (can be empty for conversational responses)",
     )
     verbal_response: str = Field(
         ...,
@@ -160,6 +186,35 @@ EXAMPLE_HEAD_SHAKE = {
         {"reasoning": "Return to center",  "primitive": "head_turn", "angle": 0,  "direction": "left",  "speed": 3.0},
     ],
     "verbal_response": "Shaking head.",
+}
+
+EXAMPLE_PARALLEL_SHAKE = {
+    "thought_process": (
+        "User wants to shake head while pumping right arm up and down 3 times. "
+        "These are two independent sequential sequences on disjoint joints — use a parallel group."
+    ),
+    "waypoints": [
+        {
+            "parallel": [
+                {"track": [
+                    {"reasoning": "Head left",  "primitive": "head_turn", "angle": 55, "direction": "left",  "speed": 5.0},
+                    {"reasoning": "Head right", "primitive": "head_turn", "angle": 55, "direction": "right", "speed": 5.0},
+                    {"reasoning": "Head left",  "primitive": "head_turn", "angle": 55, "direction": "left",  "speed": 5.0},
+                    {"reasoning": "Head right", "primitive": "head_turn", "angle": 55, "direction": "right", "speed": 5.0},
+                    {"reasoning": "Return",     "primitive": "head_turn", "angle": 0,  "direction": "left",  "speed": 3.0},
+                ]},
+                {"track": [
+                    {"reasoning": "Arm up 1",   "primitive": "right_arm_forward", "angle": 90, "speed": 1.5},
+                    {"reasoning": "Arm down 1", "primitive": "right_arm_forward", "angle": 0,  "speed": 1.5},
+                    {"reasoning": "Arm up 2",   "primitive": "right_arm_forward", "angle": 90, "speed": 1.5},
+                    {"reasoning": "Arm down 2", "primitive": "right_arm_forward", "angle": 0,  "speed": 1.5},
+                    {"reasoning": "Arm up 3",   "primitive": "right_arm_forward", "angle": 90, "speed": 1.5},
+                    {"reasoning": "Arm down 3", "primitive": "right_arm_forward", "angle": 0,  "speed": 1.5},
+                ]},
+            ]
+        }
+    ],
+    "verbal_response": "Shaking my head while pumping my right arm.",
 }
 
 EXAMPLE_RAW_JOINTS = {
