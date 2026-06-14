@@ -247,6 +247,18 @@ body {
   animation: pulse 1s infinite;
 }
 
+.mic-btn.auto-listening {
+  background: #0d3d4f;
+  border-color: #00d4ff;
+  color: #00d4ff;
+  animation: pulse-cyan 2s ease-in-out infinite;
+}
+
+@keyframes pulse-cyan {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(0, 212, 255, 0); }
+}
+
 .mic-btn:disabled {
   background: #222;
   border-color: #333;
