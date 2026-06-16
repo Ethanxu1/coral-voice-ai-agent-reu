@@ -1,60 +1,58 @@
 # CORAL Voice AI Agent
 
-Multimodal AI Dialogue Agent for Child-Robot Instruction Grounding
+Multimodal AI Dialogue Agent for Child-Robot Instruction Grounding — Hiwonder AiNex humanoid robot.
 
 ## Overview
 
-This project provides a voice-based AI agent that helps translate spoken instructions into executable robot commands. It includes:
+A voice-based AI agent that translates spoken natural-language instructions into physical robot motions. Supports two backends switchable with a single command:
 
-- **MuJoCo Simulator**: Apptronik Apollo humanoid robot with independent head and torso control
-- **FastAPI Backend**: WebSocket server with OpenAI GPT-4o-mini and Langfuse tracing for natural language understanding
-- **React Frontend**: Control panel with manual robot controls and chat interface
+| Mode | Command | What runs |
+|------|---------|-----------|
+| **Simulation** | `uv run server` | MuJoCo physics viewer (no robot required) |
+| **Physical robot** | `uv run robot` | Commands sent to AiNex over the network |
+
+Both modes share the same frontend, voice pipeline, and LLM motion planner. The laptop microphone and speakers are used in both modes.
 
 ## Architecture
 
+### Simulation mode
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Frontend (Vite + React)                 │
-│  ┌─────────────────────────────┐ ┌───────────────────────────┐  │
-│  │      Control Panel          │ │      Chat Sidebar         │  │
-│  │  - Head controls            │ │  - Message history        │  │
-│  │  - Torso controls           │ │  - User input             │  │
-│  │  - Arm controls             │ │  - Command highlighting   │  │
-│  │  - Preset poses             │ │                           │  │
-│  └─────────────────────────────┘ └───────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │ WebSocket
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Backend (FastAPI + Python)                   │
-│  - /ws - WebSocket for chat + commands                         │
-│  - Intent classifier (fast-path + LLM fallback)                │
-│  - OpenAI GPT-4o-mini via Langfuse tracing                     │
-│  - Parameterized motion primitives                             │
-│  - MuJoCo simulator control                                    │
-└─────────────────────────────────────────────────────────────────┘
-           │
-           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              MuJoCo Viewer (Separate Window)                    │
-│                  Apptronik Apollo Humanoid                      │
-└─────────────────────────────────────────────────────────────────┘
+Laptop
+──────────────────────────────────────────────────────────────
+Frontend (npm run dev, :5173)
+  ↕ WebSocket
+Server (uv run server, :8000)
+  • Whisper — speech → text (laptop mic)
+  • GPT-4o-mini — motion planning
+  • SimController — MuJoCo joint interpolation
+      ↓
+  MuJoCo viewer window (AiNex 24-DOF model)
+```
+
+### Physical robot mode
+
+```
+Laptop                                Robot (192.168.8.219)
+──────────────────────────────────    ──────────────────────────
+Frontend (npm run dev, :5173)
+  ↕ WebSocket
+Server (uv run robot, :8000)      →   robot_agent.py (:9000)
+  • Whisper (laptop mic/speakers)         • Raw Hiwonder LX serial
+  • GPT-4o-mini — motion planning         • /dev/ttyAMA0 @ 115200
+  • HardwareController                    • Safety clamps enforced
+    ↳ per-joint angle conversion            (servo 20: 360–850)
+    ↳ HTTP POST to robot agent
 ```
 
 ## Prerequisites
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Node.js 22+
-- OpenAI API key (for GPT-4o-mini)
-- Langfuse account (for LLM tracing/observability)
-- System libraries (see step 1 below)
+- OpenAI API key
+- Langfuse account (for LLM tracing)
 
-## Setup
-
-### 1. Install system dependencies
-
-**Arch Linux:**
+### System libraries (Arch Linux)
 
 ```bash
 sudo pacman -S --needed \
@@ -66,157 +64,193 @@ sudo pacman -S --needed \
   nodejs
 ```
 
-### 2. Install Python dependencies
+## Setup
+
+### 1. Install Python dependencies
 
 ```bash
 uv sync
 ```
 
-### 3. Download robot model assets
-
-The robot models are not included in the repository. Run the provided script to download the Apptronik Apollo model from MuJoCo Menagerie:
+### 2. Download robot model (simulation only)
 
 ```bash
 ./scripts/download_assets.sh
 ```
 
-### 4. Install frontend dependencies
+### 3. Install frontend dependencies
 
 ```bash
-cd frontend
-npm install
-cd ..
+cd frontend && npm install && cd ..
 ```
 
-### 5. Configure environment variables
-
-Copy the example environment file and fill in your API keys:
+### 4. Configure environment
 
 ```bash
-cp .env.example .env
+cp .env.example .env   # then fill in your keys
 ```
 
-Edit `.env` with your credentials:
-
 ```
-OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_API_KEY=sk-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 ```
 
-Get your Langfuse keys at [cloud.langfuse.com](https://cloud.langfuse.com) under Settings > API Keys.
+Get Langfuse keys at [cloud.langfuse.com](https://cloud.langfuse.com) → Settings → API Keys.
 
-## Running the Application
+## Running
 
-### Start the backend server
+### Simulation mode
 
 ```bash
+# Terminal 1
 uv run server
+
+# Terminal 2
+cd frontend && npm run dev
 ```
 
-This will:
-- Start the FastAPI server on http://localhost:8000
-- Open a MuJoCo viewer window showing the Apollo robot
+Open http://localhost:5173.
 
-### Start the frontend (in a separate terminal)
+### Physical robot mode
+
+**On the robot** (one-time setup):
 
 ```bash
-cd frontend
-npm run dev
+pip install fastapi uvicorn pyserial
+# copy robot_agent.py to the robot
+scp src/coral_agent/robot/robot_agent.py ubuntu@192.168.8.219:~/robot_agent.py
 ```
 
-Open http://localhost:5173 in your browser.
+**Every session:**
 
-## Usage
+```bash
+# On the robot
+ssh ubuntu@192.168.8.219
+python3 ~/robot_agent.py        # listens on :9000
 
-### Manual Controls
+# On the laptop (two terminals)
+ROBOT_IP=192.168.8.219 uv run robot
+cd frontend && npm run dev
+```
 
-Use the control panel buttons to move the robot:
+Verify the robot agent is reachable before starting:
 
-- **Head**: Turn left/right, look up/down (independent from torso)
-- **Torso**: Rotate left/right, lean forward/backward/left/right
-- **Arms**: Up/down/in/out, bend/extend elbow
-- **Presets**: Wave, point, nod yes, shake no, reset
+```bash
+curl http://192.168.8.219:9000/health
+# → {"status":"ok","backend":"_SerialBackend"}
+```
 
-### Chat Interface
+If the serial port isn't `/dev/ttyAMA0`:
 
-Type natural language commands in the chat:
-
-- "Wave at me"
-- "Turn your head to the left"
-- "Raise your right arm"
-- "Nod yes"
-
-The LLM will interpret your request and execute the appropriate robot commands.
+```bash
+SERIAL_PORT=/dev/ttyUSB0 python3 ~/robot_agent.py
+```
 
 ## Project Structure
 
 ```
 coral-voice-ai-agent-reu/
 ├── src/coral_agent/
-│   ├── server.py                 # FastAPI backend + motion planning
-│   ├── intent.py                 # Stage 1: Intent classifier
-│   ├── primitives.py             # Parameterized motion primitives
-│   ├── validation.py             # Joint limit + sign validation
-│   ├── state.py                  # State checkpointing and rollback
-│   ├── schemas.py                # Pydantic models for LLM output
-│   ├── gesture_library.py        # Animated social gestures
-│   ├── bot.py                    # Voice agent (pipecat)
-│   ├── test_local.py             # Local dialogue testing
-│   ├── test_langfuse.py          # Langfuse tracing tests
+│   ├── server.py              # FastAPI server — sim and robot modes
+│   ├── primitives.py          # Parameterized motion primitives
+│   ├── validation.py          # Joint limit + sign validation
+│   ├── state.py               # State checkpointing and rollback
+│   ├── config.py              # LLM model selection
 │   ├── prompts/
-│   │   ├── router.md             # Router agent system prompt
-│   │   └── intent.md             # Intent classifier prompt
-│   └── simulator/
-│       ├── __init__.py
-│       └── mujoco_sim.py         # MuJoCo Apollo wrapper
-├── assets/                        # Robot models (not in git)
-│   └── apptronik_apollo/         # Downloaded from mujoco_menagerie
-├── frontend/                      # Vite + React + TypeScript
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── components/
-│   │   │   ├── ChatSidebar.tsx
-│   │   │   └── SimulatorControls.tsx
-│   │   └── ...
-│   └── ...
-├── recordings/                    # Conversation logs (auto-generated)
+│   │   └── router.md          # Motion planner system prompt
+│   ├── robot/
+│   │   ├── interface.py           # RobotController abstract class
+│   │   ├── sim_controller.py      # MuJoCo backend
+│   │   ├── hardware_controller.py # Physical robot backend (laptop-side)
+│   │   ├── hardware_angle_utils.py# Per-joint angle conversion
+│   │   ├── robot_agent.py         # HTTP server to run ON the robot
+│   │   ├── servo_config.py        # Servo ID map + STAND_PULSE values
+│   │   └── angle_utils.py         # Sim-mode angle conversion
+│   ├── simulator/
+│   │   └── mujoco_sim.py          # AiNex MuJoCo wrapper (24 DOF)
+│   └── vision/
+│       └── vision_server.py       # MediaPipe pose server (:8001)
+├── frontend/                  # Vite + React + TypeScript
+│   └── src/
+│       ├── App.tsx
+│       └── components/
+│           ├── ChatSidebar.tsx     # Voice/text chat + audio VAD
+│           └── SimulatorControls.tsx
+├── assets/                    # Robot models (downloaded, not in git)
+├── recordings/                # Conversation logs (auto-generated)
 ├── scripts/
-│   └── download_assets.sh        # Downloads robot model assets
-├── pyproject.toml                # Python dependencies
-└── README.md
+│   └── download_assets.sh
+├── .env                       # API keys (not in git)
+├── .env.robot                 # Robot mode env template
+└── pyproject.toml
 ```
 
-## Available Motion Primitives
+## Motion Primitives
 
-The LLM chat interface uses parameterized primitives — each accepts an angle (in degrees) and optional direction/speed:
+The LLM uses these parameterized primitives. Each accepts an `angle` (degrees) and optional `speed` multiplier (0.1–8.0, default 1.0):
 
 | Primitive | Description | Max Angle | Direction |
 |-----------|-------------|-----------|-----------|
-| `left_arm_out` | Left arm sideways (abduction) | 160° | — |
-| `right_arm_out` | Right arm sideways (abduction) | 160° | — |
-| `left_arm_forward` | Left arm forward/up (flexion) | 125° | — |
-| `right_arm_forward` | Right arm forward/up (flexion) | 125° | — |
-| `left_elbow_bend` | Bend left elbow | 150° | — |
-| `right_elbow_bend` | Bend right elbow | 150° | — |
-| `head_turn` | Turn head | 95° | left / right |
-| `head_tilt` | Tilt head | 30° | up / down |
-| `torso_rotate` | Rotate torso | 47° | left / right |
-| `torso_lean` | Lean torso forward | 77° | — |
-| `neutral` | Reset all joints to zero | — | — |
+| `left_arm_out` | Left arm sideways abduction | 119° | — |
+| `right_arm_out` | Right arm sideways abduction | 119° | — |
+| `left_arm_forward` | Left arm forward/up flexion | 119° | — |
+| `right_arm_forward` | Right arm forward/up flexion | 119° | — |
+| `left_elbow_bend` | Bend left elbow | 119° | — |
+| `right_elbow_bend` | Bend right elbow | 119° | — |
+| `left_elbow_rotate` | Rotate left forearm | 119° | in / out |
+| `right_elbow_rotate` | Rotate right forearm | 119° | in / out |
+| `head_turn` | Turn head | 119° | left / right |
+| `head_tilt` | Tilt head | 119° | up / down |
+| `neutral` | Reset all arm + head joints to stand | — | — |
 
-### Manual Control Commands (via `/command` API)
+Example chat commands:
+- *"Raise your right arm to 90 degrees"*
+- *"Turn your head left while waving"*
+- *"Bend your left elbow halfway"*
 
-| Category | Commands |
-|----------|----------|
-| Head | `head_left`, `head_right`, `head_up`, `head_down` |
-| Torso | `torso_left`, `torso_right`, `lean_forward`, `lean_backward`, `lean_left`, `lean_right` |
-| Left Arm | `left_arm_up`, `left_arm_down`, `left_arm_out`, `left_arm_in`, `left_elbow_bend`, `left_elbow_extend` |
-| Right Arm | `right_arm_up`, `right_arm_down`, `right_arm_out`, `right_arm_in`, `right_elbow_bend`, `right_elbow_extend` |
-| Gestures | `wave`, `point`, `nod`, `shake`, `look_around`, `reset` |
+## Servo Map (AiNex 24 DOF)
+
+| Joint | Servo ID | Stand pulse | Notes |
+|-------|----------|-------------|-------|
+| l_ank_roll / r_ank_roll | 1 / 2 | 500 / 500 | |
+| l_ank_pitch / r_ank_pitch | 3 / 4 | 640 / 360 | |
+| l_knee / r_knee | 5 / 6 | 500 / 500 | |
+| l_hip_pitch / r_hip_pitch | 7 / 8 | 350 / 650 | |
+| l_hip_roll / r_hip_roll | 9 / 10 | 500 / 500 | |
+| l_hip_yaw / r_hip_yaw | 11 / 12 | 500 / 500 | |
+| l_sho_pitch / r_sho_pitch | 13 / 14 | 835 / 165 | |
+| l_sho_roll / r_sho_roll | 15 / 16 | 830 / 170 | |
+| l_el_pitch / r_el_pitch | 17 / 18 | 500 / 500 | forearm rotation |
+| l_el_yaw | 19 | 150 | safe range 0–600 |
+| r_el_yaw | 20 | 850 | **DAMAGED — clamped to 360–850** |
+| l_gripper / r_gripper | 21 / 22 | 500 / 500 | |
+| head_pan / head_tilt | 23 / 24 | 500 / 500 | not physically present |
+
+## Robot Agent API
+
+Endpoints served by `robot_agent.py` on the robot at `:9000`:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Returns `{"status":"ok","backend":"..."}` |
+| POST | `/move` | Move servos: `[{"servo_id":13,"position":460,"duration_ms":1000},...]` |
+| POST | `/stand` | Return all servos to standing pose |
+| POST | `/feedback` | Read servo positions/temps: `{"servo_ids":[13,14]}` |
+| GET | `/positions` | Current position of all 24 servos |
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ROBOT_MODE` | `sim` | `sim` = MuJoCo, `robot` = physical robot |
+| `ROBOT_IP` | `192.168.8.219` | Robot's IP on your network |
+| `ROBOT_AGENT_PORT` | `9000` | Port the robot agent listens on |
+| `SERIAL_PORT` | `/dev/ttyAMA0` | Serial port on the robot for servo bus |
+| `AGENT_PORT` | `9000` | Same as above, set on the robot side |
 
 ## License
 
 See individual component licenses:
-- Apptronik Apollo model: Apache-2.0 (from MuJoCo Menagerie)
+- AiNex MuJoCo model: see `assets/ainex/`

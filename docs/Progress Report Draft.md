@@ -1,1 +1,0 @@
-- better waypoint management for sequential movement and simultaneous movement differentiation. Allows for things like "Shake your head while moving your arm up and down"
