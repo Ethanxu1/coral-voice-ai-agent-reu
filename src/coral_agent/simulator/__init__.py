@@ -1,3 +1,3 @@
-from .mujoco_sim import ApolloSimulator, G1Simulator
+from .mujoco_sim import AiNexSimulator, ApolloSimulator, G1Simulator
 
-__all__ = ["ApolloSimulator", "G1Simulator"]
+__all__ = ["AiNexSimulator", "ApolloSimulator", "G1Simulator"]

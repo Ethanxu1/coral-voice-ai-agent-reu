@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { Routes, Route, Link } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
-import PrimitivesTest from './PrimitivesTest'
+import PoseVisualization from './pages/PoseVisualization'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -13,6 +14,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   waypoints?: WaypointInfo[]
+  audioUrl?: string
 }
 
 interface JointStates {
@@ -24,9 +26,9 @@ function App() {
   const [jointStates, setJointStates] = useState<JointStates>({})
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [showPrimitivesTest, setShowPrimitivesTest] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
+  const pendingAudioUrlRef = useRef<string | null>(null)
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -44,7 +46,16 @@ function App() {
       const data = JSON.parse(event.data)
       console.log('Received:', data)
 
-      if (data.type === 'chat_response') {
+      if (data.type === 'transcription') {
+        if (data.text?.trim()) {
+          const audioUrl = pendingAudioUrlRef.current ?? undefined
+          pendingAudioUrlRef.current = null
+          setMessages((prev) => [...prev, { role: 'user', content: data.text, audioUrl }])
+          setIsLoading(true)
+        } else {
+          pendingAudioUrlRef.current = null
+        }
+      } else if (data.type === 'chat_response') {
         setMessages((prev) => [
           ...prev,
           {
@@ -112,11 +123,19 @@ function App() {
     }
   }, [])
 
-  if (showPrimitivesTest) {
-    return <PrimitivesTest onBack={() => setShowPrimitivesTest(false)} isConnected={isConnected} />
-  }
+  const sendAudio = useCallback((blob: Blob) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      pendingAudioUrlRef.current = URL.createObjectURL(blob)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(',')[1]
+        wsRef.current?.send(JSON.stringify({ type: 'audio', data: base64, format: 'webm' }))
+      }
+      reader.readAsDataURL(blob)
+    }
+  }, [])
 
-  return (
+  const mainView = (
     <div className="app">
       <div className="controls-panel">
         <SimulatorControls
@@ -124,22 +143,29 @@ function App() {
           isConnected={isConnected}
           jointStates={jointStates}
         />
-        <button
-          className="primitives-test-btn"
-          onClick={() => setShowPrimitivesTest(true)}
-        >
-          Test Primitives
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <Link to="/pose" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">Pose Tracking</button>
+          </Link>
+        </div>
       </div>
       <div className="chat-panel">
         <ChatSidebar
           messages={messages}
           onSendMessage={sendMessage}
+          onSendAudio={sendAudio}
           isConnected={isConnected}
           isLoading={isLoading}
         />
       </div>
     </div>
+  )
+
+  return (
+    <Routes>
+      <Route path="/" element={mainView} />
+      <Route path="/pose" element={<PoseVisualization />} />
+    </Routes>
   )
 }
 

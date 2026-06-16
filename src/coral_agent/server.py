@@ -1,9 +1,11 @@
 """FastAPI server for the Coral AI agent with MuJoCo simulation."""
 
 import asyncio
+import base64
 import json
 import math
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -23,10 +25,6 @@ from loguru import logger
 from pydantic import BaseModel
 
 from coral_agent.config import LLM_MODEL
-from coral_agent.gesture_library import (
-    GESTURE_LIBRARY,
-    get_gesture as get_library_gesture,
-)
 from coral_agent.primitives import (
     get_parameterized_primitive,
     get_primitive,
@@ -39,7 +37,11 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
 
 
-from coral_agent.simulator import ApolloSimulator
+from coral_agent.robot import get_controller
+from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
+from coral_agent.robot.interface import RobotController, ServoCommand
+from coral_agent.robot.servo_config import SERVO_ID_MAP
+from coral_agent.simulator import AiNexSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
     StateManager,
@@ -56,8 +58,9 @@ RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Global simulator instance
-simulator: ApolloSimulator | None = None
+# Global simulator and controller instances
+simulator: AiNexSimulator | None = None
+controller: RobotController | None = None
 
 
 _router_prompt_cache: str | None = None
@@ -73,23 +76,30 @@ def get_router_prompt() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
-    global simulator
+    global simulator, controller
 
-    logger.info("Starting Apollo simulator...")
-    simulator = ApolloSimulator()
-    simulator.start_viewer()
+    robot_mode = os.getenv("ROBOT_MODE", "sim")
 
-    # Initialize Langfuse client for shutdown flush
+    if robot_mode == "sim":
+        logger.info("Starting AiNex MuJoCo simulator...")
+        simulator = AiNexSimulator()
+        simulator.start_viewer()
+    else:
+        logger.info(f"ROBOT MODE — skipping MuJoCo, targeting physical robot at {os.getenv('ROBOT_IP', '192.168.8.219')}")
+        simulator = None
+
+    controller = get_controller(mode=robot_mode, simulator=simulator)
+    logger.info(f"Robot controller initialized (mode={robot_mode})")
+
     langfuse_client = Langfuse()
     logger.info("Langfuse tracing initialized")
 
     yield
 
-    logger.info("Stopping Apollo simulator...")
-    if simulator:
+    if simulator is not None:
+        logger.info("Stopping AiNex simulator...")
         simulator.stop_viewer()
 
-    # Flush pending Langfuse traces before shutdown
     logger.info("Flushing Langfuse traces...")
     langfuse_client.flush()
 
@@ -130,6 +140,32 @@ class ChatMessage(BaseModel):
 
 # Store connected websocket clients
 connected_clients: set[WebSocket] = set()
+
+_whisper_model = None
+
+
+def _get_whisper_model():
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        logger.info("Loading Whisper model (base)...")
+        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        logger.info("Whisper model loaded.")
+    return _whisper_model
+
+
+def transcribe_audio(audio_bytes: bytes) -> str:
+    model = _get_whisper_model()
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+        f.write(audio_bytes)
+        tmp_path = f.name
+    try:
+        segments, _ = model.transcribe(tmp_path, language="en", no_speech_threshold=0.6)
+        return " ".join(
+            seg.text.strip() for seg in segments if seg.no_speech_prob < 0.6
+        ).strip()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 class ConversationRecorder:
@@ -203,47 +239,34 @@ class Waypoint:
 
 
 async def execute_waypoints(
-    simulator: ApolloSimulator, waypoints: list[Waypoint]
+    simulator: AiNexSimulator, waypoints: list[Waypoint]
 ) -> list[dict]:
-    """Execute a sequence of waypoints with interpolation.
+    """Execute a sequence of waypoints through the hardware abstraction layer.
 
-    Each waypoint is reached by interpolating from current position to target.
-    Speed determines how fast the interpolation happens (higher = faster).
+    Each waypoint is converted to ServoCommands (Hiwonder units + duration_ms)
+    and dispatched to the controller, which handles concurrent joint interpolation.
+    Sequential waypoints run one after the other.
 
     Returns a list of executed waypoint info.
     """
     executed = []
-    base_steps = 20  # Base number of interpolation steps at speod=1.0
-    step_delay = 0.02  # Delay between interpolation steps (seconds)
 
     for i, waypoint in enumerate(waypoints):
-        # Calculate number of steps based on speed (faster = fewer steps)
-        num_steps = max(5, int(base_steps / waypoint.speed))
-
-        # Get current positions for joints we're going to move
-        current_positions = {}
-        for joint_name in waypoint.joints:
-            try:
-                current_positions[joint_name] = simulator.get_joint_position(joint_name)
-            except ValueError:
-                logger.warning(f"Unknown joint in waypoint: {joint_name}")
+        duration_ms = speed_to_duration_ms(waypoint.speed)
+        commands = []
+        for joint_name, rad in waypoint.joints.items():
+            servo_id = SERVO_ID_MAP.get(joint_name)
+            if servo_id is None:
+                logger.warning(f"No servo ID mapping for joint: {joint_name}")
                 continue
+            commands.append(ServoCommand(
+                servo_id=servo_id,
+                position=rad_to_servo_units(rad),
+                duration_ms=duration_ms,
+            ))
 
-        # Interpolate from current to target
-        for step in range(1, num_steps + 1):
-            t = step / num_steps  # Progress from 0 to 1
-
-            for joint_name, target_pos in waypoint.joints.items():
-                if joint_name not in current_positions:
-                    continue
-
-                current = current_positions[joint_name]
-                # Linear interpolation
-                interpolated = current + (target_pos - current) * t
-                simulator.set_joint_position(joint_name, interpolated)
-
-            # Small delay for smooth animation
-            await asyncio.sleep(step_delay)
+        if commands and controller is not None:
+            await asyncio.to_thread(controller.send_commands, commands)
 
         executed.append(
             {
@@ -256,19 +279,36 @@ async def execute_waypoints(
         )
         logger.info(
             f"Executed waypoint {i}: {waypoint.primitive_name or 'direct'} "
-            f"angle={waypoint.angle} speed={waypoint.speed}"
+            f"angle={waypoint.angle} speed={waypoint.speed} duration_ms={duration_ms}"
         )
 
     return executed
 
 
+async def execute_parallel_tracks(
+    simulator: AiNexSimulator,
+    tracks: list[list[Waypoint]],
+) -> list[dict]:
+    """Execute multiple waypoint tracks concurrently using asyncio.gather.
+
+    Tracks should operate on disjoint joint sets to avoid conflicts.
+    """
+    results = await asyncio.gather(
+        *[execute_waypoints(simulator, track) for track in tracks]
+    )
+    return [wp for track_result in results for wp in track_result]
+
+
 @app.post("/command", response_model=CommandResponse)
 async def execute_manual_command(request: CommandRequest) -> CommandResponse:
-    """Execute a manual robot command."""
+    """Execute a manual robot command (sim mode only)."""
     global simulator
 
     if simulator is None:
-        return CommandResponse(success=False, message="Simulator not initialized")
+        return CommandResponse(
+            success=False,
+            message="Manual commands are not available in robot mode. Use the chat interface.",
+        )
 
     command = request.command.lower().strip()
     success = execute_command(simulator, command)
@@ -298,10 +338,9 @@ async def get_joint_states() -> dict[str, Any]:
     """Get current joint states."""
     global simulator
 
-    if simulator is None:
-        return {"error": "Simulator not initialized"}
-
-    return {"joint_states": simulator.get_all_joint_states()}
+    if simulator is not None:
+        return {"joint_states": simulator.get_all_joint_states()}
+    return {"joint_states": {}}
 
 
 @app.get("/primitives")
@@ -315,155 +354,6 @@ async def list_primitives() -> dict[str, Any]:
     - tags for filtering
     """
     return {"primitives": get_primitives_metadata()}
-
-
-@app.get("/gestures")
-async def list_gestures() -> dict[str, Any]:
-    """Return all gestures from the gesture library."""
-    gestures_list = [
-        {
-            "name": g.name,
-            "description": g.description,
-            "category": g.category,
-            "keyframe_count": len(g.keyframes),
-            "total_duration": sum(g.durations),
-            "tags": g.tags,
-        }
-        for g in GESTURE_LIBRARY.values()
-    ]
-    return {"gestures": gestures_list}
-
-
-class TestPrimitiveRequest(BaseModel):
-    """Request body for testing primitives with parameters."""
-
-    angle: float | None = None
-    direction: str | None = None
-    speed: float | None = None
-
-
-@app.post("/test-primitive/{name}")
-async def test_primitive(name: str, request: TestPrimitiveRequest | None = None) -> dict[str, Any]:
-    """Execute a primitive directly for testing.
-
-    Supports parameterized primitives with optional angle, direction, and speed.
-
-    Args:
-        name: Primitive name (e.g., 'left_arm_out', 'head_turn')
-        request: Optional parameters:
-            - angle: Angle in degrees (0-180)
-            - direction: 'left', 'right', 'up', 'down' for bidirectional primitives
-            - speed: Speed multiplier (0.1-5.0)
-    """
-    global simulator
-
-    if simulator is None:
-        return {"success": False, "error": "Simulator not initialized"}
-
-    # Extract parameters from request body
-    angle = request.angle if request else None
-    direction = request.direction if request else None
-    speed = request.speed if request else None
-
-    # Try to resolve as a parameterized primitive first
-    result = resolve_primitive(name, angle=angle, direction=direction, speed=speed)
-
-    if result:
-        joints, final_speed, resolved_name = result
-        # Validate and execute with interpolation
-        validation = validate_waypoint(joints, clamp=True)
-        wp = Waypoint(
-            joints=validation.validated_joints,
-            speed=final_speed,
-            primitive_name=resolved_name,
-        )
-
-        await execute_waypoints(simulator, [wp])
-
-        # Get primitive metadata for response
-        prim = get_parameterized_primitive(resolved_name)
-        description = prim.description if prim else resolved_name
-        bidirectional = prim.bidirectional if prim else False
-        max_angle = prim.max_angle if prim else 180
-
-        return {
-            "success": True,
-            "primitive": resolved_name,
-            "description": description,
-            "joints": joints,
-            "angle": angle,
-            "direction": direction,
-            "speed": final_speed,
-            "bidirectional": bidirectional,
-            "max_angle": max_angle,
-            "is_gesture": False,
-            "joint_states": simulator.get_all_joint_states(),
-        }
-
-    # Fall back to legacy get_primitive for old-style lookups
-    primitive = get_primitive(name)
-    if not primitive:
-        return {"success": False, "error": f"Unknown primitive: {name}"}
-
-    # Validate and execute with interpolation
-    validation = validate_waypoint(primitive.joints, clamp=True)
-    wp = Waypoint(
-        joints=validation.validated_joints,
-        speed=speed or primitive.speed,
-        primitive_name=primitive.name,
-    )
-
-    await execute_waypoints(simulator, [wp])
-
-    return {
-        "success": True,
-        "primitive": primitive.name,
-        "description": primitive.description,
-        "joints": primitive.joints,
-        "is_gesture": False,
-        "joint_states": simulator.get_all_joint_states(),
-    }
-
-
-@app.post("/test-gesture/{name}")
-async def test_gesture(name: str) -> dict[str, Any]:
-    """Execute a gesture (animated sequence) for testing."""
-    global simulator
-
-    if simulator is None:
-        return {"success": False, "error": "Simulator not initialized"}
-
-    gesture = get_library_gesture(name)
-    if not gesture:
-        return {"success": False, "error": f"Unknown gesture: {name}"}
-
-    # Execute gesture as sequence of waypoints with timing
-    for i, keyframe in enumerate(gesture.keyframes):
-        validation = validate_waypoint(keyframe, clamp=True)
-
-        # Calculate speed from duration (shorter duration = faster speed)
-        duration = gesture.durations[i] if i < len(gesture.durations) else 0.5
-        # Base interpolation takes ~0.4s at speed=1.0, adjust accordingly
-        speed = 0.4 / duration if duration > 0 else 1.0
-        speed = max(0.5, min(speed, 8.0))  # Allow up to 8x speed for fast gestures
-
-        wp = Waypoint(
-            joints=validation.validated_joints,
-            speed=speed,
-            primitive_name=f"{gesture.name}_frame{i+1}",
-        )
-
-        await execute_waypoints(simulator, [wp])
-
-    return {
-        "success": True,
-        "gesture": gesture.name,
-        "description": gesture.description,
-        "category": gesture.category,
-        "keyframe_count": len(gesture.keyframes),
-        "total_duration": sum(gesture.durations),
-        "joint_states": simulator.get_all_joint_states(),
-    }
 
 
 class HierarchicalMemory:
@@ -570,13 +460,66 @@ class HierarchicalMemory:
         return self.action_history[-n:] if self.action_history else []
 
 
+def resolve_wp_entry(entry: dict) -> "Waypoint | None":
+    """Resolve a single flat waypoint entry dict into a Waypoint."""
+    primitive_names = entry.get("primitives", [])
+    angle = entry.get("angle")
+    direction = entry.get("direction")
+    speed = entry.get("speed", 1.0)
+
+    merged_joints: dict[str, float] = {}
+    resolved_names: list[str] = []
+    final_speed = speed
+    resolved_angle = angle
+
+    for primitive_name in primitive_names:
+        result = resolve_primitive(primitive_name, angle=angle, direction=direction, speed=speed)
+        if result:
+            joints, prim_speed, resolved_name = result
+            merged_joints.update(joints)
+            resolved_names.append(resolved_name)
+            final_speed = prim_speed
+            if angle is None:
+                prim_info = get_parameterized_primitive(resolved_name)
+                resolved_angle = prim_info.default_angle if prim_info else None
+            angle_info = f" angle={resolved_angle}°" if resolved_angle is not None else ""
+            dir_info = f" direction={direction}" if direction else ""
+            logger.info(f"Planner resolved primitive: {resolved_name}{angle_info}{dir_info}")
+        else:
+            prim = get_primitive(primitive_name)
+            if prim:
+                merged_joints.update(prim.joints)
+                resolved_names.append(prim.name)
+                logger.info(f"Planner resolved legacy primitive: {prim.name}")
+            else:
+                logger.warning(f"Planner hallucinated primitive: {primitive_name}")
+
+    if not merged_joints:
+        return None
+
+    validation = validate_waypoint(merged_joints, clamp=True)
+    wp = Waypoint(
+        joints=validation.validated_joints,
+        speed=final_speed,
+        primitive_name=",".join(resolved_names),
+        angle=resolved_angle,
+        direction=direction,
+    )
+    wp.validation_result = validation
+    logger.info(
+        f"Built waypoint from [{', '.join(resolved_names)}] "
+        f"with {len(merged_joints)} joints at speed {final_speed}"
+    )
+    return wp
+
+
 @observe(name="process_chat_message")
 async def process_chat_message(
     user_message: str,
     memory: "HierarchicalMemory",
     state_manager: "StateManager",
     recorder: "ConversationRecorder",
-    simulator_instance: "ApolloSimulator | None",
+    simulator_instance: "AiNexSimulator | None",
     session_id: str,
 ) -> dict:
     """Process a user message: single LLM call → primitive resolution → joint execution."""
@@ -604,6 +547,7 @@ async def process_chat_message(
             prompt = get_router_prompt()
             messages = [
                 {"role": "system", "content": prompt},
+                *memory.get_context_for_llm(),
                 {"role": "user", "content": contextual_message},
             ]
             llm_response = openai.chat.completions.create(
@@ -617,72 +561,50 @@ async def process_chat_message(
         planner_response_text = await asyncio.to_thread(run_motion_planner)
         plan_data = json.loads(planner_response_text)
 
-        response = ""
+        response = plan_data.get("verbal_response", "")
 
-        waypoints = []
-        for wp_entry in plan_data.get("waypoints", []):
-            primitive_names = wp_entry.get("primitives", [])
-            angle = wp_entry.get("angle")
-            direction = wp_entry.get("direction")
-            speed = wp_entry.get("speed", 1.0)
+        # Each step is either a single Waypoint (sequential) or a list of parallel tracks.
+        # A parallel track is itself a list[Waypoint] that executes concurrently with siblings.
+        motion_steps: list[Waypoint | list[list[Waypoint]]] = []
 
-            # Resolve and merge all primitives in this entry into one simultaneous move
-            merged_joints: dict[str, float] = {}
-            resolved_names: list[str] = []
-            final_speed = speed
+        for entry in plan_data.get("waypoints", []):
+            if "parallel" in entry:
+                tracks: list[list[Waypoint]] = []
+                for track_data in entry["parallel"]:
+                    track_wps = [
+                        wp
+                        for raw in track_data.get("track", [])
+                        if (wp := resolve_wp_entry(raw)) is not None
+                    ]
+                    if track_wps:
+                        tracks.append(track_wps)
+                if tracks:
+                    motion_steps.append(tracks)
+                    logger.info(f"Built parallel group with {len(tracks)} tracks")
+            else:
+                wp = resolve_wp_entry(entry)
+                if wp:
+                    motion_steps.append(wp)
 
-            for primitive_name in primitive_names:
-                result = resolve_primitive(
-                    primitive_name,
-                    angle=angle,
-                    direction=direction,
-                    speed=speed,
-                )
-                if result:
-                    joints, prim_speed, resolved_name = result
-                    merged_joints.update(joints)
-                    resolved_names.append(resolved_name)
-                    final_speed = prim_speed
-                    angle_info = f" angle={angle}°" if angle else ""
-                    dir_info = f" direction={direction}" if direction else ""
-                    logger.info(
-                        f"Planner resolved primitive: {resolved_name}{angle_info}{dir_info}"
-                    )
-                else:
-                    # Fall back to legacy get_primitive
-                    prim = get_primitive(primitive_name)
-                    if prim:
-                        merged_joints.update(prim.joints)
-                        resolved_names.append(prim.name)
-                        logger.info(f"Planner resolved legacy primitive: {prim.name}")
-                    else:
-                        logger.warning(f"Planner hallucinated primitive: {primitive_name}")
-
-            if merged_joints:
-                validation = validate_waypoint(merged_joints, clamp=True)
-                wp = Waypoint(
-                    joints=validation.validated_joints,
-                    speed=final_speed,
-                    primitive_name=",".join(resolved_names),
-                    angle=angle,
-                    direction=direction,
-                )
-                wp.validation_result = validation
-                waypoints.append(wp)
-                logger.info(
-                    f"Built waypoint from [{', '.join(resolved_names)}] "
-                    f"with {len(merged_joints)} joints at speed {final_speed}"
-                )
+        # Flatten all waypoints for validation and logging
+        all_waypoints: list[Waypoint] = []
+        for step in motion_steps:
+            if isinstance(step, list):
+                for track in step:
+                    all_waypoints.extend(track)
+            else:
+                all_waypoints.append(step)
 
         executed_waypoints = []
         validation_warnings = []
         sign_warnings = []
 
-        if simulator_instance and waypoints:
-            state_manager.save_checkpoint(
-                simulator_instance, f"before:{user_message[:30]}"
-            )
-            for wp in waypoints:
+        if motion_steps:
+            if simulator_instance is not None:
+                state_manager.save_checkpoint(
+                    simulator_instance, f"before:{user_message[:30]}"
+                )
+            for wp in all_waypoints:
                 if wp.validation_result and wp.validation_result.had_violations:
                     validation_warnings.extend(wp.validation_result.violations)
                 motion_sign_issues = validate_motion_sign(user_message, wp.joints)
@@ -690,7 +612,24 @@ async def process_chat_message(
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
-            executed_waypoints = await execute_waypoints(simulator_instance, waypoints)
+
+            # Execute motion steps: batch consecutive Waypoints together so
+            # sequential movements run in one tight interpolation loop (matching
+            # original behavior), while parallel groups are dispatched with gather.
+            idx = 0
+            while idx < len(motion_steps):
+                step = motion_steps[idx]
+                if isinstance(step, list):
+                    result = await execute_parallel_tracks(simulator_instance, step)
+                    executed_waypoints.extend(result)
+                    idx += 1
+                else:
+                    batch: list[Waypoint] = []
+                    while idx < len(motion_steps) and not isinstance(motion_steps[idx], list):
+                        batch.append(motion_steps[idx])
+                        idx += 1
+                    result = await execute_waypoints(simulator_instance, batch)
+                    executed_waypoints.extend(result)
 
         waypoints_data = [
             {
@@ -701,7 +640,7 @@ async def process_chat_message(
                 "joints_radians": wp.joints,
                 "joints_degrees": convert_state_to_degrees(wp.joints),
             }
-            for wp in waypoints
+            for wp in all_waypoints
         ]
 
         memory.add_exchange(user_message, response, waypoints_data)
@@ -715,7 +654,7 @@ async def process_chat_message(
         langfuse.update_current_span(
             output=response,
             metadata={
-                "waypoints_count": len(waypoints),
+                "waypoints_count": len(all_waypoints),
                 "action_history": memory.action_history,
             },
         )
@@ -767,24 +706,23 @@ async def websocket_endpoint(websocket: WebSocket):
             msg_type = message_data.get("type", "chat")
 
             if msg_type == "command":
-                # Direct command execution
                 command = message_data.get("command", "")
-                if simulator:
-                    # Save checkpoint before command
-                    state_manager.save_checkpoint(
-                        simulator, f"before_command:{command}"
-                    )
+                if simulator is not None:
+                    state_manager.save_checkpoint(simulator, f"before_command:{command}")
                     success = execute_command(simulator, command)
-                    await websocket.send_json(
-                        {
-                            "type": "command_result",
-                            "success": success,
-                            "command": command,
-                            "joint_states": (
-                                simulator.get_all_joint_states() if success else None
-                            ),
-                        }
-                    )
+                    await websocket.send_json({
+                        "type": "command_result",
+                        "success": success,
+                        "command": command,
+                        "joint_states": simulator.get_all_joint_states() if success else None,
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "command_result",
+                        "success": False,
+                        "command": command,
+                        "joint_states": None,
+                    })
 
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing
@@ -799,19 +737,40 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 await websocket.send_json(response_data)
 
-            elif msg_type == "get_state":
-                # Request current robot state
-                if simulator:
-                    robot_state = simulator.get_all_joint_states()
-                    await websocket.send_json(
-                        {
-                            "type": "state",
-                            "joint_states": robot_state,
-                            "state_description": describe_joint_state(robot_state),
-                            "checkpoint_count": state_manager.checkpoint_count,
-                            "running": simulator.is_running(),
-                        }
+            elif msg_type == "audio":
+                audio_b64 = message_data.get("data", "")
+                audio_bytes = base64.b64decode(audio_b64)
+                transcribed_text = await asyncio.to_thread(transcribe_audio, audio_bytes)
+                await websocket.send_json({"type": "transcription", "text": transcribed_text})
+                if transcribed_text.strip():
+                    response_data = await process_chat_message(
+                        user_message=transcribed_text,
+                        memory=memory,
+                        state_manager=state_manager,
+                        recorder=recorder,
+                        simulator_instance=simulator,
+                        session_id=session_id,
                     )
+                    await websocket.send_json(response_data)
+
+            elif msg_type == "get_state":
+                if simulator is not None:
+                    robot_state = simulator.get_all_joint_states()
+                    await websocket.send_json({
+                        "type": "state",
+                        "joint_states": robot_state,
+                        "state_description": describe_joint_state(robot_state),
+                        "checkpoint_count": state_manager.checkpoint_count,
+                        "running": simulator.is_running(),
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "state",
+                        "joint_states": {},
+                        "state_description": "Robot hardware mode — no simulator state",
+                        "checkpoint_count": 0,
+                        "running": True,
+                    })
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -820,6 +779,16 @@ async def websocket_endpoint(websocket: WebSocket):
         import traceback
 
         traceback.print_exc()
+        try:
+            await websocket.send_json({
+                "type": "chat_response",
+                "role": "assistant",
+                "content": "Sorry, an error occurred processing your request.",
+                "waypoints": [],
+                "joint_states": simulator.get_all_joint_states() if simulator is not None else None,
+            })
+        except Exception:
+            pass
     finally:
         connected_clients.discard(websocket)
         logger.info(
@@ -828,8 +797,30 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 def main():
-    """Main entry point for the server."""
-    logger.info("Starting Coral AI Agent server...")
+    """Entry point for simulation mode (default — starts MuJoCo)."""
+    logger.info("Starting Coral AI Agent server (sim mode)...")
+    uvicorn.run(
+        "coral_agent.server:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_level="info",
+    )
+
+
+def main_robot():
+    """Entry point for hardware robot mode — no MuJoCo, commands sent to physical robot.
+
+    Requires:
+      - ROBOT_IP env var set to the robot's IP (default: 192.168.8.219)
+      - robot_agent.py running on the robot (uv run robot-agent)
+      - Laptop on the same network as the robot
+    """
+    os.environ.setdefault("ROBOT_MODE", "robot")
+    robot_ip = os.getenv("ROBOT_IP", "192.168.8.219")
+    logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {robot_ip})")
+    logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
+    logger.info(f"Make sure robot_agent.py is running on the robot at {robot_ip}:9000")
     uvicorn.run(
         "coral_agent.server:app",
         host="0.0.0.0",

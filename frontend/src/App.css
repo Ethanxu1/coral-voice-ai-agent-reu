@@ -214,6 +214,83 @@ body {
   cursor: not-allowed;
 }
 
+.mic-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  background: #1a2a4a;
+  color: #ccc;
+  border: 2px solid #0f3460;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mic-btn:hover {
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+.mic-btn.initializing {
+  border-color: #f0a500;
+  color: #f0a500;
+  cursor: wait;
+}
+
+.mic-btn.recording {
+  background: #c0392b;
+  border-color: #e74c3c;
+  color: #fff;
+  animation: pulse 1s infinite;
+}
+
+.mic-btn.auto-listening {
+  background: #0d3d4f;
+  border-color: #00d4ff;
+  color: #00d4ff;
+  animation: pulse-cyan 2s ease-in-out infinite;
+}
+
+@keyframes pulse-cyan {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(0, 212, 255, 0); }
+}
+
+.mic-btn:disabled {
+  background: #222;
+  border-color: #333;
+  color: #555;
+  cursor: not-allowed;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.audio-playback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  color: #888;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.audio-playback-btn:hover {
+  color: #00d4ff;
+  border-color: #00d4ff;
+}
+
 /* Connection status */
 .status {
   display: flex;

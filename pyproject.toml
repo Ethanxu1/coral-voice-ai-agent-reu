@@ -14,10 +14,17 @@ dependencies = [
     "uvicorn[standard]>=0.44.0",
     "websockets>=15.0.1",
     "langfuse>=4.1.0",
+    "mediapipe>=0.10.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "httpx>=0.27.0",
 ]
 
 [project.scripts]
 server = "coral_agent.server:main"
+robot = "coral_agent.server:main_robot"
+robot-agent = "coral_agent.robot.robot_agent:main"
+vision = "coral_agent.vision.vision_server:main"
 
 [build-system]
 requires = ["hatchling"]

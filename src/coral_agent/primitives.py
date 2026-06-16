@@ -18,19 +18,21 @@ DEFAULT_HEAD_SPEED = 5.0  # Head moves faster by default
 ARM_DEFAULT_ANGLE = 90
 HEAD_TURN_DEFAULT_ANGLE = 45
 HEAD_TILT_DEFAULT_ANGLE = 15
-TORSO_ROTATE_DEFAULT_ANGLE = 45
-TORSO_LEAN_DEFAULT_ANGLE = 17
 ELBOW_DEFAULT_ANGLE = 90
 
 # Angle limits (in degrees)
 JOINT_MIN_ANGLE = 0
-ARM_OUT_MAX_ANGLE = 160
-ARM_FORWARD_MAX_ANGLE = 125
-ELBOW_MAX_ANGLE = 150
-HEAD_TURN_MAX_ANGLE = 95
-HEAD_TILT_MAX_ANGLE = 30
-TORSO_ROTATE_MAX_ANGLE = 47
-TORSO_LEAN_MAX_ANGLE = 77
+ARM_OUT_MAX_ANGLE = 119   # ±2.09 rad ≈ 119.7°
+ARM_FORWARD_MAX_ANGLE = 119
+ELBOW_MAX_ANGLE = 119
+HEAD_TURN_MAX_ANGLE = 119
+HEAD_TILT_MAX_ANGLE = 119
+
+# Stand-pose defaults (arms hanging at sides, elbows in natural resting bend).
+STAND_L_SHO_ROLL = -1.403
+STAND_R_SHO_ROLL = 1.403
+STAND_L_EL_YAW = -1.226
+STAND_R_EL_YAW = 1.226
 
 
 # Helper: degrees to radians
@@ -54,12 +56,10 @@ def clamp_joint(joint_name: str, value: float) -> float:
 def left_arm_out(
     angle: float = ARM_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
 ) -> Tuple[dict, float]:
-    """Left arm sideways abduction."""
+    """Left arm sideways abduction. angle=0 returns arm to rest at side."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ARM_OUT_MAX_ANGLE))
     joints = {
-        "l_shoulder_aa": clamp_joint("l_shoulder_aa", rad),
-        "l_shoulder_fe": 0.0,
-        "l_elbow": 0.0,
+        "l_sho_roll": clamp_joint("l_sho_roll", STAND_L_SHO_ROLL + rad),
     }
     return joints, speed
 
@@ -67,12 +67,10 @@ def left_arm_out(
 def right_arm_out(
     angle: float = ARM_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
 ) -> Tuple[dict, float]:
-    """Right arm sideways abduction."""
+    """Right arm sideways abduction. angle=0 returns arm to rest at side."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ARM_OUT_MAX_ANGLE))
     joints = {
-        "r_shoulder_aa": clamp_joint("r_shoulder_aa", -rad),
-        "r_shoulder_fe": 0.0,
-        "r_elbow": 0.0,
+        "r_sho_roll": clamp_joint("r_sho_roll", STAND_R_SHO_ROLL - rad),
     }
     return joints, speed
 
@@ -80,12 +78,10 @@ def right_arm_out(
 def left_arm_forward(
     angle: float = ARM_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
 ) -> Tuple[dict, float]:
-    """Left arm forward flexion."""
+    """Left arm forward/up flexion. Only moves pitch axis."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ARM_FORWARD_MAX_ANGLE))
     joints = {
-        "l_shoulder_fe": clamp_joint("l_shoulder_fe", -rad),
-        "l_shoulder_aa": 0.0,
-        "l_elbow": 0.0,
+        "l_sho_pitch": clamp_joint("l_sho_pitch", rad),
     }
     return joints, speed
 
@@ -93,12 +89,10 @@ def left_arm_forward(
 def right_arm_forward(
     angle: float = ARM_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
 ) -> Tuple[dict, float]:
-    """Right arm forward flexion."""
+    """Right arm forward/up flexion. Only moves pitch axis."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ARM_FORWARD_MAX_ANGLE))
     joints = {
-        "r_shoulder_fe": clamp_joint("r_shoulder_fe", -rad),
-        "r_shoulder_aa": 0.0,
-        "r_elbow": 0.0,
+        "r_sho_pitch": clamp_joint("r_sho_pitch", rad),
     }
     return joints, speed
 
@@ -106,18 +100,42 @@ def right_arm_forward(
 def left_elbow_bend(
     angle: float = ELBOW_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
 ) -> Tuple[dict, float]:
-    """Bend left elbow."""
+    """Bend left elbow (flexion via l_el_yaw)."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ELBOW_MAX_ANGLE))
-    joints = {"l_elbow": clamp_joint("l_elbow", -rad)}
+    joints = {"l_el_yaw": clamp_joint("l_el_yaw", -rad)}
     return joints, speed
 
 
 def right_elbow_bend(
     angle: float = ELBOW_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
 ) -> Tuple[dict, float]:
-    """Bend right elbow."""
+    """Bend right elbow (flexion via r_el_yaw)."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ELBOW_MAX_ANGLE))
-    joints = {"r_elbow": clamp_joint("r_elbow", -rad)}
+    joints = {"r_el_yaw": clamp_joint("r_el_yaw", rad)}
+    return joints, speed
+
+
+def left_elbow_rotate(
+    angle: float = ELBOW_DEFAULT_ANGLE,
+    direction: str = "in",
+    speed: float = DEFAULT_SPEED,
+) -> Tuple[dict, float]:
+    """Rotate left forearm (l_el_pitch). direction='in' or 'out'."""
+    rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ELBOW_MAX_ANGLE))
+    sign = -1 if direction == "in" else 1
+    joints = {"l_el_pitch": clamp_joint("l_el_pitch", sign * rad)}
+    return joints, speed
+
+
+def right_elbow_rotate(
+    angle: float = ELBOW_DEFAULT_ANGLE,
+    direction: str = "in",
+    speed: float = DEFAULT_SPEED,
+) -> Tuple[dict, float]:
+    """Rotate right forearm (r_el_pitch). direction='in' or 'out'."""
+    rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), ELBOW_MAX_ANGLE))
+    sign = 1 if direction == "in" else -1
+    joints = {"r_el_pitch": clamp_joint("r_el_pitch", sign * rad)}
     return joints, speed
 
 
@@ -128,8 +146,8 @@ def head_turn(
 ) -> Tuple[dict, float]:
     """Turn head left/right. direction='left' or 'right'."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), HEAD_TURN_MAX_ANGLE))
-    sign = 1 if direction == "left" else -1
-    joints = {"neck_yaw": clamp_joint("neck_yaw", sign * rad), "neck_pitch": 0.0}
+    sign = -1 if direction == "left" else 1
+    joints = {"head_pan": clamp_joint("head_pan", sign * rad)}
     return joints, speed
 
 
@@ -140,46 +158,24 @@ def head_tilt(
 ) -> Tuple[dict, float]:
     """Tilt head up/down. direction='up' or 'down'."""
     rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), HEAD_TILT_MAX_ANGLE))
-    # Positive = down, negative = up
-    sign = 1 if direction == "down" else -1
-    joints = {"neck_pitch": clamp_joint("neck_pitch", sign * rad), "neck_yaw": 0.0}
-    return joints, speed
-
-
-def torso_rotate(
-    angle: float = TORSO_ROTATE_DEFAULT_ANGLE,
-    direction: str = "left",
-    speed: float = DEFAULT_SPEED,
-) -> Tuple[dict, float]:
-    """Rotate torso left/right."""
-    rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), TORSO_ROTATE_MAX_ANGLE))
-    sign = 1 if direction == "left" else -1
-    joints = {"torso_yaw": clamp_joint("torso_yaw", sign * rad), "torso_pitch": 0.0}
-    return joints, speed
-
-
-def torso_lean(
-    angle: float = TORSO_LEAN_DEFAULT_ANGLE, speed: float = DEFAULT_SPEED
-) -> Tuple[dict, float]:
-    """Lean torso forward."""
-    rad = deg_to_rad(min(max(angle, JOINT_MIN_ANGLE), TORSO_LEAN_MAX_ANGLE))
-    joints = {"torso_pitch": clamp_joint("torso_pitch", rad), "torso_yaw": 0.0}
+    sign = -1 if direction == "down" else 1
+    joints = {"head_tilt": clamp_joint("head_tilt", sign * rad)}
     return joints, speed
 
 
 def neutral(angle: float = 0, speed: float = DEFAULT_SPEED) -> Tuple[dict, float]:
-    """Reset all joints to zero (angle parameter ignored for consistency)."""
+    """Return all arm and head joints to natural standing position."""
     joints = {
-        "l_shoulder_fe": 0.0,
-        "l_shoulder_aa": 0.0,
-        "l_elbow": 0.0,
-        "r_shoulder_fe": 0.0,
-        "r_shoulder_aa": 0.0,
-        "r_elbow": 0.0,
-        "neck_yaw": 0.0,
-        "neck_pitch": 0.0,
-        "torso_yaw": 0.0,
-        "torso_pitch": 0.0,
+        "l_sho_pitch": 0.0,
+        "l_sho_roll": STAND_L_SHO_ROLL,
+        "l_el_yaw": STAND_L_EL_YAW,
+        "l_el_pitch": 0.0,
+        "r_sho_pitch": 0.0,
+        "r_sho_roll": STAND_R_SHO_ROLL,
+        "r_el_yaw": STAND_R_EL_YAW,
+        "r_el_pitch": 0.0,
+        "head_pan": 0.0,
+        "head_tilt": 0.0,
     }
     return joints, speed
 
@@ -256,6 +252,24 @@ PRIMITIVE_REGISTRY: dict[str, PrimitiveInfo] = {
         tags=["right", "elbow", "bend"],
         default_angle=ELBOW_DEFAULT_ANGLE,
     ),
+    "left_elbow_rotate": PrimitiveInfo(
+        name="left_elbow_rotate",
+        func=left_elbow_rotate,
+        description="Rotate left forearm in/out",
+        max_angle=ELBOW_MAX_ANGLE,
+        bidirectional=True,
+        tags=["left", "elbow", "rotate", "forearm"],
+        default_angle=ELBOW_DEFAULT_ANGLE,
+    ),
+    "right_elbow_rotate": PrimitiveInfo(
+        name="right_elbow_rotate",
+        func=right_elbow_rotate,
+        description="Rotate right forearm in/out",
+        max_angle=ELBOW_MAX_ANGLE,
+        bidirectional=True,
+        tags=["right", "elbow", "rotate", "forearm"],
+        default_angle=ELBOW_DEFAULT_ANGLE,
+    ),
     "head_turn": PrimitiveInfo(
         name="head_turn",
         func=head_turn,
@@ -275,24 +289,6 @@ PRIMITIVE_REGISTRY: dict[str, PrimitiveInfo] = {
         tags=["head", "tilt", "pitch"],
         default_angle=HEAD_TILT_DEFAULT_ANGLE,
         default_speed=DEFAULT_HEAD_SPEED,
-    ),
-    "torso_rotate": PrimitiveInfo(
-        name="torso_rotate",
-        func=torso_rotate,
-        description="Rotate torso left/right",
-        max_angle=TORSO_ROTATE_MAX_ANGLE,
-        bidirectional=True,
-        tags=["torso", "rotate", "twist"],
-        default_angle=TORSO_ROTATE_DEFAULT_ANGLE,
-    ),
-    "torso_lean": PrimitiveInfo(
-        name="torso_lean",
-        func=torso_lean,
-        description="Lean torso forward",
-        max_angle=TORSO_LEAN_MAX_ANGLE,
-        bidirectional=False,
-        tags=["torso", "lean", "bow"],
-        default_angle=TORSO_LEAN_DEFAULT_ANGLE,
     ),
     "neutral": PrimitiveInfo(
         name="neutral",
@@ -345,8 +341,9 @@ def resolve_primitive(
     # Call the primitive function
     if info.bidirectional:
         if direction is None:
-            # Default direction for bidirectional primitives
-            if "turn" in name_lower or "rotate" in name_lower:
+            if "elbow_rotate" in name_lower:
+                direction = "in"
+            elif "turn" in name_lower or "rotate" in name_lower:
                 direction = "left"
             else:
                 direction = "up"
@@ -395,7 +392,12 @@ def get_primitives_list() -> str:
     lines.append("**Bidirectional primitives** (specify angle AND direction):")
     for name, info in PRIMITIVE_REGISTRY.items():
         if info.bidirectional:
-            dirs = "left/right" if "turn" in name or "rotate" in name else "up/down"
+            if "elbow_rotate" in name:
+                dirs = "in/out"
+            elif "turn" in name or "rotate" in name:
+                dirs = "left/right"
+            else:
+                dirs = "up/down"
             lines.append(
                 f"  - `{name}`: {info.description} (max {info.max_angle}°, direction: {dirs})"
             )
@@ -488,5 +490,33 @@ def detect_degrees_in_request(message: str) -> Optional[str]:
         hints = [f"{d}° = {float(d) * 0.01745:.2f} rad" for d in matches[:3]]
         return "DEGREE CONVERSION: " + ", ".join(hints)
     return None
+
+
+def resolve_primitive_as_commands(
+    name: str,
+    angle: Optional[float] = None,
+    direction: Optional[str] = None,
+    speed: Optional[float] = None,
+):
+    """Resolve a primitive to a list of ServoCommands ready to send to the controller."""
+    from coral_agent.robot.interface import ServoCommand
+    from coral_agent.robot.servo_config import SERVO_ID_MAP
+    from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
+
+    result = resolve_primitive(name, angle, direction, speed)
+    if result is None:
+        return None
+    joints, final_speed, _ = result
+    duration_ms = speed_to_duration_ms(final_speed)
+    commands = []
+    for joint_name, rad in joints.items():
+        servo_id = SERVO_ID_MAP.get(joint_name)
+        if servo_id is not None:
+            commands.append(ServoCommand(
+                servo_id=servo_id,
+                position=rad_to_servo_units(rad),
+                duration_ms=duration_ms,
+            ))
+    return commands
 
 
