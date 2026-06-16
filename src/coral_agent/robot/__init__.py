@@ -5,9 +5,8 @@ def get_controller(mode: str = "sim", simulator=None, **kwargs) -> RobotControll
     """Instantiate a RobotController for the given backend mode.
 
     Args:
-        mode: "sim" for MuJoCo simulator (default), "hardware" for physical robot (Phase 2).
+        mode: "sim" for MuJoCo simulator (default), "robot" for physical robot.
         simulator: Existing AiNexSimulator instance to wrap (sim mode only).
-                   If None, a new instance is created from kwargs.
     """
     if mode == "sim":
         if simulator is None:
@@ -15,8 +14,7 @@ def get_controller(mode: str = "sim", simulator=None, **kwargs) -> RobotControll
             simulator = AiNexSimulator(**kwargs)
         from coral_agent.robot.sim_controller import SimController
         return SimController(simulator)
-    elif mode == "hardware":
-        # Implemented in Phase 2
+    elif mode in ("robot", "hardware"):
         from coral_agent.robot.hardware_controller import AiNexHardwareController
         return AiNexHardwareController(**kwargs)
     else:

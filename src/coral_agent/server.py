@@ -78,23 +78,28 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
     global simulator, controller
 
-    logger.info("Starting AiNex simulator...")
-    simulator = AiNexSimulator()
-    simulator.start_viewer()
-    controller = get_controller(mode=os.getenv("ROBOT_MODE", "sim"), simulator=simulator)
-    logger.info(f"Robot controller initialized (mode={os.getenv('ROBOT_MODE', 'sim')})")
+    robot_mode = os.getenv("ROBOT_MODE", "sim")
 
-    # Initialize Langfuse client for shutdown flush
+    if robot_mode == "sim":
+        logger.info("Starting AiNex MuJoCo simulator...")
+        simulator = AiNexSimulator()
+        simulator.start_viewer()
+    else:
+        logger.info(f"ROBOT MODE — skipping MuJoCo, targeting physical robot at {os.getenv('ROBOT_IP', '192.168.8.219')}")
+        simulator = None
+
+    controller = get_controller(mode=robot_mode, simulator=simulator)
+    logger.info(f"Robot controller initialized (mode={robot_mode})")
+
     langfuse_client = Langfuse()
     logger.info("Langfuse tracing initialized")
 
     yield
 
-    logger.info("Stopping AiNex simulator...")
-    if simulator:
+    if simulator is not None:
+        logger.info("Stopping AiNex simulator...")
         simulator.stop_viewer()
 
-    # Flush pending Langfuse traces before shutdown
     logger.info("Flushing Langfuse traces...")
     langfuse_client.flush()
 
@@ -296,11 +301,14 @@ async def execute_parallel_tracks(
 
 @app.post("/command", response_model=CommandResponse)
 async def execute_manual_command(request: CommandRequest) -> CommandResponse:
-    """Execute a manual robot command."""
+    """Execute a manual robot command (sim mode only)."""
     global simulator
 
     if simulator is None:
-        return CommandResponse(success=False, message="Simulator not initialized")
+        return CommandResponse(
+            success=False,
+            message="Manual commands are not available in robot mode. Use the chat interface.",
+        )
 
     command = request.command.lower().strip()
     success = execute_command(simulator, command)
@@ -330,10 +338,9 @@ async def get_joint_states() -> dict[str, Any]:
     """Get current joint states."""
     global simulator
 
-    if simulator is None:
-        return {"error": "Simulator not initialized"}
-
-    return {"joint_states": simulator.get_all_joint_states()}
+    if simulator is not None:
+        return {"joint_states": simulator.get_all_joint_states()}
+    return {"joint_states": {}}
 
 
 @app.get("/primitives")
@@ -592,10 +599,11 @@ async def process_chat_message(
         validation_warnings = []
         sign_warnings = []
 
-        if simulator_instance and motion_steps:
-            state_manager.save_checkpoint(
-                simulator_instance, f"before:{user_message[:30]}"
-            )
+        if motion_steps:
+            if simulator_instance is not None:
+                state_manager.save_checkpoint(
+                    simulator_instance, f"before:{user_message[:30]}"
+                )
             for wp in all_waypoints:
                 if wp.validation_result and wp.validation_result.had_violations:
                     validation_warnings.extend(wp.validation_result.violations)
@@ -616,7 +624,6 @@ async def process_chat_message(
                     executed_waypoints.extend(result)
                     idx += 1
                 else:
-                    # Collect all consecutive plain Waypoints into one batch
                     batch: list[Waypoint] = []
                     while idx < len(motion_steps) and not isinstance(motion_steps[idx], list):
                         batch.append(motion_steps[idx])
@@ -699,24 +706,23 @@ async def websocket_endpoint(websocket: WebSocket):
             msg_type = message_data.get("type", "chat")
 
             if msg_type == "command":
-                # Direct command execution
                 command = message_data.get("command", "")
-                if simulator:
-                    # Save checkpoint before command
-                    state_manager.save_checkpoint(
-                        simulator, f"before_command:{command}"
-                    )
+                if simulator is not None:
+                    state_manager.save_checkpoint(simulator, f"before_command:{command}")
                     success = execute_command(simulator, command)
-                    await websocket.send_json(
-                        {
-                            "type": "command_result",
-                            "success": success,
-                            "command": command,
-                            "joint_states": (
-                                simulator.get_all_joint_states() if success else None
-                            ),
-                        }
-                    )
+                    await websocket.send_json({
+                        "type": "command_result",
+                        "success": success,
+                        "command": command,
+                        "joint_states": simulator.get_all_joint_states() if success else None,
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "command_result",
+                        "success": False,
+                        "command": command,
+                        "joint_states": None,
+                    })
 
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing
@@ -748,18 +754,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json(response_data)
 
             elif msg_type == "get_state":
-                # Request current robot state
-                if simulator:
+                if simulator is not None:
                     robot_state = simulator.get_all_joint_states()
-                    await websocket.send_json(
-                        {
-                            "type": "state",
-                            "joint_states": robot_state,
-                            "state_description": describe_joint_state(robot_state),
-                            "checkpoint_count": state_manager.checkpoint_count,
-                            "running": simulator.is_running(),
-                        }
-                    )
+                    await websocket.send_json({
+                        "type": "state",
+                        "joint_states": robot_state,
+                        "state_description": describe_joint_state(robot_state),
+                        "checkpoint_count": state_manager.checkpoint_count,
+                        "running": simulator.is_running(),
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "state",
+                        "joint_states": {},
+                        "state_description": "Robot hardware mode — no simulator state",
+                        "checkpoint_count": 0,
+                        "running": True,
+                    })
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -774,7 +785,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "role": "assistant",
                 "content": "Sorry, an error occurred processing your request.",
                 "waypoints": [],
-                "joint_states": simulator.get_all_joint_states() if simulator else None,
+                "joint_states": simulator.get_all_joint_states() if simulator is not None else None,
             })
         except Exception:
             pass
@@ -786,8 +797,30 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 def main():
-    """Main entry point for the server."""
-    logger.info("Starting Coral AI Agent server...")
+    """Entry point for simulation mode (default — starts MuJoCo)."""
+    logger.info("Starting Coral AI Agent server (sim mode)...")
+    uvicorn.run(
+        "coral_agent.server:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_level="info",
+    )
+
+
+def main_robot():
+    """Entry point for hardware robot mode — no MuJoCo, commands sent to physical robot.
+
+    Requires:
+      - ROBOT_IP env var set to the robot's IP (default: 192.168.8.219)
+      - robot_agent.py running on the robot (uv run robot-agent)
+      - Laptop on the same network as the robot
+    """
+    os.environ.setdefault("ROBOT_MODE", "robot")
+    robot_ip = os.getenv("ROBOT_IP", "192.168.8.219")
+    logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {robot_ip})")
+    logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
+    logger.info(f"Make sure robot_agent.py is running on the robot at {robot_ip}:9000")
     uvicorn.run(
         "coral_agent.server:app",
         host="0.0.0.0",
