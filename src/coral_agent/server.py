@@ -25,10 +25,6 @@ from loguru import logger
 from pydantic import BaseModel
 
 from coral_agent.config import LLM_MODEL
-from coral_agent.gesture_library import (
-    GESTURE_LIBRARY,
-    get_gesture as get_library_gesture,
-)
 from coral_agent.primitives import (
     get_parameterized_primitive,
     get_primitive,
@@ -41,6 +37,10 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
 
 
+from coral_agent.robot import get_controller
+from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
+from coral_agent.robot.interface import RobotController, ServoCommand
+from coral_agent.robot.servo_config import SERVO_ID_MAP
 from coral_agent.simulator import AiNexSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
@@ -58,8 +58,9 @@ RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Global simulator instance
+# Global simulator and controller instances
 simulator: AiNexSimulator | None = None
+controller: RobotController | None = None
 
 
 _router_prompt_cache: str | None = None
@@ -75,11 +76,13 @@ def get_router_prompt() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
-    global simulator
+    global simulator, controller
 
     logger.info("Starting AiNex simulator...")
     simulator = AiNexSimulator()
     simulator.start_viewer()
+    controller = get_controller(mode=os.getenv("ROBOT_MODE", "sim"), simulator=simulator)
+    logger.info(f"Robot controller initialized (mode={os.getenv('ROBOT_MODE', 'sim')})")
 
     # Initialize Langfuse client for shutdown flush
     langfuse_client = Langfuse()
@@ -230,61 +233,35 @@ class Waypoint:
 
 
 
-_COMPLETION_TOLERANCE = 0.05  # rad (~3°): how close qpos must be to ctrl target
-_COMPLETION_POLL = 0.02       # seconds between completion checks
-_COMPLETION_TIMEOUT = 5.0     # maximum seconds to wait per waypoint
-
-
 async def execute_waypoints(
     simulator: AiNexSimulator, waypoints: list[Waypoint]
 ) -> list[dict]:
-    """Execute a sequence of waypoints with interpolation.
+    """Execute a sequence of waypoints through the hardware abstraction layer.
 
-    Each waypoint smoothly ramps the ctrl target, then waits for the physics
-    (qpos) to actually reach that target before starting the next waypoint.
-    Speed controls how fast the ctrl ramp runs (higher = fewer ramp steps).
+    Each waypoint is converted to ServoCommands (Hiwonder units + duration_ms)
+    and dispatched to the controller, which handles concurrent joint interpolation.
+    Sequential waypoints run one after the other.
 
     Returns a list of executed waypoint info.
     """
     executed = []
-    base_steps = 20  # ramp steps at speed=1.0
-    step_delay = 0.02  # seconds per ramp step
 
     for i, waypoint in enumerate(waypoints):
-        num_steps = max(5, int(base_steps / waypoint.speed))
+        duration_ms = speed_to_duration_ms(waypoint.speed)
+        commands = []
+        for joint_name, rad in waypoint.joints.items():
+            servo_id = SERVO_ID_MAP.get(joint_name)
+            if servo_id is None:
+                logger.warning(f"No servo ID mapping for joint: {joint_name}")
+                continue
+            commands.append(ServoCommand(
+                servo_id=servo_id,
+                position=rad_to_servo_units(rad),
+                duration_ms=duration_ms,
+            ))
 
-        # --- 1. Ramp ctrl target from current to goal ---
-        current_positions = {}
-        for joint_name in waypoint.joints:
-            try:
-                current_positions[joint_name] = simulator.get_joint_position(joint_name)
-            except ValueError:
-                logger.warning(f"Unknown joint in waypoint: {joint_name}")
-
-        for step in range(1, num_steps + 1):
-            t = step / num_steps
-            for joint_name, target_pos in waypoint.joints.items():
-                if joint_name not in current_positions:
-                    continue
-                interpolated = current_positions[joint_name] + (target_pos - current_positions[joint_name]) * t
-                simulator.set_joint_position(joint_name, interpolated)
-            await asyncio.sleep(step_delay)
-
-        # --- 2. Wait for physics (qpos) to reach the ctrl target ---
-        deadline = asyncio.get_event_loop().time() + _COMPLETION_TIMEOUT
-        while asyncio.get_event_loop().time() < deadline:
-            reached = True
-            for joint_name, target_pos in waypoint.joints.items():
-                try:
-                    actual = simulator.get_physical_joint_position(joint_name)
-                    if abs(actual - target_pos) > _COMPLETION_TOLERANCE:
-                        reached = False
-                        break
-                except (ValueError, AttributeError):
-                    break
-            if reached:
-                break
-            await asyncio.sleep(_COMPLETION_POLL)
+        if commands and controller is not None:
+            await asyncio.to_thread(controller.send_commands, commands)
 
         executed.append(
             {
@@ -297,7 +274,7 @@ async def execute_waypoints(
         )
         logger.info(
             f"Executed waypoint {i}: {waypoint.primitive_name or 'direct'} "
-            f"angle={waypoint.angle} speed={waypoint.speed}"
+            f"angle={waypoint.angle} speed={waypoint.speed} duration_ms={duration_ms}"
         )
 
     return executed
@@ -370,155 +347,6 @@ async def list_primitives() -> dict[str, Any]:
     - tags for filtering
     """
     return {"primitives": get_primitives_metadata()}
-
-
-@app.get("/gestures")
-async def list_gestures() -> dict[str, Any]:
-    """Return all gestures from the gesture library."""
-    gestures_list = [
-        {
-            "name": g.name,
-            "description": g.description,
-            "category": g.category,
-            "keyframe_count": len(g.keyframes),
-            "total_duration": sum(g.durations),
-            "tags": g.tags,
-        }
-        for g in GESTURE_LIBRARY.values()
-    ]
-    return {"gestures": gestures_list}
-
-
-class TestPrimitiveRequest(BaseModel):
-    """Request body for testing primitives with parameters."""
-
-    angle: float | None = None
-    direction: str | None = None
-    speed: float | None = None
-
-
-@app.post("/test-primitive/{name}")
-async def test_primitive(name: str, request: TestPrimitiveRequest | None = None) -> dict[str, Any]:
-    """Execute a primitive directly for testing.
-
-    Supports parameterized primitives with optional angle, direction, and speed.
-
-    Args:
-        name: Primitive name (e.g., 'left_arm_out', 'head_turn')
-        request: Optional parameters:
-            - angle: Angle in degrees (0-180)
-            - direction: 'left', 'right', 'up', 'down' for bidirectional primitives
-            - speed: Speed multiplier (0.1-5.0)
-    """
-    global simulator
-
-    if simulator is None:
-        return {"success": False, "error": "Simulator not initialized"}
-
-    # Extract parameters from request body
-    angle = request.angle if request else None
-    direction = request.direction if request else None
-    speed = request.speed if request else None
-
-    # Try to resolve as a parameterized primitive first
-    result = resolve_primitive(name, angle=angle, direction=direction, speed=speed)
-
-    if result:
-        joints, final_speed, resolved_name = result
-        # Validate and execute with interpolation
-        validation = validate_waypoint(joints, clamp=True)
-        wp = Waypoint(
-            joints=validation.validated_joints,
-            speed=final_speed,
-            primitive_name=resolved_name,
-        )
-
-        await execute_waypoints(simulator, [wp])
-
-        # Get primitive metadata for response
-        prim = get_parameterized_primitive(resolved_name)
-        description = prim.description if prim else resolved_name
-        bidirectional = prim.bidirectional if prim else False
-        max_angle = prim.max_angle if prim else 180
-
-        return {
-            "success": True,
-            "primitive": resolved_name,
-            "description": description,
-            "joints": joints,
-            "angle": angle,
-            "direction": direction,
-            "speed": final_speed,
-            "bidirectional": bidirectional,
-            "max_angle": max_angle,
-            "is_gesture": False,
-            "joint_states": simulator.get_all_joint_states(),
-        }
-
-    # Fall back to legacy get_primitive for old-style lookups
-    primitive = get_primitive(name)
-    if not primitive:
-        return {"success": False, "error": f"Unknown primitive: {name}"}
-
-    # Validate and execute with interpolation
-    validation = validate_waypoint(primitive.joints, clamp=True)
-    wp = Waypoint(
-        joints=validation.validated_joints,
-        speed=speed or primitive.speed,
-        primitive_name=primitive.name,
-    )
-
-    await execute_waypoints(simulator, [wp])
-
-    return {
-        "success": True,
-        "primitive": primitive.name,
-        "description": primitive.description,
-        "joints": primitive.joints,
-        "is_gesture": False,
-        "joint_states": simulator.get_all_joint_states(),
-    }
-
-
-@app.post("/test-gesture/{name}")
-async def test_gesture(name: str) -> dict[str, Any]:
-    """Execute a gesture (animated sequence) for testing."""
-    global simulator
-
-    if simulator is None:
-        return {"success": False, "error": "Simulator not initialized"}
-
-    gesture = get_library_gesture(name)
-    if not gesture:
-        return {"success": False, "error": f"Unknown gesture: {name}"}
-
-    # Execute gesture as sequence of waypoints with timing
-    for i, keyframe in enumerate(gesture.keyframes):
-        validation = validate_waypoint(keyframe, clamp=True)
-
-        # Calculate speed from duration (shorter duration = faster speed)
-        duration = gesture.durations[i] if i < len(gesture.durations) else 0.5
-        # Base interpolation takes ~0.4s at speed=1.0, adjust accordingly
-        speed = 0.4 / duration if duration > 0 else 1.0
-        speed = max(0.5, min(speed, 8.0))  # Allow up to 8x speed for fast gestures
-
-        wp = Waypoint(
-            joints=validation.validated_joints,
-            speed=speed,
-            primitive_name=f"{gesture.name}_frame{i+1}",
-        )
-
-        await execute_waypoints(simulator, [wp])
-
-    return {
-        "success": True,
-        "gesture": gesture.name,
-        "description": gesture.description,
-        "category": gesture.category,
-        "keyframe_count": len(gesture.keyframes),
-        "total_duration": sum(gesture.durations),
-        "joint_states": simulator.get_all_joint_states(),
-    }
 
 
 class HierarchicalMemory:

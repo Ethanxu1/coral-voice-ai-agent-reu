@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
-import PrimitivesTest from './PrimitivesTest'
 import PoseVisualization from './pages/PoseVisualization'
 
 interface WaypointInfo {
@@ -27,7 +26,6 @@ function App() {
   const [jointStates, setJointStates] = useState<JointStates>({})
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [showPrimitivesTest, setShowPrimitivesTest] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
   const pendingAudioUrlRef = useRef<string | null>(null)
@@ -137,9 +135,7 @@ function App() {
     }
   }, [])
 
-  const mainView = showPrimitivesTest ? (
-    <PrimitivesTest onBack={() => setShowPrimitivesTest(false)} isConnected={isConnected} />
-  ) : (
+  const mainView = (
     <div className="app">
       <div className="controls-panel">
         <SimulatorControls
@@ -148,12 +144,6 @@ function App() {
           jointStates={jointStates}
         />
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-          <button
-            className="primitives-test-btn"
-            onClick={() => setShowPrimitivesTest(true)}
-          >
-            Test Primitives
-          </button>
           <Link to="/pose" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">Pose Tracking</button>
           </Link>

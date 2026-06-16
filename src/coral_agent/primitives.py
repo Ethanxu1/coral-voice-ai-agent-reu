@@ -492,3 +492,31 @@ def detect_degrees_in_request(message: str) -> Optional[str]:
     return None
 
 
+def resolve_primitive_as_commands(
+    name: str,
+    angle: Optional[float] = None,
+    direction: Optional[str] = None,
+    speed: Optional[float] = None,
+):
+    """Resolve a primitive to a list of ServoCommands ready to send to the controller."""
+    from coral_agent.robot.interface import ServoCommand
+    from coral_agent.robot.servo_config import SERVO_ID_MAP
+    from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
+
+    result = resolve_primitive(name, angle, direction, speed)
+    if result is None:
+        return None
+    joints, final_speed, _ = result
+    duration_ms = speed_to_duration_ms(final_speed)
+    commands = []
+    for joint_name, rad in joints.items():
+        servo_id = SERVO_ID_MAP.get(joint_name)
+        if servo_id is not None:
+            commands.append(ServoCommand(
+                servo_id=servo_id,
+                position=rad_to_servo_units(rad),
+                duration_ms=duration_ms,
+            ))
+    return commands
+
+
