@@ -216,54 +216,14 @@ function SimulatorControls({
           </div>
         </div>
 
-        <div className="control-group">
-          <h3>Preset Poses</h3>
-          <div className="button-row">
-            <button
-              className="control-btn preset"
-              onClick={() => onCommand('wave')}
-              disabled={!isConnected}
-            >
-              Wave
-            </button>
-            <button
-              className="control-btn preset"
-              onClick={() => onCommand('point')}
-              disabled={!isConnected}
-            >
-              Point
-            </button>
-            <button
-              className="control-btn preset"
-              onClick={() => onCommand('nod')}
-              disabled={!isConnected}
-            >
-              Nod Yes
-            </button>
-            <button
-              className="control-btn preset"
-              onClick={() => onCommand('shake')}
-              disabled={!isConnected}
-            >
-              Shake No
-            </button>
-          </div>
-          <div className="button-row" style={{ marginTop: '0.5rem' }}>
-            <button
-              className="control-btn preset"
-              onClick={() => onCommand('look_around')}
-              disabled={!isConnected}
-            >
-              Look Around
-            </button>
-            <button
-              className="control-btn preset"
-              onClick={() => onCommand('reset')}
-              disabled={!isConnected}
-            >
-              Reset
-            </button>
-          </div>
+        <div className="button-row" style={{ marginTop: '0.5rem' }}>
+          <button
+            className="control-btn preset"
+            onClick={() => onCommand('reset')}
+            disabled={!isConnected}
+          >
+            Reset Pose
+          </button>
         </div>
       </div>
 
