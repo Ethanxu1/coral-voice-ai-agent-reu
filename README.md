@@ -111,9 +111,16 @@ uv run server
 cd frontend && npm run dev
 ```
 
-Open http://localhost:5173.
+Open <http://localhost:5173>.
 
 ### Physical robot mode
+
+# ssh into the robot
+
+```bash
+# ssh into robot raspberry pi
+ssh pi@192.168.8.219
+```
 
 **On the robot** (one-time setup):
 
@@ -121,14 +128,25 @@ Open http://localhost:5173.
 pip install fastapi uvicorn pyserial
 # copy robot_agent.py to the robot
 scp src/coral_agent/robot/robot_agent.py ubuntu@192.168.8.219:~/robot_agent.py
+
+# move robot_agent.py to docker container
+docker cp /home/pi/robot_agent.py ainex:/home/ubuntu/ros_ws/src/<your_package>/robot_agent.py
 ```
 
 **Every session:**
 
 ```bash
-# On the robot
-ssh ubuntu@192.168.8.219
-python3 ~/robot_agent.py        # listens on :9000
+
+# ssh into robot raspberry pi
+ssh pi@192.168.8.219
+# open interactive terminal inside of docker container
+docker exec -it ainex bash
+# switch current terminal user to 'ubuntu'
+su - ubuntu
+cd /home/ubuntu
+
+# run robot_agent.py
+pyrun ~/ros_ws/src/robot_agent.py        # listens on :9000
 
 # On the laptop (two terminals)
 ROBOT_IP=192.168.8.219 uv run robot
@@ -206,6 +224,7 @@ The LLM uses these parameterized primitives. Each accepts an `angle` (degrees) a
 | `neutral` | Reset all arm + head joints to stand | — | — |
 
 Example chat commands:
+
 - *"Raise your right arm to 90 degrees"*
 - *"Turn your head left while waving"*
 - *"Bend your left elbow halfway"*
@@ -253,4 +272,5 @@ Endpoints served by `robot_agent.py` on the robot at `:9000`:
 ## License
 
 See individual component licenses:
+
 - AiNex MuJoCo model: see `assets/ainex/`
