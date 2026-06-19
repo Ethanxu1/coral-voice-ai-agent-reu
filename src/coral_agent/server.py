@@ -94,6 +94,10 @@ async def lifespan(app: FastAPI):
     langfuse_client = Langfuse()
     logger.info("Langfuse tracing initialized")
 
+    logger.info("Pre-loading Whisper STT model...")
+    _get_whisper_model()
+    logger.info("Whisper model ready.")
+
     yield
 
     if simulator is not None:
@@ -513,6 +517,16 @@ def resolve_wp_entry(entry: dict) -> "Waypoint | None":
     return wp
 
 
+async def _build_pre_context(
+    simulator_instance: "AiNexSimulator | None",
+    memory: "HierarchicalMemory",
+) -> tuple[dict, str, list]:
+    robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
+    state_description = describe_joint_state(robot_state)
+    memory_context = memory.get_context_for_llm()
+    return robot_state, state_description, memory_context
+
+
 @observe(name="process_chat_message")
 async def process_chat_message(
     user_message: str,
@@ -521,6 +535,7 @@ async def process_chat_message(
     recorder: "ConversationRecorder",
     simulator_instance: "AiNexSimulator | None",
     session_id: str,
+    pre_context: tuple[dict, str, list] | None = None,
 ) -> dict:
     """Process a user message: single LLM call → primitive resolution → joint execution."""
     langfuse = get_client()
@@ -532,8 +547,12 @@ async def process_chat_message(
     ):
         langfuse.update_current_span(input=user_message)
 
-        robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
-        state_description = describe_joint_state(robot_state)
+        if pre_context is not None:
+            robot_state, state_description, memory_ctx = pre_context
+        else:
+            robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
+            state_description = describe_joint_state(robot_state)
+            memory_ctx = memory.get_context_for_llm()
 
         contextual_message = (
             f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
@@ -547,7 +566,7 @@ async def process_chat_message(
             prompt = get_router_prompt()
             messages = [
                 {"role": "system", "content": prompt},
-                *memory.get_context_for_llm(),
+                *memory_ctx,
                 {"role": "user", "content": contextual_message},
             ]
             llm_response = openai.chat.completions.create(
@@ -556,6 +575,8 @@ async def process_chat_message(
                 response_format={"type": "json_object"},
                 name="motion-planner",
             )
+            cached = getattr(llm_response.usage.prompt_tokens_details, "cached_tokens", 0)
+            logger.debug(f"LLM prompt tokens: {llm_response.usage.prompt_tokens} total, {cached} cached")
             return llm_response.choices[0].message.content
 
         planner_response_text = await asyncio.to_thread(run_motion_planner)
@@ -740,7 +761,10 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "audio":
                 audio_b64 = message_data.get("data", "")
                 audio_bytes = base64.b64decode(audio_b64)
-                transcribed_text = await asyncio.to_thread(transcribe_audio, audio_bytes)
+                transcribed_text, pre_context = await asyncio.gather(
+                    asyncio.to_thread(transcribe_audio, audio_bytes),
+                    _build_pre_context(simulator, memory),
+                )
                 await websocket.send_json({"type": "transcription", "text": transcribed_text})
                 if transcribed_text.strip():
                     response_data = await process_chat_message(
@@ -750,6 +774,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         recorder=recorder,
                         simulator_instance=simulator,
                         session_id=session_id,
+                        pre_context=pre_context,
                     )
                     await websocket.send_json(response_data)
 
