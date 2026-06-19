@@ -1,0 +1,6 @@
+# Block until the subject performs a progression gesture (e.g. hands crossed /
+# close together), or until `timeout` seconds elapse.
+string gesture       # gesture id to watch for, e.g. "hands_close"
+float32 timeout      # max seconds to wait; 0 = wait indefinitely
+---
+bool detected        # true if the gesture was seen, false on timeout

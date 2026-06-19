@@ -4,34 +4,27 @@ version = "0.1.0"
 description = "Multimodal AI Dialogue Agent for Child-Robot Instruction Grounding"
 readme = "README.md"
 requires-python = ">=3.12"
+# Mac-side deps only. The Pi nodes (rospy, mediapipe, torch, opencv, ...) install
+# separately on the robot — see pi/README.md.
 dependencies = [
-    "faster-whisper>=1.2.1",
+    "roslibpy>=1.7.0",
     "openai>=1.0.0",
-    "mujoco>=3.0.0",
+    "faster-whisper>=1.2.1",
     "loguru>=0.7.3",
     "python-dotenv>=1.2.2",
-    "fastapi>=0.135.3",
-    "uvicorn[standard]>=0.44.0",
-    "websockets>=15.0.1",
-    "langfuse>=4.1.0",
-    "mediapipe>=0.10.0",
-    "opencv-python>=4.8.0",
-    "numpy>=1.24.0",
-    "httpx>=0.27.0",
 ]
 
 [project.scripts]
-server = "coral_agent.server:main"
-robot = "coral_agent.server:main_robot"
-robot-agent = "coral_agent.robot.robot_agent:main"
-vision = "coral_agent.vision.vision_server:main"
+director = "coral_agent.director_node:main"
+audio = "coral_agent.audio_node:main"
+speaker = "coral_agent.speaker_node:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/coral_agent"]
+packages = ["mac/coral_agent"]
 
 [dependency-groups]
 dev = [

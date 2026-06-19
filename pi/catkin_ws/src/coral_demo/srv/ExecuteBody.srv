@@ -1,0 +1,15 @@
+# Drive the body servos and BLOCK until the motion has finished (duration_ms has
+# elapsed). Blocking prevents overlapping commands to the same servos.
+#
+# Two modes:
+#   * pose class  — set `move` to a known class (e.g. "t-pose", "stand"); the
+#                   node looks up the matching *_PULSE pose.
+#   * explicit    — leave `move` empty and provide servo_ids + positions
+#                   (used by the voice "fix my pose" path).
+string move            # pose class name, or "" to use explicit servo targets
+int32[] servo_ids      # explicit servo ids (when move == "")
+int32[] positions      # explicit servo pulse targets, parallel to servo_ids
+int32 duration_ms      # motion duration; <=0 falls back to the node default
+bool return_to_stand   # if true, return to stand after holding the pose
+---
+bool done

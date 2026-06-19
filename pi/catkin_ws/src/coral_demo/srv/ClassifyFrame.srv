@@ -1,0 +1,7 @@
+# Classify the most-stable recent clean frame into a pose class.
+# Request is empty — the vision node classifies whatever it is currently seeing.
+---
+string move          # detected pose class (e.g. "t-pose", "dab", "stand")
+float32 confidence   # softmax probability of `move` in [0, 1]
+bool had_human       # false if no valid skeleton was available to classify
+uint8[] jpeg         # the clean frame that was classified, JPEG-encoded (for UI)

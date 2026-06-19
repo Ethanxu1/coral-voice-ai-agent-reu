@@ -1,0 +1,6 @@
+# Speak text aloud (espeak on the Mac). Blocks until speech finishes so the
+# Director can sequence the countdown / lines against the audio.
+# Provided by the Mac speaker node over rosbridge.
+string text
+---
+bool done

@@ -1,0 +1,15 @@
+# Transcribe browser-mic audio (Whisper) and plan a motion (LLM router).
+# Provided by the Mac audio node over rosbridge.
+#
+# The response carries safe, already-clamped explicit servo targets ready to
+# hand to body_node's ExecuteBody. has_action is false when the LLM asked for
+# clarification instead of moving (the Director then re-records).
+string audio_b64       # base64-encoded webm audio from the browser mic
+string state_json      # current joint state in degrees (JSON), for LLM context
+---
+string transcript      # what Whisper heard
+string verbal_response  # what the robot should say back
+bool has_action        # false = clarification question, no movement
+int32[] servo_ids
+int32[] positions
+int32 duration_ms

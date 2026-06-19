@@ -1,0 +1,23 @@
+<launch>
+  <!-- CORAL demo — robot-side nodes + rosbridge.
+       Run AFTER the AiNex camera node is up (provides the /camera param and the
+       camera image topic that vision_node subscribes to). -->
+
+  <arg name="dev_mode" default="true"
+       doc="When true, body pose-class moves are forced to stand (demo dev mode)." />
+  <arg name="rosbridge_port" default="9090" />
+
+  <!-- rosbridge: lets the Mac director/audio/speaker and the browser frontend
+       talk to these ROS nodes over a WebSocket. -->
+  <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch">
+    <arg name="port" value="$(arg rosbridge_port)" />
+  </include>
+
+  <node pkg="coral_demo" type="vision_node.py" name="vision_node" output="screen" />
+
+  <node pkg="coral_demo" type="head_node.py" name="head_node" output="screen" />
+
+  <node pkg="coral_demo" type="body_node.py" name="body_node" output="screen">
+    <param name="dev_mode" value="$(arg dev_mode)" />
+  </node>
+</launch>

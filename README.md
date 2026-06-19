@@ -1,276 +1,99 @@
-# CORAL Voice AI Agent
+# CORAL — Pose-Learning Robot Demo
 
-Multimodal AI Dialogue Agent for Child-Robot Instruction Grounding — Hiwonder AiNex humanoid robot.
-
-## Overview
-
-A voice-based AI agent that translates spoken natural-language instructions into physical robot motions. Supports two backends switchable with a single command:
-
-| Mode | Command | What runs |
-|------|---------|-----------|
-| **Simulation** | `uv run server` | MuJoCo physics viewer (no robot required) |
-| **Physical robot** | `uv run robot` | Commands sent to AiNex over the network |
-
-Both modes share the same frontend, voice pipeline, and LLM motion planner. The laptop microphone and speakers are used in both modes.
+An interactive demo where the AiNex humanoid ("Robert") asks a child to strike a
+pose, photographs and **classifies** it, mimics it, then asks the child to
+**verbally correct** its pose. Built as a distributed ROS system split across the
+robot's Pi and a Mac, connected by **rosbridge**.
 
 ## Architecture
 
-### Simulation mode
-
 ```
-Laptop
-──────────────────────────────────────────────────────────────
-Frontend (npm run dev, :5173)
-  ↕ WebSocket
-Server (uv run server, :8000)
-  • Whisper — speech → text (laptop mic)
-  • GPT-4o-mini — motion planning
-  • SimController — MuJoCo joint interpolation
-      ↓
-  MuJoCo viewer window (AiNex 24-DOF model)
-```
-
-### Physical robot mode
-
-```
-Laptop                                Robot (192.168.8.219)
-──────────────────────────────────    ──────────────────────────
-Frontend (npm run dev, :5173)
-  ↕ WebSocket
-Server (uv run robot, :8000)      →   robot_agent.py (:9000)
-  • Whisper (laptop mic/speakers)         • Raw Hiwonder LX serial
-  • GPT-4o-mini — motion planning         • /dev/ttyAMA0 @ 115200
-  • HardwareController                    • Safety clamps enforced
-    ↳ per-joint angle conversion            (servo 20: 360–850)
-    ↳ HTTP POST to robot agent
+Pi (ROS1 + rosbridge_server :9090)         Mac (roslibpy clients)
+─────────────────────────────────         ────────────────────────────
+vision_node   camera + MediaPipe           director_node  state machine
+              + pose classifier            audio_node     Whisper + LLM
+              srv: classify_frame,         speaker_node   espeak (TTS)
+                   watch_gesture
+head_node     subject tracking                    │
+body_node     servo control                       │ rosbridge WebSocket
+              srv: execute_body  ◄────────────────┘
+                                           Browser (React + roslibjs)
+                                             demo UI, mic capture
 ```
 
-## Prerequisites
+- **Pi** runs the real `rospy` nodes (camera, MediaPipe, classifier, servos) — it
+  can't move off the robot. See [pi/README.md](pi/README.md).
+- **Mac** can't run ROS1, so `director` / `audio` / `speaker` are **roslibpy
+  clients** that connect to the Pi's `rosbridge_server` and behave like ROS nodes.
+- **Frontend** (React + roslibjs) connects to the same rosbridge.
 
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js 22+
-- OpenAI API key
-- Langfuse account (for LLM tracing)
+## Demo flow
 
-### System libraries (Arch Linux)
+`INTRO → (LOOP_START → RECORD) × N → OUTRO`, orchestrated by `director_node`. Each
+step is a **blocking** service call so the demo only advances when the previous
+action (speech, classification, motion) has actually finished.
 
-```bash
-sudo pacman -S --needed \
-  portaudio libsndfile ffmpeg \
-  alsa-lib libpulse \
-  base-devel pkg-config cmake openssl \
-  mesa glfw-x11 \
-  libx11 libxi libxrandr libxcursor libxinerama \
-  nodejs
-```
+1. **Intro** — Robert greets, waves, asks for a pose; advances when the child
+   crosses their hands (`vision/watch_gesture`).
+2. **Loop start** — countdown, camera click, `vision/classify_frame` → pose class,
+   `body/execute_body` mimics it (dev mode: returns to stand).
+3. **Record** — child says how to fix the pose; the browser records, calls
+   `audio/audio_to_action` (Whisper + LLM → safe servo targets), and Robert adjusts.
+4. **Outro** — Robert explains the ML in simple terms.
 
-## Setup
-
-### 1. Install Python dependencies
-
-```bash
-uv sync
-```
-
-### 2. Download robot model (simulation only)
-
-```bash
-./scripts/download_assets.sh
-```
-
-### 3. Install frontend dependencies
-
-```bash
-cd frontend && npm install && cd ..
-```
-
-### 4. Configure environment
-
-```bash
-cp .env.example .env   # then fill in your keys
-```
-
-```
-OPENAI_API_KEY=sk-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
-```
-
-Get Langfuse keys at [cloud.langfuse.com](https://cloud.langfuse.com) → Settings → API Keys.
+`DEMO_LOOP_REPEATS` controls N (default 2).
 
 ## Running
 
-### Simulation mode
-
+### 1. On the Pi
 ```bash
-# Terminal 1
-uv run server
-
-# Terminal 2
-cd frontend && npm run dev
+cd pi/catkin_ws && catkin_make && source devel/setup.bash
+# start the AiNex camera node, then:
+roslaunch coral_demo coral_demo.launch dev_mode:=true
 ```
 
-Open <http://localhost:5173>.
-
-### Physical robot mode
-
-# ssh into the robot
-
+### 2. On the Mac
 ```bash
-# ssh into robot raspberry pi
-ssh pi@192.168.8.219
+uv sync
+cp .env.example .env          # set OPENAI_API_KEY
+brew install espeak           # TTS
+export ROS_HOST=<pi-ip>       # rosbridge host (default 192.168.8.219)
+
+uv run speaker &
+uv run audio &
+uv run director               # starts the demo
 ```
 
-**On the robot** (one-time setup):
-
+### 3. Frontend
 ```bash
-pip install fastapi uvicorn pyserial
-# copy robot_agent.py to the robot
-scp src/coral_agent/robot/robot_agent.py ubuntu@192.168.8.219:~/robot_agent.py
-
-# move robot_agent.py to docker container
-docker cp /home/pi/robot_agent.py ainex:/home/ubuntu/ros_ws/src/<your_package>/robot_agent.py
+cd frontend && npm install
+cp .env.example .env          # set VITE_ROS_HOST=<pi-ip>
+npm run dev                   # http://localhost:5173
 ```
 
-**Every session:**
-
-```bash
-
-# ssh into robot raspberry pi
-ssh pi@192.168.8.219
-# open interactive terminal inside of docker container
-docker exec -it ainex bash
-# switch current terminal user to 'ubuntu'
-su - ubuntu
-cd /home/ubuntu
-
-# run robot_agent.py
-pyrun ~/ros_ws/src/robot_agent.py        # listens on :9000
-
-# On the laptop (two terminals)
-ROBOT_IP=192.168.8.219 uv run robot
-cd frontend && npm run dev
-```
-
-Verify the robot agent is reachable before starting:
-
-```bash
-curl http://192.168.8.219:9000/health
-# → {"status":"ok","backend":"_SerialBackend"}
-```
-
-If the serial port isn't `/dev/ttyAMA0`:
-
-```bash
-SERIAL_PORT=/dev/ttyUSB0 python3 ~/robot_agent.py
-```
-
-## Project Structure
+## Layout
 
 ```
-coral-voice-ai-agent-reu/
-├── src/coral_agent/
-│   ├── server.py              # FastAPI server — sim and robot modes
-│   ├── primitives.py          # Parameterized motion primitives
-│   ├── validation.py          # Joint limit + sign validation
-│   ├── state.py               # State checkpointing and rollback
-│   ├── config.py              # LLM model selection
-│   ├── prompts/
-│   │   └── router.md          # Motion planner system prompt
-│   ├── robot/
-│   │   ├── interface.py           # RobotController abstract class
-│   │   ├── sim_controller.py      # MuJoCo backend
-│   │   ├── hardware_controller.py # Physical robot backend (laptop-side)
-│   │   ├── hardware_angle_utils.py# Per-joint angle conversion
-│   │   ├── robot_agent.py         # HTTP server to run ON the robot
-│   │   ├── servo_config.py        # Servo ID map + STAND_PULSE values
-│   │   └── angle_utils.py         # Sim-mode angle conversion
-│   ├── simulator/
-│   │   └── mujoco_sim.py          # AiNex MuJoCo wrapper (24 DOF)
-│   └── vision/
-│       └── vision_server.py       # MediaPipe pose server (:8001)
-├── frontend/                  # Vite + React + TypeScript
-│   └── src/
-│       ├── App.tsx
-│       └── components/
-│           ├── ChatSidebar.tsx     # Voice/text chat + audio VAD
-│           └── SimulatorControls.tsx
-├── assets/                    # Robot models (downloaded, not in git)
-├── recordings/                # Conversation logs (auto-generated)
-├── scripts/
-│   └── download_assets.sh
-├── .env                       # API keys (not in git)
-├── .env.robot                 # Robot mode env template
-└── pyproject.toml
+pi/catkin_ws/src/coral_demo/   ROS1 package (vision/head/body nodes, srv/, model/, poses.py)
+mac/coral_agent/               roslibpy nodes (director/audio/speaker) + reused motion planner
+frontend/                      React + roslibjs demo UI
 ```
 
-## Motion Primitives
+## Environment variables
 
-The LLM uses these parameterized primitives. Each accepts an `angle` (degrees) and optional `speed` multiplier (0.1–8.0, default 1.0):
+| Variable | Default | Where | Description |
+|----------|---------|-------|-------------|
+| `OPENAI_API_KEY` | — | Mac | required for the voice motion planner |
+| `OPENAI_BASE_URL` | OpenAI | Mac | override for OpenAI-compatible APIs |
+| `ROS_HOST` | `192.168.8.219` | Mac | Pi IP running rosbridge |
+| `ROS_BRIDGE_PORT` | `9090` | Mac | rosbridge port |
+| `DEMO_LOOP_REPEATS` | `2` | Mac | how many learn-a-move loops |
+| `VITE_ROS_HOST` | `localhost` | frontend | Pi IP for the browser |
 
-| Primitive | Description | Max Angle | Direction |
-|-----------|-------------|-----------|-----------|
-| `left_arm_out` | Left arm sideways abduction | 119° | — |
-| `right_arm_out` | Right arm sideways abduction | 119° | — |
-| `left_arm_forward` | Left arm forward/up flexion | 119° | — |
-| `right_arm_forward` | Right arm forward/up flexion | 119° | — |
-| `left_elbow_bend` | Bend left elbow | 119° | — |
-| `right_elbow_bend` | Bend right elbow | 119° | — |
-| `left_elbow_rotate` | Rotate left forearm | 119° | in / out |
-| `right_elbow_rotate` | Rotate right forearm | 119° | in / out |
-| `head_turn` | Turn head | 119° | left / right |
-| `head_tilt` | Tilt head | 119° | up / down |
-| `neutral` | Reset all arm + head joints to stand | — | — |
+## Skeleton status
 
-Example chat commands:
-
-- *"Raise your right arm to 90 degrees"*
-- *"Turn your head left while waving"*
-- *"Bend your left elbow halfway"*
-
-## Servo Map (AiNex 24 DOF)
-
-| Joint | Servo ID | Stand pulse | Notes |
-|-------|----------|-------------|-------|
-| l_ank_roll / r_ank_roll | 1 / 2 | 500 / 500 | |
-| l_ank_pitch / r_ank_pitch | 3 / 4 | 640 / 360 | |
-| l_knee / r_knee | 5 / 6 | 500 / 500 | |
-| l_hip_pitch / r_hip_pitch | 7 / 8 | 350 / 650 | |
-| l_hip_roll / r_hip_roll | 9 / 10 | 500 / 500 | |
-| l_hip_yaw / r_hip_yaw | 11 / 12 | 500 / 500 | |
-| l_sho_pitch / r_sho_pitch | 13 / 14 | 835 / 165 | |
-| l_sho_roll / r_sho_roll | 15 / 16 | 830 / 170 | |
-| l_el_pitch / r_el_pitch | 17 / 18 | 500 / 500 | forearm rotation |
-| l_el_yaw | 19 | 150 | safe range 0–600 |
-| r_el_yaw | 20 | 850 | **DAMAGED — clamped to 360–850** |
-| l_gripper / r_gripper | 21 / 22 | 500 / 500 | |
-| head_pan / head_tilt | 23 / 24 | 500 / 500 | not physically present |
-
-## Robot Agent API
-
-Endpoints served by `robot_agent.py` on the robot at `:9000`:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Returns `{"status":"ok","backend":"..."}` |
-| POST | `/move` | Move servos: `[{"servo_id":13,"position":460,"duration_ms":1000},...]` |
-| POST | `/stand` | Return all servos to standing pose |
-| POST | `/feedback` | Read servo positions/temps: `{"servo_ids":[13,14]}` |
-| GET | `/positions` | Current position of all 24 servos |
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ROBOT_MODE` | `sim` | `sim` = MuJoCo, `robot` = physical robot |
-| `ROBOT_IP` | `192.168.8.219` | Robot's IP on your network |
-| `ROBOT_AGENT_PORT` | `9000` | Port the robot agent listens on |
-| `SERIAL_PORT` | `/dev/ttyAMA0` | Serial port on the robot for servo bus |
-| `AGENT_PORT` | `9000` | Same as above, set on the robot side |
-
-## License
-
-See individual component licenses:
-
-- AiNex MuJoCo model: see `assets/ainex/`
+This is the **skeleton + stubs** pass. Known TODOs before a live run:
+- `body_node` dev mode forces pose-class moves to stand — flip `dev_mode:=false`
+  to execute the real `*_PULSE` poses once validated on hardware.
+- `audio_node` flattens multi-step / parallel motion plans into one pose.
+- Wave / thumbs-up flourishes and polished UI animations are placeholders.

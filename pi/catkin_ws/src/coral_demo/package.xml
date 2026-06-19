@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>coral_demo</name>
+  <version>0.1.0</version>
+  <description>
+    CORAL pose-learning demo — robot-side (Pi) ROS1 nodes: vision (pose
+    landmarks + classifier + gesture watch), head tracking, and body control.
+    The Mac-side director / audio / speaker connect over rosbridge.
+  </description>
+
+  <maintainer email="sdf72@cornell.edu">Scott Fukuda</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
+
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+  <!-- runtime-only, provided by the AiNex image / pip on the Pi:
+       ainex_kinematics, ainex_sdk, mediapipe, torch, torchvision, opencv,
+       rosbridge_server -->
+</package>
