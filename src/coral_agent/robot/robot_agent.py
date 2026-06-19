@@ -1,27 +1,20 @@
 """Robot-side agent server — deploy and run this ON the AiNex robot.
 
 Receives servo commands from the laptop's hardware_controller.py over HTTP
-and drives the physical servos via the Hiwonder serial bus.
+and drives the physical servos through the ROS MotionManager (see control.py).
 
-Install on robot:
-    pip install fastapi uvicorn pyserial
-
-Run on robot:
+Must run inside the robot's ROS environment:
+    source /home/ubuntu/ros_ws/devel/setup.bash   # so rospy + ainex_kinematics resolve
+    # roscore + the servo controller node must already be running
     python3 robot_agent.py
-  or via uv (if installed):
-    uv run robot-agent
 
 Environment variables (set on the robot):
-    SERIAL_PORT   Serial device for servo bus (default: /dev/ttyAMA0)
     AGENT_PORT    HTTP port this server listens on (default: 9000)
 """
 
 from __future__ import annotations
 
 import os
-import struct
-import threading
-import time
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Tuple
 
@@ -31,11 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
-# Servo bus backend — tries Hiwonder SDK first, falls back to raw serial
+# Servo bus backend — ROS MotionManager
 # ---------------------------------------------------------------------------
-
-SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyAMA0")
-SERIAL_BAUD = 115200
 
 # Stand-pose hardware values (from servo_config.py STAND_PULSE).
 # These must stay in sync with the laptop-side servo_config.py.
@@ -78,90 +68,57 @@ def _clamp_position(servo_id: int, position: int) -> int:
     return max(lo, min(hi, position))
 
 
-# ---------------------------------------------------------------------------
-# Serial bus backend
-# ---------------------------------------------------------------------------
+class _MotionManagerBackend:
+    """ROS-node backend using ainex_kinematics MotionManager.
 
-class _SerialBackend:
-    """Direct Hiwonder LX bus servo control via UART."""
+    This is the high-level path demonstrated in control.py: a rospy node that
+    drives the servo bus through MotionManager.set_servos_position rather than
+    poking the UART directly. Requires the robot's ROS workspace to be sourced
+    and roscore + the servo controller node to be running.
+    """
 
-    def __init__(self, port: str, baud: int):
-        import serial  # pyserial — install on robot: pip install pyserial
-        self._lock = threading.Lock()
-        self._ser = serial.Serial(port, baud, timeout=0.1)
-        print(f"[robot-agent] Serial port {port} @ {baud} baud opened")
-
-    @staticmethod
-    def _build_move(servo_id: int, position: int, time_ms: int) -> bytes:
-        """
-        Hiwonder LX bus SERVO_MOVE_TIME_WRITE command.
-        Packet: [0x55, 0x55, ID, LEN=7, CMD=0x01, pos_l, pos_h, t_l, t_h]
-        LEN = total packet bytes - 2 header bytes = 9 - 2 = 7.
-        """
-        pos = max(0, min(1000, position))
-        t   = max(0, min(30000, time_ms))
-        return struct.pack('<BBBBBBBBB',
-            0x55, 0x55,
-            servo_id & 0xFF,
-            7,      # length
-            0x01,   # CMD: SERVO_MOVE_TIME_WRITE
-            pos & 0xFF, (pos >> 8) & 0xFF,
-            t & 0xFF,   (t >> 8) & 0xFF,
-        )
-
-    def move_servo(self, servo_id: int, position: int, time_ms: int) -> None:
-        cmd = self._build_move(servo_id, position, time_ms)
-        with self._lock:
-            self._ser.write(cmd)
-
-    def move_servos(self, moves: List[Tuple[int, int, int]]) -> None:
-        # Send all servo commands with minimal inter-frame gap so they
-        # start moving at approximately the same time.
-        cmds = b"".join(self._build_move(sid, pos, t) for sid, pos, t in moves)
-        with self._lock:
-            self._ser.write(cmds)
-
-    def read_position(self, servo_id: int) -> Optional[int]:
-        """Request current position from servo (LX SERVO_POS_READ = 0x1C)."""
-        with self._lock:
-            self._ser.write(bytes([0x55, 0x55, servo_id, 4, 0x1C, 0x00]))
-            time.sleep(0.003)
-            raw = self._ser.read(8)
-        if len(raw) >= 8 and raw[0] == 0x55 and raw[1] == 0x55:
-            return struct.unpack_from('<H', raw, 5)[0]
-        return None
-
-
-class _AinexSDKBackend:
-    """Thin wrapper around the ainex_kinematics SDK (available on the robot)."""
+    # Head servos are not physically present on the AiNex (see README/control.py);
+    # MotionManager would error on them, so we drop them here.
+    _SKIP_SERVOS = {23, 24}
 
     def __init__(self):
-        # ainex_kinematics is a ROS package — source the workspace first:
-        # source /home/ubuntu/ros_ws/devel/setup.bash
-        import sys
-        sys.path.insert(0, '/home/ubuntu/ros_ws/devel/lib/python3/dist-packages')
-        from ainex_kinematics.servo_control import setServoPulse  # type: ignore
-        self._set = setServoPulse
-        print("[robot-agent] Using ainex_kinematics servo backend")
+        import rospy
+        from ainex_kinematics.motion_manager import MotionManager
+
+        # init_node must be called once before MotionManager creates its
+        # publishers. disable_signals=True leaves SIGINT/SIGTERM to uvicorn so
+        # the HTTP server owns process lifecycle.
+        rospy.init_node("robot_agent", anonymous=True, disable_signals=True)
+        self._rospy = rospy
+        self._mm = MotionManager()
+        print("[robot-agent] Using ROS MotionManager backend")
+
+    def _grouped(self, moves: List[Tuple[int, int, int]]) -> Dict[int, List[List[int]]]:
+        # MotionManager.set_servos_position applies one duration to a whole
+        # batch, so group [servo_id, position] pairs by their duration_ms.
+        groups: Dict[int, List[List[int]]] = {}
+        for sid, pos, t in moves:
+            if sid in self._SKIP_SERVOS:
+                continue
+            groups.setdefault(t, []).append([sid, pos])
+        return groups
 
     def move_servo(self, servo_id: int, position: int, time_ms: int) -> None:
-        self._set(servo_id, position, time_ms)
+        if servo_id in self._SKIP_SERVOS:
+            return
+        self._mm.set_servos_position(time_ms, [[servo_id, position]])
 
     def move_servos(self, moves: List[Tuple[int, int, int]]) -> None:
-        for sid, pos, t in moves:
-            self._set(sid, pos, t)
+        for duration_ms, servos in self._grouped(moves).items():
+            self._mm.set_servos_position(duration_ms, servos)
 
     def read_position(self, servo_id: int) -> Optional[int]:
         return None
 
 
 def _init_backend():
-    """Try SDK first, fall back to raw serial."""
-    try:
-        return _AinexSDKBackend()
-    except Exception:
-        pass
-    return _SerialBackend(SERIAL_PORT, SERIAL_BAUD)
+    """Create the ROS MotionManager backend (the only supported backend)."""
+    return _MotionManagerBackend()
 
 
 # ---------------------------------------------------------------------------
