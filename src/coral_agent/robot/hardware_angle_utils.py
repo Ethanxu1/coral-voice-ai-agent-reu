@@ -86,6 +86,14 @@ def rad_to_hardware_units(rad: float, joint_name: str) -> int:
     return max(lo, min(hi, units))
 
 
+def hardware_units_to_rad(hw_units: int, joint_name: str) -> float:
+    """Convert physical servo units (0–1000) to simulation radians for a named joint."""
+    stand_pulse = STAND_PULSE.get(joint_name, _CENTER)
+    stand_rad   = HW_STAND_RAD.get(joint_name, 0.0)
+    direction   = HW_DIRECTION.get(joint_name, +1)
+    return stand_rad + (hw_units - stand_pulse) * direction / TICKS_PER_RAD
+
+
 def sim_units_to_hardware_units(sim_units: int, joint_name: str) -> int:
     """Convert pre-computed sim servo units (CENTER=500) to physical servo units.
 

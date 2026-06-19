@@ -13,7 +13,7 @@ import os
 import httpx
 from loguru import logger
 
-from .hardware_angle_utils import sim_units_to_hardware_units
+from .hardware_angle_utils import sim_units_to_hardware_units, hardware_units_to_rad
 from .interface import RobotController, ServoCommand, ServoFeedback
 from .servo_config import JOINT_NAME_MAP, STAND_PULSE
 
@@ -115,3 +115,18 @@ class AiNexHardwareController(RobotController):
         except Exception:
             pass
         return dict(STAND_PULSE)
+
+    def get_joint_states(self) -> dict[str, float]:
+        """Return current joint states as radians, matching simulator.get_all_joint_states() format."""
+        hw_positions = self.get_joint_positions()
+        states: dict[str, float] = {}
+        for sid_str, hw_units in hw_positions.items():
+            try:
+                sid = int(sid_str)
+            except (ValueError, TypeError):
+                continue
+            joint_name = JOINT_NAME_MAP.get(sid)
+            if joint_name is None:
+                continue
+            states[joint_name] = hardware_units_to_rad(hw_units, joint_name)
+        return states

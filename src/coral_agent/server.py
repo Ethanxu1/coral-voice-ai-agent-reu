@@ -63,6 +63,15 @@ simulator: AiNexSimulator | None = None
 controller: RobotController | None = None
 
 
+def _get_robot_state() -> dict[str, float]:
+    """Return current joint states from simulator (sim mode) or hardware controller (robot mode)."""
+    if simulator is not None:
+        return simulator.get_all_joint_states()
+    if controller is not None and hasattr(controller, "get_joint_states"):
+        return controller.get_joint_states()
+    return {}
+
+
 _router_prompt_cache: str | None = None
 
 
@@ -342,9 +351,7 @@ async def get_joint_states() -> dict[str, Any]:
     """Get current joint states."""
     global simulator
 
-    if simulator is not None:
-        return {"joint_states": simulator.get_all_joint_states()}
-    return {"joint_states": {}}
+    return {"joint_states": _get_robot_state()}
 
 
 @app.get("/primitives")
@@ -521,7 +528,7 @@ async def _build_pre_context(
     simulator_instance: "AiNexSimulator | None",
     memory: "HierarchicalMemory",
 ) -> tuple[dict, str, list]:
-    robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
+    robot_state = await asyncio.to_thread(_get_robot_state)
     state_description = describe_joint_state(robot_state)
     memory_context = memory.get_context_for_llm()
     return robot_state, state_description, memory_context
@@ -550,7 +557,7 @@ async def process_chat_message(
         if pre_context is not None:
             robot_state, state_description, memory_ctx = pre_context
         else:
-            robot_state = simulator_instance.get_all_joint_states() if simulator_instance else {}
+            robot_state = _get_robot_state()
             state_description = describe_joint_state(robot_state)
             memory_ctx = memory.get_context_for_llm()
 
@@ -685,9 +692,7 @@ async def process_chat_message(
             "role": "assistant",
             "content": response,
             "waypoints": executed_waypoints,
-            "joint_states": (
-                simulator_instance.get_all_joint_states() if simulator_instance else None
-            ),
+            "joint_states": _get_robot_state() or None,
         }
 
         if validation_warnings:
@@ -779,23 +784,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json(response_data)
 
             elif msg_type == "get_state":
-                if simulator is not None:
-                    robot_state = simulator.get_all_joint_states()
-                    await websocket.send_json({
-                        "type": "state",
-                        "joint_states": robot_state,
-                        "state_description": describe_joint_state(robot_state),
-                        "checkpoint_count": state_manager.checkpoint_count,
-                        "running": simulator.is_running(),
-                    })
-                else:
-                    await websocket.send_json({
-                        "type": "state",
-                        "joint_states": {},
-                        "state_description": "Robot hardware mode — no simulator state",
-                        "checkpoint_count": 0,
-                        "running": True,
-                    })
+                robot_state = await asyncio.to_thread(_get_robot_state)
+                await websocket.send_json({
+                    "type": "state",
+                    "joint_states": robot_state,
+                    "state_description": describe_joint_state(robot_state),
+                    "checkpoint_count": state_manager.checkpoint_count,
+                    "running": simulator.is_running() if simulator is not None else True,
+                })
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -810,7 +806,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "role": "assistant",
                 "content": "Sorry, an error occurred processing your request.",
                 "waypoints": [],
-                "joint_states": simulator.get_all_joint_states() if simulator is not None else None,
+                "joint_states": _get_robot_state() or None,
             })
         except Exception:
             pass
