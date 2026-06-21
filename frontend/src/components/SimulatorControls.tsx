@@ -224,6 +224,13 @@ function SimulatorControls({
           >
             Reset Pose
           </button>
+          <button
+            className="control-btn preset"
+            onClick={() => onCommand('sync_sim')}
+            disabled={!isConnected}
+          >
+            Sync Sim to Robot
+          </button>
         </div>
       </div>
 

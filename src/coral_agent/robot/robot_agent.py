@@ -77,9 +77,7 @@ class _MotionManagerBackend:
     and roscore + the servo controller node to be running.
     """
 
-    # Head servos are not physically present on the AiNex (see README/control.py);
-    # MotionManager would error on them, so we drop them here.
-    _SKIP_SERVOS = {23, 24}
+    _SKIP_SERVOS: set[int] = set()
 
     def __init__(self):
         import rospy

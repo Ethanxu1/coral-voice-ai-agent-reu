@@ -35,17 +35,17 @@ HW_DIRECTION: dict[str, int] = {
     # Shoulder roll — both decrease as arm lifts outward (primitives handle sign)
     "l_sho_roll":  -1,
     "r_sho_roll":  -1,
-    # Forearm rotation (calibration needed)
-    "l_el_pitch":  +1,
-    "r_el_pitch":  -1,
-    # Elbow bend — l stand=150 (bend via -rad → hw increases), r stand=850 (bend via +rad → hw decreases)
-    "l_el_yaw":    -1,
-    "r_el_yaw":    -1,
-    # Grippers (calibration needed)
+    # Forearm rotation (verified on hardware)
+    "l_el_pitch":  -1,   # was +1; confirmed flipped on hardware
+    "r_el_pitch":  +1,   # was -1; paired flip with mujoco_sim.py rotate_right_elbow signs
+    # Elbow bend — verified on hardware: extend must increase units for l, decrease for r
+    "l_el_yaw":    +1,   # was -1; confirmed flipped on hardware (extend was bending)
+    "r_el_yaw":    +1,   # was -1; confirmed flipped on hardware (extend was bending)
+    # Grippers (verified on hardware)
     "l_gripper":   +1,
-    "r_gripper":   -1,
-    # Head (calibration needed; stand=500)
-    "head_pan":    +1,
+    "r_gripper":   +1,   # was -1; confirmed flipped on hardware
+    # Head (verified on hardware)
+    "head_pan":    -1,   # was +1; confirmed flipped on hardware
     "head_tilt":   +1,
     # Legs — best-effort based on STAND_PULSE polarity; calibrate before use
     "l_ank_roll":  +1,

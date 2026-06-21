@@ -37,10 +37,11 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
 
 
-from coral_agent.robot import get_controller
 from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
-from coral_agent.robot.interface import RobotController, ServoCommand
+from coral_agent.robot.hardware_controller import AiNexHardwareController
+from coral_agent.robot.interface import ServoCommand
 from coral_agent.robot.servo_config import SERVO_ID_MAP
+from coral_agent.robot.sim_controller import SimController
 from coral_agent.simulator import AiNexSimulator
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
@@ -58,18 +59,44 @@ RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
 RECORDINGS_DIR.mkdir(exist_ok=True)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Global simulator and controller instances
+# Global simulator and dispatcher instances. In robot mode both dispatchers are
+# set: sim_dispatcher animates the MuJoCo viewer (so we can see what the code
+# wants the robot to do) while hardware_dispatcher drives the physical robot.
+# In sim mode only sim_dispatcher is set.
 simulator: AiNexSimulator | None = None
-controller: RobotController | None = None
+sim_dispatcher: SimController | None = None
+hardware_dispatcher: AiNexHardwareController | None = None
+robot_mode: str = "sim"
 
 
 def _get_robot_state() -> dict[str, float]:
-    """Return current joint states from simulator (sim mode) or hardware controller (robot mode)."""
+    """Return current joint states — hardware in robot mode, simulator otherwise."""
+    if hardware_dispatcher is not None:
+        try:
+            return hardware_dispatcher.get_joint_states()
+        except Exception as e:
+            logger.debug(f"Hardware joint-state read failed, falling back to sim: {e}")
     if simulator is not None:
         return simulator.get_all_joint_states()
-    if controller is not None and hasattr(controller, "get_joint_states"):
-        return controller.get_joint_states()
     return {}
+
+
+def _sync_sim_to_hardware() -> None:
+    """Copy the physical robot's current joint positions into the simulator
+    so the viewer starts mirroring the real robot's pose."""
+    if simulator is None or hardware_dispatcher is None:
+        return
+    try:
+        physical_state = hardware_dispatcher.get_joint_states()
+    except Exception as e:
+        logger.warning(f"Could not read physical joint states for sim sync: {e}")
+        return
+    synced = 0
+    for joint, rad in physical_state.items():
+        if joint in simulator.JOINT_NAMES:
+            simulator.set_joint_position(joint, rad)
+            synced += 1
+    logger.info(f"Synced simulator to {synced} physical joint positions")
 
 
 _router_prompt_cache: str | None = None
@@ -85,20 +112,24 @@ def get_router_prompt() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
-    global simulator, controller
+    global simulator, sim_dispatcher, hardware_dispatcher, robot_mode
 
     robot_mode = os.getenv("ROBOT_MODE", "sim")
 
-    if robot_mode == "sim":
-        logger.info("Starting AiNex MuJoCo simulator...")
-        simulator = AiNexSimulator()
-        simulator.start_viewer()
-    else:
-        logger.info(f"ROBOT MODE — skipping MuJoCo, targeting physical robot at {os.getenv('ROBOT_IP', '192.168.8.219')}")
-        simulator = None
+    # Always start the MuJoCo simulator — in robot mode it provides a visualization
+    # of what the code wants the robot to do, so we can compare to the physical motion.
+    logger.info("Starting AiNex MuJoCo simulator...")
+    simulator = AiNexSimulator()
+    simulator.start_viewer()
+    sim_dispatcher = SimController(simulator)
 
-    controller = get_controller(mode=robot_mode, simulator=simulator)
-    logger.info(f"Robot controller initialized (mode={robot_mode})")
+    if robot_mode in ("robot", "hardware"):
+        logger.info(f"ROBOT MODE — targeting physical robot at {os.getenv('ROBOT_IP', '192.168.8.219')}")
+        hardware_dispatcher = AiNexHardwareController()
+        # Mirror physical pose into sim so the viewer starts where the robot actually is.
+        _sync_sim_to_hardware()
+
+    logger.info(f"Robot dispatchers initialized (mode={robot_mode})")
 
     langfuse_client = Langfuse()
     logger.info("Langfuse tracing initialized")
@@ -278,8 +309,16 @@ async def execute_waypoints(
                 duration_ms=duration_ms,
             ))
 
-        if commands and controller is not None:
-            await asyncio.to_thread(controller.send_commands, commands)
+        if commands:
+            # Dispatch to both sim (for visualization) and hardware (for actuation).
+            # In sim mode only sim_dispatcher is set; in robot mode both fire concurrently.
+            dispatches = []
+            if sim_dispatcher is not None:
+                dispatches.append(asyncio.to_thread(sim_dispatcher.send_commands, commands))
+            if hardware_dispatcher is not None:
+                dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, commands))
+            if dispatches:
+                await asyncio.gather(*dispatches)
 
         executed.append(
             {
@@ -314,30 +353,44 @@ async def execute_parallel_tracks(
 
 @app.post("/command", response_model=CommandResponse)
 async def execute_manual_command(request: CommandRequest) -> CommandResponse:
-    """Execute a manual robot command (sim mode only)."""
-    global simulator
-
+    """Execute a manual robot command on the simulator and (in robot mode) the physical robot."""
     if simulator is None:
         return CommandResponse(
             success=False,
-            message="Manual commands are not available in robot mode. Use the chat interface.",
+            message="Simulator not initialized.",
         )
 
     command = request.command.lower().strip()
+    before = simulator.get_all_joint_states()
     success = execute_command(simulator, command)
 
-    if success:
-        joint_states = simulator.get_all_joint_states()
-        return CommandResponse(
-            success=True,
-            message=f"Executed command: {command}",
-            joint_states=joint_states,
-        )
-    else:
+    if not success:
         return CommandResponse(
             success=False,
             message=f"Unknown command: {command}. Available: {list(COMMAND_MAP.keys())}",
         )
+
+    if hardware_dispatcher is not None:
+        after = simulator.get_all_joint_states()
+        servo_cmds = []
+        for joint, new_rad in after.items():
+            if abs(new_rad - before.get(joint, 0.0)) > 1e-4:
+                sid = SERVO_ID_MAP.get(joint)
+                if sid is None:
+                    continue
+                servo_cmds.append(ServoCommand(
+                    servo_id=sid,
+                    position=rad_to_servo_units(new_rad),
+                    duration_ms=400,
+                ))
+        if servo_cmds:
+            await asyncio.to_thread(hardware_dispatcher.send_commands, servo_cmds)
+
+    return CommandResponse(
+        success=True,
+        message=f"Executed command: {command}",
+        joint_states=_get_robot_state(),
+    )
 
 
 @app.get("/commands")
@@ -733,22 +786,66 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if msg_type == "command":
                 command = message_data.get("command", "")
-                if simulator is not None:
+                success = False
+
+                if command == "reset" and simulator is not None:
+                    # Animate to stand pose through both sim and hardware instead of
+                    # instantly teleporting the MuJoCo viewer.
+                    stand = simulator.get_stand_joint_positions()
+                    if stand:
+                        state_manager.save_checkpoint(simulator, "before_command:reset")
+                        cmds = []
+                        for joint, rad in stand.items():
+                            sid = SERVO_ID_MAP.get(joint)
+                            if sid is not None:
+                                cmds.append(ServoCommand(
+                                    servo_id=sid,
+                                    position=rad_to_servo_units(rad),
+                                    duration_ms=1500,
+                                ))
+                        dispatches = []
+                        if sim_dispatcher is not None:
+                            dispatches.append(asyncio.to_thread(sim_dispatcher.send_commands, cmds))
+                        if hardware_dispatcher is not None:
+                            dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, cmds))
+                        if dispatches:
+                            await asyncio.gather(*dispatches)
+                        success = True
+
+                elif command == "sync_sim":
+                    # Instantly snap the sim viewer to the robot's current pose without
+                    # sending any commands to the physical robot.  Useful when MuJoCo
+                    # physics has tipped the sim over and you want it to mirror reality again.
+                    if simulator is not None:
+                        await asyncio.to_thread(_sync_sim_to_hardware)
+                        success = True
+
+                elif simulator is not None:
                     state_manager.save_checkpoint(simulator, f"before_command:{command}")
+                    before = simulator.get_all_joint_states()
                     success = execute_command(simulator, command)
-                    await websocket.send_json({
-                        "type": "command_result",
-                        "success": success,
-                        "command": command,
-                        "joint_states": simulator.get_all_joint_states() if success else None,
-                    })
-                else:
-                    await websocket.send_json({
-                        "type": "command_result",
-                        "success": False,
-                        "command": command,
-                        "joint_states": None,
-                    })
+                    if success and hardware_dispatcher is not None:
+                        after = simulator.get_all_joint_states()
+                        servo_cmds = []
+                        for joint, new_rad in after.items():
+                            if abs(new_rad - before.get(joint, 0.0)) > 1e-4:
+                                sid = SERVO_ID_MAP.get(joint)
+                                if sid is None:
+                                    continue
+                                servo_cmds.append(ServoCommand(
+                                    servo_id=sid,
+                                    position=rad_to_servo_units(new_rad),
+                                    duration_ms=400,
+                                ))
+                        if servo_cmds:
+                            await asyncio.to_thread(hardware_dispatcher.send_commands, servo_cmds)
+
+                await websocket.send_json({
+                    "type": "command_result",
+                    "success": success,
+                    "command": command,
+                    "joint_states": _get_robot_state() if success else None,
+                })
 
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing

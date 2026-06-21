@@ -83,6 +83,23 @@ class AiNexSimulator:
 
         logger.info(f"AiNex simulator initialized with {self.model.nu} actuators")
 
+    def get_stand_joint_positions(self) -> dict[str, float]:
+        """Return stand-keyframe joint positions (radians) without touching the live sim."""
+        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
+        if key_id < 0:
+            return {}
+        temp = mujoco.MjData(self.model)
+        mujoco.mj_resetDataKeyframe(self.model, temp, key_id)
+        for i in range(self.model.nu):
+            joint_id = self.model.actuator_trnid[i, 0]
+            temp.ctrl[i] = temp.qpos[self.model.jnt_qposadr[joint_id]]
+        positions: dict[str, float] = {}
+        for short_name, full_name in self.JOINT_NAMES.items():
+            actuator_id = self._actuator_ids.get(full_name)
+            if actuator_id is not None:
+                positions[short_name] = float(temp.ctrl[actuator_id])
+        return positions
+
     def _apply_stand_keyframe(self) -> None:
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         if key_id >= 0:
@@ -202,10 +219,10 @@ class AiNexSimulator:
         self.move_joint("r_el_yaw", -self.STEP_SIZE)
 
     def rotate_right_elbow_in(self) -> None:
-        self.move_joint("r_el_pitch", self.STEP_SIZE)
+        self.move_joint("r_el_pitch", -self.STEP_SIZE)
 
     def rotate_right_elbow_out(self) -> None:
-        self.move_joint("r_el_pitch", -self.STEP_SIZE)
+        self.move_joint("r_el_pitch", self.STEP_SIZE)
 
     def open_right_gripper(self) -> None:
         self.move_joint("r_gripper", self.STEP_SIZE)
