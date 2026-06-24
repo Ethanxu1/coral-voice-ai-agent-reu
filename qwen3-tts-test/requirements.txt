@@ -1,0 +1,4 @@
+qwen-tts
+sounddevice
+soundfile
+torch
