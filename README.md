@@ -1,70 +1,45 @@
 # CORAL Voice AI Agent
 
-Multimodal AI Dialogue Agent for Child-Robot Instruction Grounding — Hiwonder AiNex humanoid robot.
+Multimodal AI dialogue agent for child-robot instruction grounding — Hiwonder AiNex humanoid robot.
 
 ## Overview
 
-A voice-based AI agent that translates spoken natural-language instructions into physical robot motions. Supports two backends switchable with a single command:
+CORAL is a voice-driven demo system that lets a child interact with the AiNex robot through speech. It has two main modes:
 
-| Mode | Command | What runs |
-|------|---------|-----------|
-| **Simulation** | `uv run server` | MuJoCo physics viewer (no robot required) |
-| **Physical robot** | `uv run robot` | Commands sent to AiNex over the network |
-
-Both modes share the same frontend, voice pipeline, and LLM motion planner. The laptop microphone and speakers are used in both modes.
+- **Director demo** — a guided INTRO → CLASSIFY → RECORD → OUTRO pipeline where the robot poses, classifies the child's pose via camera, and takes voice corrections
+- **Testing mode** — open-ended voice → motion control via Whisper + GPT-4o-mini
 
 ## Architecture
 
-### Simulation mode
-
 ```
-Laptop
-──────────────────────────────────────────────────────────────
-Frontend (npm run dev, :5173)
-  ↕ WebSocket
-Server (uv run server, :8000)
-  • Whisper — speech → text (laptop mic)
-  • GPT-4o-mini — motion planning
-  • SimController — MuJoCo joint interpolation
-      ↓
-  MuJoCo viewer window (AiNex 24-DOF model)
-```
+Mac
+──────────────────────────────────────────────────────────
+Frontend       (npm run dev, :5173)   React + Vite UI
+Server         (uv run server, :8000) Whisper + LLM motion planner
+Speaker server (uv run speaker, :5002) pyttsx3 TTS (blocking)
 
-### Physical robot mode
-
-```
-Laptop                                Robot (192.168.8.219)
-──────────────────────────────────    ──────────────────────────
-Frontend (npm run dev, :5173)
-  ↕ WebSocket
-Server (uv run robot, :8000)      →   robot_agent.py (:9000)
-  • Whisper (laptop mic/speakers)         • Raw Hiwonder LX serial
-  • GPT-4o-mini — motion planning         • /dev/ttyAMA0 @ 115200
-  • HardwareController                    • Safety clamps enforced
-    ↳ per-joint angle conversion            (servo 20: 360–850)
-    ↳ HTTP POST to robot agent
+Pi (inside ainex Docker container)
+──────────────────────────────────────────────────────────
+robot_server.py (:9000)  FastAPI — /motion /classify /watch-for-action /state /move /stand
+vision.py       (ROS)    Camera → MediaPipe → /annotated_frame /clean_frame /landmarks
+head.py         (ROS)    Shoulder-midpoint tracking → head pan/tilt servos
+body.py         (ROS)    /body-commands service — executes motion sequences blocking
+MJPEG stream    (:9001)  /video_feed (annotated) /clean_feed (raw) for frontend
 ```
 
 ## Prerequisites
 
+**Mac**
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Node.js 22+
 - OpenAI API key
-- Langfuse account (for LLM tracing)
 
-### System libraries (Arch Linux)
+**Pi**
+- ROS Noetic inside the `ainex` Docker container
+- `catkin_tools` (`pip install catkin-tools`)
+- PyTorch + torchvision (for pose classifier in robot_server)
 
-```bash
-sudo pacman -S --needed \
-  portaudio libsndfile ffmpeg \
-  alsa-lib libpulse \
-  base-devel pkg-config cmake openssl \
-  mesa glfw-x11 \
-  libx11 libxi libxrandr libxcursor libxinerama \
-  nodejs
-```
-
-## Setup
+## Mac Setup
 
 ### 1. Install Python dependencies
 
@@ -72,22 +47,16 @@ sudo pacman -S --needed \
 uv sync
 ```
 
-### 2. Download robot model (simulation only)
-
-```bash
-./scripts/download_assets.sh
-```
-
-### 3. Install frontend dependencies
+### 2. Install frontend dependencies
 
 ```bash
 cd frontend && npm install && cd ..
 ```
 
-### 4. Configure environment
+### 3. Configure environment
 
 ```bash
-cp .env.example .env   # then fill in your keys
+cp .env.example .env
 ```
 
 ```
@@ -97,137 +66,168 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 ```
 
-Get Langfuse keys at [cloud.langfuse.com](https://cloud.langfuse.com) → Settings → API Keys.
+## Pi Setup (one-time)
+
+SSH into the Pi and open the Docker container:
+
+```bash
+ssh pi@raspberrypi.local
+docker exec -it ainex bash
+su - ubuntu
+```
+
+Copy the ROS package into the catkin workspace:
+
+```bash
+cp -r /path/to/ros/ ~/ros_ws/src/ainex_demo/
+chmod +x ~/ros_ws/src/ainex_demo/nodes/*.py
+```
+
+Build the package:
+
+```bash
+cd ~/ros_ws
+catkin build ainex_demo
+source devel/setup.bash
+```
+
+Place the pose classifier checkpoint at:
+
+```
+~/ros_ws/src/ainex_demo/nodes/model/pose_classifier.pt
+```
 
 ## Running
 
-### Simulation mode
+### Mac (three terminals)
 
 ```bash
-# Terminal 1
-uv run server
+# Terminal 1 — voice + LLM server
+uv run server          # simulation mode
+# or
+ROBOT_IP=192.168.8.219 uv run robot   # physical robot mode
 
-# Terminal 2
+# Terminal 2 — TTS speaker
+uv run speaker
+
+# Terminal 3 — frontend
 cd frontend && npm run dev
 ```
 
 Open <http://localhost:5173>.
 
-### Physical robot mode
-
-# ssh into the robot
+### Pi (every session)
 
 ```bash
-# ssh into robot raspberry pi
-ssh pi@192.168.8.219
-```
-
-**On the robot** (one-time setup):
-
-```bash
-pip install fastapi uvicorn pyserial
-# copy robot_agent.py to the robot
-scp src/coral_agent/robot/robot_agent.py ubuntu@192.168.8.219:~/robot_agent.py
-
-# move robot_agent.py to docker container
-docker cp /home/pi/robot_agent.py ainex:/home/ubuntu/ros_ws/src/<your_package>/robot_agent.py
-```
-
-**Every session:**
-
-```bash
-
-# ssh into robot raspberry pi
-ssh pi@192.168.8.219
-# open interactive terminal inside of docker container
+ssh pi@raspberrypi.local
 docker exec -it ainex bash
-# switch current terminal user to 'ubuntu'
 su - ubuntu
-cd /home/ubuntu
-
-# run robot_agent.py
-pyrun ~/ros_ws/src/robot_agent.py        # listens on :9000
-
-# On the laptop (two terminals)
-ROBOT_IP=192.168.8.219 uv run robot
-cd frontend && npm run dev
+cd ~/ros_ws && source devel/setup.bash
+roslaunch ainex_demo ainex_demo.launch
 ```
 
-Verify the robot agent is reachable before starting:
+Verify robot_server is up:
 
 ```bash
 curl http://192.168.8.219:9000/health
-# → {"status":"ok","backend":"_SerialBackend"}
 ```
 
-If the serial port isn't `/dev/ttyAMA0`:
+### Syncing files to Pi
+
+Use the `dump` command to push a file from Mac → Pi → Docker container:
 
 ```bash
-SERIAL_PORT=/dev/ttyUSB0 python3 ~/robot_agent.py
+dump src/coral_agent/robot/ros/nodes/robot_server.py
+dump src/coral_agent/robot/ros/nodes/motions.py
 ```
+
+Files in `nodes/` take effect immediately (no rebuild). Changes to `CMakeLists.txt`, `package.xml`, or `srv/` require `catkin build ainex_demo`.
 
 ## Project Structure
 
 ```
 coral-voice-ai-agent-reu/
 ├── src/coral_agent/
-│   ├── server.py              # FastAPI server — sim and robot modes
-│   ├── primitives.py          # Parameterized motion primitives
-│   ├── validation.py          # Joint limit + sign validation
-│   ├── state.py               # State checkpointing and rollback
-│   ├── config.py              # LLM model selection
+│   ├── server.py                  # FastAPI — Whisper + LLM motion planner (:8000)
+│   ├── config.py                  # LLM model + env config
+│   ├── primitives.py              # Parameterized motion primitives (sim mode)
 │   ├── prompts/
-│   │   └── router.md          # Motion planner system prompt
+│   │   └── router.md              # LLM system prompt
+│   ├── speaker/
+│   │   ├── speaker_server.py      # pyttsx3 TTS server (:5002)
+│   │   └── scripts.py             # Kid-friendly speech lines
 │   ├── robot/
+│   │   ├── motions.py             # Pose pulse dicts + named motion sequences (Mac copy)
+│   │   ├── hardware_controller.py # Laptop-side HTTP client → robot_server
 │   │   ├── interface.py           # RobotController abstract class
 │   │   ├── sim_controller.py      # MuJoCo backend
-│   │   ├── hardware_controller.py # Physical robot backend (laptop-side)
-│   │   ├── hardware_angle_utils.py# Per-joint angle conversion
-│   │   ├── robot_agent.py         # HTTP server to run ON the robot
-│   │   ├── servo_config.py        # Servo ID map + STAND_PULSE values
-│   │   └── angle_utils.py         # Sim-mode angle conversion
-│   ├── simulator/
-│   │   └── mujoco_sim.py          # AiNex MuJoCo wrapper (24 DOF)
+│   │   └── ros/                   # catkin package (ainex_demo) — runs on Pi
+│   │       ├── CMakeLists.txt
+│   │       ├── package.xml
+│   │       ├── ainex_demo.launch
+│   │       ├── srv/
+│   │       │   └── BodyCommand.srv
+│   │       └── nodes/
+│   │           ├── robot_server.py  # FastAPI HTTP bridge (:9000)
+│   │           ├── vision.py        # Camera + MediaPipe + MJPEG (:9001)
+│   │           ├── head.py          # Head tracking node
+│   │           ├── body.py          # /body-commands ROS service
+│   │           └── motions.py       # Pose pulse dicts + named motions (Pi copy)
 │   └── vision/
-│       └── vision_server.py       # MediaPipe pose server (:8001)
-├── frontend/                  # Vite + React + TypeScript
+│       └── vision_server.py       # Mac-side MediaPipe server (legacy)
+├── frontend/
 │   └── src/
 │       ├── App.tsx
+│       ├── pages/
+│       │   └── DemoPage.tsx       # Director demo UI
+│       ├── demo/
+│       │   ├── useDemoMachine.ts  # useReducer state machine
+│       │   ├── api.ts             # speak / motion / classify / watchForAction helpers
+│       │   └── components.tsx     # Countdown, CameraFlash, ClassifyCard, etc.
 │       └── components/
-│           ├── ChatSidebar.tsx     # Voice/text chat + audio VAD
-│           └── SimulatorControls.tsx
-├── assets/                    # Robot models (downloaded, not in git)
-├── recordings/                # Conversation logs (auto-generated)
-├── scripts/
-│   └── download_assets.sh
-├── .env                       # API keys (not in git)
-├── .env.robot                 # Robot mode env template
+│           └── pose/              # Testing mode components
+├── pose_settings.py               # (legacy — merged into motions.py)
+├── .env                           # API keys (not in git)
 └── pyproject.toml
 ```
 
-## Motion Primitives
+## robot_server API (:9000)
 
-The LLM uses these parameterized primitives. Each accepts an `angle` (degrees) and optional `speed` multiplier (0.1–8.0, default 1.0):
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Status + current robot state + classifier classes |
+| GET | `/state` | Current robot state (`IDLE`, `MOTION`, etc.) |
+| POST | `/state` | Set robot state — demo uses this to lock/unlock |
+| POST | `/motion` | Run a named motion: `{"name": "wave"}` |
+| POST | `/classify` | Classify current camera frame → class + probabilities + image |
+| GET | `/watch-for-action` | Block until hands-close gesture (default 30s timeout) |
+| POST | `/move` | Legacy servo move — 429 when robot is locked |
+| POST | `/stand` | Return to standing pose |
+| POST | `/feedback` | Servo feedback (compat) |
+| GET | `/positions` | All 24 servo positions (compat) |
 
-| Primitive | Description | Max Angle | Direction |
-|-----------|-------------|-----------|-----------|
-| `left_arm_out` | Left arm sideways abduction | 119° | — |
-| `right_arm_out` | Right arm sideways abduction | 119° | — |
-| `left_arm_forward` | Left arm forward/up flexion | 119° | — |
-| `right_arm_forward` | Right arm forward/up flexion | 119° | — |
-| `left_elbow_bend` | Bend left elbow | 119° | — |
-| `right_elbow_bend` | Bend right elbow | 119° | — |
-| `left_elbow_rotate` | Rotate left forearm | 119° | in / out |
-| `right_elbow_rotate` | Rotate right forearm | 119° | in / out |
-| `head_turn` | Turn head | 119° | left / right |
-| `head_tilt` | Tilt head | 119° | up / down |
-| `neutral` | Reset all arm + head joints to stand | — | — |
+### Named motions (`/motion`)
 
-Example chat commands:
+`wave`, `stand`, `t-pose`, `dab`, `superhero`, `thinker`, `muscles`, `hand-raised`, `warrior2`
 
-- *"Raise your right arm to 90 degrees"*
-- *"Turn your head left while waving"*
-- *"Bend your left elbow halfway"*
+### Robot states
+
+| State | Meaning |
+|-------|---------|
+| `IDLE` | Ready for any command |
+| `MOTION` | Executing a motion sequence |
+| `CLASSIFYING` | Capturing + classifying a frame |
+| `WATCHING` | Waiting for hands-close gesture |
+| `DEMO_LOCKED` | Demo owns the robot — `/move` returns 429 |
+
+## Speaker API (:5002)
+
+```bash
+POST /speak   {"script": "INTRO"}    # speak a named script
+POST /speak   {"text": "Hello!"}     # speak arbitrary text (blocks until done)
+GET  /scripts                        # list available script names
+GET  /health
+```
 
 ## Servo Map (AiNex 24 DOF)
 
@@ -241,36 +241,18 @@ Example chat commands:
 | l_hip_yaw / r_hip_yaw | 11 / 12 | 500 / 500 | |
 | l_sho_pitch / r_sho_pitch | 13 / 14 | 835 / 165 | |
 | l_sho_roll / r_sho_roll | 15 / 16 | 830 / 170 | |
-| l_el_pitch / r_el_pitch | 17 / 18 | 500 / 500 | forearm rotation |
+| l_el_pitch / r_el_pitch | 17 / 18 | 500 / 500 | |
 | l_el_yaw | 19 | 150 | safe range 0–600 |
 | r_el_yaw | 20 | 850 | **DAMAGED — clamped to 360–850** |
 | l_gripper / r_gripper | 21 / 22 | 500 / 500 | |
-| head_pan / head_tilt | 23 / 24 | 500 / 500 | not physically present |
-
-## Robot Agent API
-
-Endpoints served by `robot_agent.py` on the robot at `:9000`:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Returns `{"status":"ok","backend":"..."}` |
-| POST | `/move` | Move servos: `[{"servo_id":13,"position":460,"duration_ms":1000},...]` |
-| POST | `/stand` | Return all servos to standing pose |
-| POST | `/feedback` | Read servo positions/temps: `{"servo_ids":[13,14]}` |
-| GET | `/positions` | Current position of all 24 servos |
+| head_pan / head_tilt | 23 / 24 | 500 / 500 | |
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ROBOT_MODE` | `sim` | `sim` = MuJoCo, `robot` = physical robot |
 | `ROBOT_IP` | `192.168.8.219` | Robot's IP on your network |
-| `ROBOT_AGENT_PORT` | `9000` | Port the robot agent listens on |
-| `SERIAL_PORT` | `/dev/ttyAMA0` | Serial port on the robot for servo bus |
-| `AGENT_PORT` | `9000` | Same as above, set on the robot side |
-
-## License
-
-See individual component licenses:
-
-- AiNex MuJoCo model: see `assets/ainex/`
+| `ROBOT_AGENT_PORT` | `9000` | robot_server port |
+| `AGENT_PORT` | `9000` | Port robot_server binds to (Pi side) |
+| `CLASSIFIER_PATH` | `model/pose_classifier.pt` | Path to MobileNetV3 checkpoint |
+| `OPENAI_API_KEY` | — | Required for LLM motion planner |
