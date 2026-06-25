@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -23,7 +23,7 @@ _estimator: Optional[PoseEstimator] = None
 _broadcaster: Optional[FrameBroadcaster] = None
 _vision_thread: Optional[threading.Thread] = None
 _loop: Optional[asyncio.AbstractEventLoop] = None
-_pose_throttle_fps = 15
+_pose_throttle_fps = 30
 _last_pose_time = 0.0
 
 
@@ -151,6 +151,15 @@ async def capture_stable_position_continue():
     assert _estimator is not None
     resumed = _estimator.stability.continue_live()
     return {"status": "ok" if resumed else "ignored", "stability": _estimator.stability.status_dict()}
+
+
+@app.get("/capture/stable_position/frozen")
+async def capture_stable_position_frozen():
+    assert _estimator is not None
+    frozen = _estimator.stability.frozen_result()
+    if frozen is None:
+        raise HTTPException(status_code=409, detail="no frozen frame")
+    return frozen.to_pose_dict()
 
 
 @app.get("/health")
