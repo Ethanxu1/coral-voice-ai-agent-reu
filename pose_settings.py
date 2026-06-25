@@ -4,10 +4,6 @@ Lives in its own lightweight module (no torch/ROS imports) so any node can pull
 these constants without dragging in the web server / classifier.
 """
 
-# ── Cycle timing (seconds) ────────────────────────────────────────────────────
-TRACKING_DURATION = 5.0   # scanning phase: buffer skeletons, pick the stablest
-RESULTS_DURATION  = 3.0   # results phase: hold the classified frame / pose
-
 # ── Servo pulse poses ─────────────────────────────────────────────────────────
 STAND_PULSE = {
     'l_ank_roll':  500,  'r_ank_roll':  500,

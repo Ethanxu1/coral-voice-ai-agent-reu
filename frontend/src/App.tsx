@@ -3,6 +3,7 @@ import { Routes, Route, Link } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
 import PoseVisualization from './pages/PoseVisualization'
+import DemoPage from './pages/DemoPage'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -147,6 +148,9 @@ function App() {
           <Link to="/pose" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">Pose Tracking</button>
           </Link>
+          <Link to="/demo" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🎬 Demo Mode</button>
+          </Link>
         </div>
       </div>
       <div className="chat-panel">
@@ -165,6 +169,7 @@ function App() {
     <Routes>
       <Route path="/" element={mainView} />
       <Route path="/pose" element={<PoseVisualization />} />
+      <Route path="/demo" element={<DemoPage />} />
     </Routes>
   )
 }
