@@ -45,6 +45,7 @@ def _vision_loop():
         if now - _last_pose_time >= 1.0 / _pose_throttle_fps:
             _last_pose_time = now
             pose_dict = result.to_pose_dict()
+            pose_dict["stability"] = _estimator.stability.status_dict()
             if _estimator.pnp_fail_count > 10:
                 pose_dict["type"] = "tracking_lost"
                 pose_dict["reason"] = "no_person_detected"
@@ -136,6 +137,20 @@ async def calibrate_reset():
     assert _estimator is not None
     _estimator.calibration.reset()
     return {"status": "idle", "message": "Calibration reset"}
+
+
+@app.post("/capture/stable_position/start")
+async def capture_stable_position_start():
+    assert _estimator is not None
+    started = _estimator.stability.start()
+    return {"status": "ok" if started else "ignored", "stability": _estimator.stability.status_dict()}
+
+
+@app.post("/capture/stable_position/continue")
+async def capture_stable_position_continue():
+    assert _estimator is not None
+    resumed = _estimator.stability.continue_live()
+    return {"status": "ok" if resumed else "ignored", "stability": _estimator.stability.status_dict()}
 
 
 @app.get("/health")

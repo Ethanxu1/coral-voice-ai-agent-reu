@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -135,6 +136,267 @@ class FrameResult:
         }
 
 
+# ── Stable-position capture ──────────────────────────────────────────────────
+# Ported from ak-maker/ainex_skeleton_following@scott/full-pipeline (nodes/webserver.py).
+# Picks the frame from a short buffer whose pose is closest to its neighbours
+# (gaussian-weighted L2 distance over MediaPipe landmark coordinates).
+_STABILITY_N = 3
+_STABILITY_SIGMA = 1.0
+_REQUIRED_LANDMARKS = (11, 12, 13, 14, 15, 16)  # shoulders, elbows, wrists
+_VISIBILITY_THRESH = 0.4
+_COUNTDOWN_SECONDS = 3.0
+_COLLECT_SECONDS = 3.0
+
+
+def _frame_distance(a: list[dict], b: list[dict]) -> float:
+    total = 0.0
+    for la, lb in zip(a, b):
+        dx = la["x"] - lb["x"]
+        dy = la["y"] - lb["y"]
+        dz = la["z"] - lb["z"]
+        total += math.sqrt(dx * dx + dy * dy + dz * dz)
+    return total
+
+
+def _stability_score(frames: list[list[dict]], idx: int, N: int, sigma: float) -> float:
+    score = 0.0
+    for k in range(-N, N + 1):
+        if k == 0:
+            continue
+        j = idx + k
+        if 0 <= j < len(frames):
+            score += _frame_distance(frames[idx], frames[j]) * math.exp(-k * k / (2.0 * sigma * sigma))
+    return score
+
+
+def _most_stable_index(frames: list[list[dict]], N: int = _STABILITY_N, sigma: float = _STABILITY_SIGMA) -> int:
+    if len(frames) < 2 * N + 1:
+        return len(frames) // 2
+    scores = [_stability_score(frames, i, N, sigma) for i in range(N, len(frames) - N)]
+    return N + scores.index(min(scores))
+
+
+def _is_valid_skel_frame(body_lms: list[dict]) -> bool:
+    if not body_lms:
+        return False
+    for idx in _REQUIRED_LANDMARKS:
+        if idx >= len(body_lms):
+            return False
+        if body_lms[idx].get("visibility", 0.0) < _VISIBILITY_THRESH:
+            return False
+    return True
+
+
+@dataclass
+class _BufferEntry:
+    body_landmarks: list[dict]
+    face_landmarks: list[dict]
+    head_pose: Optional["HeadPose"]
+    clean_bgr: np.ndarray  # raw frame before overlay; small (~900KB), kept few seconds only
+
+
+class StabilityCapture:
+    """State machine that drives the capture-stable-position UX from the vision loop.
+
+    States: idle → countdown → collecting → frozen → (continue) → idle.
+    Lives in the vision thread but `start()` / `continue_live()` are called from
+    the FastAPI thread, so all mutating operations take a lock.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = "idle"
+        self._t0 = 0.0
+        self._buffer: list[_BufferEntry] = []
+        self._frozen: Optional[FrameResult] = None
+
+    # ── Public API (called from FastAPI thread) ────────────────────────────
+    def start(self) -> bool:
+        with self._lock:
+            if self._state != "idle":
+                return False
+            self._state = "countdown"
+            self._t0 = time.time()
+            self._buffer.clear()
+            self._frozen = None
+            return True
+
+    def continue_live(self) -> bool:
+        with self._lock:
+            if self._state != "frozen":
+                return False
+            self._state = "idle"
+            self._buffer.clear()
+            self._frozen = None
+            return True
+
+    def status_dict(self) -> dict:
+        with self._lock:
+            now = time.time()
+            countdown_remaining = 0.0
+            collection_progress = 0.0
+            if self._state == "countdown":
+                countdown_remaining = max(0.0, _COUNTDOWN_SECONDS - (now - self._t0))
+            elif self._state == "collecting":
+                collection_progress = min(1.0, (now - self._t0) / _COLLECT_SECONDS)
+            elif self._state == "frozen":
+                collection_progress = 1.0
+            return {
+                "state": self._state,
+                "countdown_remaining": round(countdown_remaining, 2),
+                "collection_progress": round(collection_progress, 3),
+            }
+
+    # ── Vision-thread hooks ────────────────────────────────────────────────
+    @property
+    def is_frozen(self) -> bool:
+        return self._state == "frozen" and self._frozen is not None
+
+    def frozen_result(self) -> Optional["FrameResult"]:
+        # Refresh timestamp & calibration so the FE sees a live heartbeat.
+        if self._frozen is None:
+            return None
+        return self._frozen
+
+    def tick(
+        self,
+        body_landmarks: list[dict],
+        face_landmarks: list[dict],
+        head_pose: Optional["HeadPose"],
+        overlay: np.ndarray,
+        clean_frame: np.ndarray,
+        calibration: dict,
+    ) -> None:
+        """Update state and draw countdown/analyzing text onto `overlay` in place."""
+        with self._lock:
+            state = self._state
+            t0 = self._t0
+
+        now = time.time()
+        if state == "idle" or state == "frozen":
+            return
+
+        if state == "countdown":
+            remaining = _COUNTDOWN_SECONDS - (now - t0)
+            if remaining <= 0:
+                with self._lock:
+                    self._state = "collecting"
+                    self._t0 = now
+                    self._buffer.clear()
+                self._draw_centered_text(overlay, "GET READY", scale=1.2, color=(0, 220, 255))
+            else:
+                digit = int(math.ceil(remaining))
+                self._draw_centered_text(overlay, str(digit), scale=6.0, color=(0, 255, 255), thickness=12)
+            return
+
+        if state == "collecting":
+            elapsed = now - t0
+            if _is_valid_skel_frame(body_landmarks):
+                self._buffer.append(_BufferEntry(
+                    body_landmarks=list(body_landmarks),
+                    face_landmarks=list(face_landmarks),
+                    head_pose=head_pose,
+                    clean_bgr=clean_frame.copy(),
+                ))
+            pct = min(1.0, elapsed / _COLLECT_SECONDS)
+            self._draw_centered_text(
+                overlay,
+                f"ANALYZING... {int(pct * 100)}%",
+                scale=0.9,
+                color=(0, 255, 255),
+                thickness=2,
+            )
+            if elapsed >= _COLLECT_SECONDS:
+                self._finalize(calibration)
+
+    # ── Internal helpers ───────────────────────────────────────────────────
+    def _finalize(self, calibration: dict) -> None:
+        with self._lock:
+            buf = list(self._buffer)
+
+        if not buf:
+            # No valid frames captured (no person, occluded, etc.) — bail back to idle.
+            with self._lock:
+                self._state = "idle"
+                self._buffer.clear()
+            return
+
+        lm_frames = [e.body_landmarks for e in buf]
+        idx = _most_stable_index(lm_frames)
+        chosen = buf[idx]
+
+        # Re-render the chosen frame: skeleton overlay + STABLE badge.
+        frozen_overlay = chosen.clean_bgr.copy()
+        _draw_skeleton_from_dicts(frozen_overlay, chosen.body_landmarks)
+        h, w = frozen_overlay.shape[:2]
+        cv2.rectangle(frozen_overlay, (0, 0), (w, 40), (0, 100, 0), -1)
+        cv2.putText(
+            frozen_overlay, "STABLE POSITION CAPTURED",
+            (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2,
+        )
+        ok, jpeg = cv2.imencode(".jpg", frozen_overlay, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            with self._lock:
+                self._state = "idle"
+                self._buffer.clear()
+            return
+
+        frozen = FrameResult(
+            body_landmarks=chosen.body_landmarks,
+            face_landmarks=chosen.face_landmarks,
+            head_pose=chosen.head_pose,
+            jpeg_bytes=jpeg.tobytes(),
+            calibration=calibration,
+        )
+
+        with self._lock:
+            self._frozen = frozen
+            self._state = "frozen"
+            self._buffer.clear()
+
+    @staticmethod
+    def _draw_centered_text(img: np.ndarray, text: str, scale: float, color: tuple, thickness: int = 4) -> None:
+        h, w = img.shape[:2]
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+        x = (w - tw) // 2
+        y = (h + th) // 2
+        # Dark outline for legibility
+        cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness + 4)
+        cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness)
+
+
+def _draw_skeleton_from_dicts(frame: np.ndarray, landmarks: list[dict]) -> None:
+    """Draw skeleton overlay from dict-format landmarks (frozen-frame replay path)."""
+    h, w = frame.shape[:2]
+    pts = [(int(lm["x"] * w), int(lm["y"] * h)) for lm in landmarks]
+    vis = [lm.get("visibility", 0.0) for lm in landmarks]
+
+    for a, b in _POSE_CONNECTIONS:
+        if a >= len(pts) or b >= len(pts):
+            continue
+        if vis[a] < 0.2 or vis[b] < 0.2:
+            continue
+        alpha = max(0.2, (vis[a] + vis[b]) / 2)
+        color = (int(120 * alpha), int(180 * alpha), int(255 * alpha))
+        cv2.line(frame, pts[a], pts[b], color, 2)
+
+    for i, (px, py) in enumerate(pts):
+        if vis[i] < 0.2:
+            continue
+        if i in (_NOSE_IDX, _LEFT_EAR_IDX, _RIGHT_EAR_IDX):
+            cv2.circle(frame, (px, py), 8, (255, 0, 255), -1)
+            cv2.circle(frame, (px, py), 8, (255, 255, 255), 1)
+        else:
+            v = vis[i]
+            if v > 0.8:
+                color = (0, 255, 136)
+            elif v > 0.4:
+                color = (0, 204, 255)
+            else:
+                color = (0, 68, 255)
+            cv2.circle(frame, (px, py), 5, color, -1)
+
+
 class PoseEstimator:
     def __init__(self, camera_index: int = 0, target_fps: float = 30.0):
         self._camera_index = camera_index
@@ -155,6 +417,7 @@ class PoseEstimator:
         self._frame_width = 640
         self._frame_height = 480
         self._running = False
+        self.stability = StabilityCapture()
 
     def open(self):
         import logging as _log
@@ -271,6 +534,12 @@ class PoseEstimator:
         if not ret:
             return None
 
+        if self.stability.is_frozen:
+            frozen = self.stability.frozen_result()
+            if frozen is not None:
+                return frozen
+
+        clean_frame = frame.copy()
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
@@ -357,6 +626,19 @@ class PoseEstimator:
         cal = self.calibration.to_dict()
         cv2.putText(overlay, f"Cal: {cal['state']} {cal['progress']*100:.0f}%",
                     (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+        self.stability.tick(
+            body_landmarks=body_landmarks,
+            face_landmarks=face_landmarks_out,
+            head_pose=head_pose,
+            overlay=overlay,
+            clean_frame=clean_frame,
+            calibration=cal,
+        )
+        if self.stability.is_frozen:
+            frozen = self.stability.frozen_result()
+            if frozen is not None:
+                return frozen
 
         _, jpeg = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 70])
 
