@@ -5,6 +5,7 @@ import base64
 import json
 import math
 import os
+import re
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -25,6 +26,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from coral_agent.config import LLM_MODEL
+from coral_agent.follow_controller import FollowController
 from coral_agent.primitives import (
     get_parameterized_primitive,
     get_primitive,
@@ -67,6 +69,7 @@ simulator: AiNexSimulator | None = None
 sim_dispatcher: SimController | None = None
 hardware_dispatcher: AiNexHardwareController | None = None
 robot_mode: str = "sim"
+follow_controller: FollowController | None = None
 
 
 def _get_robot_state() -> dict[str, float]:
@@ -112,7 +115,7 @@ def get_router_prompt() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
-    global simulator, sim_dispatcher, hardware_dispatcher, robot_mode
+    global simulator, sim_dispatcher, hardware_dispatcher, robot_mode, follow_controller
 
     robot_mode = os.getenv("ROBOT_MODE", "sim")
 
@@ -130,6 +133,8 @@ async def lifespan(app: FastAPI):
         _sync_sim_to_hardware()
 
     logger.info(f"Robot dispatchers initialized (mode={robot_mode})")
+
+    follow_controller = FollowController(dispatch_servo_commands)
 
     langfuse_client = Langfuse()
     logger.info("Langfuse tracing initialized")
@@ -282,6 +287,23 @@ class Waypoint:
 
 
 
+async def dispatch_servo_commands(commands: list[ServoCommand]) -> None:
+    """Send a batch of ServoCommands to both sim and hardware dispatchers concurrently.
+
+    In sim mode only sim_dispatcher is set; in robot mode both fire concurrently.
+    Shared by the motion planner's execute_waypoints and the vision follow loop.
+    """
+    if not commands:
+        return
+    dispatches = []
+    if sim_dispatcher is not None:
+        dispatches.append(asyncio.to_thread(sim_dispatcher.send_commands, commands))
+    if hardware_dispatcher is not None:
+        dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, commands))
+    if dispatches:
+        await asyncio.gather(*dispatches)
+
+
 async def execute_waypoints(
     simulator: AiNexSimulator, waypoints: list[Waypoint]
 ) -> list[dict]:
@@ -309,16 +331,7 @@ async def execute_waypoints(
                 duration_ms=duration_ms,
             ))
 
-        if commands:
-            # Dispatch to both sim (for visualization) and hardware (for actuation).
-            # In sim mode only sim_dispatcher is set; in robot mode both fire concurrently.
-            dispatches = []
-            if sim_dispatcher is not None:
-                dispatches.append(asyncio.to_thread(sim_dispatcher.send_commands, commands))
-            if hardware_dispatcher is not None:
-                dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, commands))
-            if dispatches:
-                await asyncio.gather(*dispatches)
+        await dispatch_servo_commands(commands)
 
         executed.append(
             {
@@ -757,6 +770,93 @@ async def process_chat_message(
         return response_data
 
 
+_FOLLOW_START_RE = re.compile(
+    r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+moves)\b",
+    re.IGNORECASE,
+)
+_FOLLOW_STOP_RE = re.compile(
+    r"\bstop\b(\s+(following|mimicking|copying|mirroring))?\b|\bquit\s+follow\b",
+    re.IGNORECASE,
+)
+_CAPTURE_RE = re.compile(
+    r"\b(capture|take|copy)\b.*\b(pose|position)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_system_intent(text: str, follow_active: bool) -> str | None:
+    """Match voice/chat input to a follow/capture system action.
+
+    Returns one of {"follow_start", "follow_stop", "capture_pose"} or None to
+    fall through to the LLM motion planner.
+    """
+    t = text.strip()
+    if not t:
+        return None
+    if _CAPTURE_RE.search(t):
+        return "capture_pose"
+    if _FOLLOW_START_RE.search(t):
+        return "follow_start"
+    if follow_active and _FOLLOW_STOP_RE.search(t):
+        return "follow_stop"
+    return None
+
+
+async def _send_status(websocket: WebSocket, payload: dict) -> None:
+    try:
+        await websocket.send_json(payload)
+    except Exception as e:
+        logger.debug(f"Status send failed: {e}")
+
+
+async def try_handle_system_intent(text: str, websocket: WebSocket) -> bool:
+    """If the text matches a follow/capture intent, dispatch and reply. Return True if handled."""
+    if follow_controller is None:
+        return False
+
+    intent = classify_system_intent(text, follow_active=follow_controller.is_following)
+    if intent is None:
+        return False
+
+    async def status_fn(payload: dict) -> None:
+        await _send_status(websocket, payload)
+
+    if intent == "follow_start":
+        await follow_controller.start_follow(status_fn)
+        await websocket.send_json({
+            "type": "chat_response",
+            "role": "assistant",
+            "content": "Following your movements — say stop when done.",
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+        })
+        return True
+
+    if intent == "follow_stop":
+        await follow_controller.stop_follow(status_fn)
+        await websocket.send_json({
+            "type": "chat_response",
+            "role": "assistant",
+            "content": "Stopped following.",
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+        })
+        return True
+
+    if intent == "capture_pose":
+        await follow_controller.trigger_capture_and_mimic(status_fn)
+        await websocket.send_json({
+            "type": "chat_response",
+            "role": "assistant",
+            "content": "Capturing your pose — hold still for a few seconds.",
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+        })
+        return True
+
+    return False
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for chat and real-time updates."""
@@ -850,6 +950,8 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing
                 user_message = message_data.get("content", "")
+                if await try_handle_system_intent(user_message, websocket):
+                    continue
                 response_data = await process_chat_message(
                     user_message=user_message,
                     memory=memory,
@@ -869,6 +971,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 await websocket.send_json({"type": "transcription", "text": transcribed_text})
                 if transcribed_text.strip():
+                    if await try_handle_system_intent(transcribed_text, websocket):
+                        continue
                     response_data = await process_chat_message(
                         user_message=transcribed_text,
                         memory=memory,
@@ -909,6 +1013,8 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
     finally:
         connected_clients.discard(websocket)
+        if follow_controller is not None and follow_controller.is_following:
+            await follow_controller.stop_follow()
         logger.info(
             f"WebSocket client removed. Total clients: {len(connected_clients)}"
         )
