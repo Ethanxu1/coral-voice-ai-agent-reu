@@ -23,7 +23,7 @@ export default function DemoPage() {
     <div className="demo-root">
       <header className="demo-header">
         <Link to="/" className="demo-back">← Testing Page</Link>
-        <h1 className="demo-title">Coral’s Pose Party</h1>
+        <h1 className="demo-title">Let's Teach Coral Some Poses!</h1>
         <div className="demo-stage-chip" data-stage={state.stage}>{stageLabel(state.stage, state)}</div>
       </header>
 

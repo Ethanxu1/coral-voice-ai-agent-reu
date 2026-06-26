@@ -108,7 +108,7 @@ export function useDemoMachine() {
         for (const n of [3, 2, 1]) {
           dispatch({ countdown: n })
           await speak({ script: String(n) }); active()
-          if (n > 1) { await sleep(800); active() }
+          if (n > 0) { await sleep(1000); active() }
         }
         dispatch({ countdown: null, flash: true, classifying: true, caption: '📸 Snap!' })
         playShutter()
