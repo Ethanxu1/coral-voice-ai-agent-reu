@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import mediapipe as mp
@@ -15,7 +16,9 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 from mediapipe.tasks.python.vision import drawing_utils as mp_drawing
 
+from . import geometry
 from .calibration import CalibrationManager, CalibrationState
+from .smpl_fit import UserShape
 
 # Model asset paths (downloaded on first run)
 _MODELS_DIR = Path(__file__).parent / "models"
@@ -195,20 +198,36 @@ class _BufferEntry:
     clean_bgr: np.ndarray  # raw frame before overlay; small (~900KB), kept few seconds only
 
 
+_SMPL_FIT_LOG = logging.getLogger("smpl_fit")
+
+# Signature of the optional SMPL-fit hook fired from StabilityCapture._finalize.
+FitHook = Callable[[list[list[dict]]], Optional[UserShape]]
+
+
 class StabilityCapture:
     """State machine that drives the capture-stable-position UX from the vision loop.
 
-    States: idle → countdown → collecting → frozen → (continue) → idle.
-    Lives in the vision thread but `start()` / `continue_live()` are called from
-    the FastAPI thread, so all mutating operations take a lock.
+    States: idle → countdown → collecting → fitting → frozen → (continue) → idle.
+    The ``fitting`` state runs synchronously inside the vision thread; the call
+    site (``PoseEstimator``) injects ``fit_hook`` so the SMPL stack stays
+    optional — if it's missing or the fit fails, we skip straight to ``frozen``.
+
+    Lives in the vision thread but ``start()`` / ``continue_live()`` are called
+    from the FastAPI thread, so all mutating operations take a lock.
     """
 
-    def __init__(self):
+    def __init__(self, fit_hook: Optional[FitHook] = None):
         self._lock = threading.Lock()
         self._state = "idle"
         self._t0 = 0.0
         self._buffer: list[_BufferEntry] = []
         self._frozen: Optional[FrameResult] = None
+        self._fit_hook = fit_hook
+        self._user_shape: Optional[UserShape] = None
+
+    @property
+    def user_shape(self) -> Optional[UserShape]:
+        return self._user_shape
 
     # ── Public API (called from FastAPI thread) ────────────────────────────
     def start(self) -> bool:
@@ -239,13 +258,24 @@ class StabilityCapture:
                 countdown_remaining = max(0.0, _COUNTDOWN_SECONDS - (now - self._t0))
             elif self._state == "collecting":
                 collection_progress = min(1.0, (now - self._t0) / _COLLECT_SECONDS)
-            elif self._state == "frozen":
+            elif self._state in ("fitting", "frozen"):
                 collection_progress = 1.0
-            return {
+            d: dict = {
                 "state": self._state,
                 "countdown_remaining": round(countdown_remaining, 2),
                 "collection_progress": round(collection_progress, 3),
             }
+            if self._user_shape is not None:
+                d["shape_ready"] = True
+                d["segment_lengths"] = {
+                    "upper_arm": round(self._user_shape.upper_arm_len, 4),
+                    "forearm": round(self._user_shape.forearm_len, 4),
+                    "thigh": round(self._user_shape.thigh_len, 4),
+                    "shin": round(self._user_shape.shin_len, 4),
+                    "shoulder_span": round(self._user_shape.shoulder_span, 4),
+                    "hip_span": round(self._user_shape.hip_span, 4),
+                }
+            return d
 
     # ── Vision-thread hooks ────────────────────────────────────────────────
     @property
@@ -273,7 +303,7 @@ class StabilityCapture:
             t0 = self._t0
 
         now = time.time()
-        if state == "idle" or state == "frozen":
+        if state in ("idle", "frozen", "fitting"):
             return
 
         if state == "countdown":
@@ -325,6 +355,26 @@ class StabilityCapture:
         idx = _most_stable_index(lm_frames)
         chosen = buf[idx]
 
+        # ── SMPL β fit (Phase 2). Runs in this vision thread; skipped silently
+        # if weights are missing or torch/smplx isn't installed. The user is
+        # holding still, so blocking for ~1–2 s here is acceptable.
+        fitted_shape: Optional[UserShape] = None
+        if self._fit_hook is not None:
+            with self._lock:
+                self._state = "fitting"
+            t_start = time.time()
+            try:
+                fitted_shape = self._fit_hook(lm_frames)
+                if fitted_shape is not None:
+                    _SMPL_FIT_LOG.info(
+                        "SMPL shape fit completed in %.2fs: upper_arm=%.3fm forearm=%.3fm",
+                        time.time() - t_start,
+                        fitted_shape.upper_arm_len,
+                        fitted_shape.forearm_len,
+                    )
+            except Exception as e:
+                _SMPL_FIT_LOG.warning("SMPL fit failed (%s); proceeding without shape", e)
+
         # Re-render the chosen frame: skeleton overlay + STABLE badge.
         frozen_overlay = chosen.clean_bgr.copy()
         _draw_skeleton_from_dicts(frozen_overlay, chosen.body_landmarks)
@@ -351,6 +401,7 @@ class StabilityCapture:
 
         with self._lock:
             self._frozen = frozen
+            self._user_shape = fitted_shape
             self._state = "frozen"
             self._buffer.clear()
 
@@ -397,6 +448,26 @@ def _draw_skeleton_from_dicts(frame: np.ndarray, landmarks: list[dict]) -> None:
             cv2.circle(frame, (px, py), 5, color, -1)
 
 
+def _default_smpl_fit_hook(frames: list[list[dict]]) -> Optional[UserShape]:
+    """Run the SMPL β fit, swallowing common opt-in failures.
+
+    Missing weights or absent torch/smplx is a normal state for fresh checkouts
+    — log it once and proceed without per-person shape. Any other exception
+    propagates so ``StabilityCapture._finalize`` can record a clear warning.
+    """
+    try:
+        from .smpl_fit import fit_betas
+        from .smpl_loader import SMPLWeightsMissingError
+    except ImportError as e:
+        _SMPL_FIT_LOG.info("SMPL stack not installed (%s); shape calibration skipped", e)
+        return None
+    try:
+        return fit_betas(frames)
+    except SMPLWeightsMissingError as e:
+        _SMPL_FIT_LOG.info("%s", e)
+        return None
+
+
 class PoseEstimator:
     def __init__(self, camera_index: int = 0, target_fps: float = 30.0):
         self._camera_index = camera_index
@@ -408,8 +479,20 @@ class PoseEstimator:
         self._yaw_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
         self._pitch_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
         self._roll_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
-        # Per-landmark filters: 33 landmarks × 3 axes (x, y, z)
+        # Parallel filters for the world-landmark head pose path, kept separate
+        # so PnP↔world source switches don't pollute filter state.
+        self._yaw_w_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
+        self._pitch_w_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
+        self._roll_w_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
+        # Per-landmark filters for image-normalized coords (used for overlay /
+        # stability metric / frontend rendering).
         self._lm_filters: list[list[OneEuroFilter]] = [
+            [OneEuroFilter(min_cutoff=0.5, beta=0.05) for _ in range(3)]
+            for _ in range(33)
+        ]
+        # Per-landmark filters for world coords (meters, hip-centered) — these
+        # feed the joint-angle math in pose_to_robot. Need their own state.
+        self._lm_world_filters: list[list[OneEuroFilter]] = [
             [OneEuroFilter(min_cutoff=0.5, beta=0.05) for _ in range(3)]
             for _ in range(33)
         ]
@@ -417,7 +500,12 @@ class PoseEstimator:
         self._frame_width = 640
         self._frame_height = 480
         self._running = False
-        self.stability = StabilityCapture()
+        self.stability = StabilityCapture(fit_hook=_default_smpl_fit_hook)
+
+    @property
+    def user_shape(self) -> Optional[UserShape]:
+        """The SMPL β fit produced by the most recent stable-pose capture, if any."""
+        return self.stability.user_shape
 
     def open(self):
         import logging as _log
@@ -488,6 +576,44 @@ class PoseEstimator:
         cy = self._frame_height / 2.0
         return np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
 
+    @staticmethod
+    def _world_head_pose(body_landmarks: list[dict]) -> Optional[tuple[float, float, float]]:
+        """Compute (yaw_deg, pitch_deg, roll_deg) torso-relative from world coords.
+
+        Returns None if any required landmark is missing world coords or has
+        visibility below 0.5. yaw>0 = looking person's right, pitch>0 = up,
+        roll>0 = head tilted to person's right.
+        """
+        required = (
+            geometry.NOSE,
+            geometry.LEFT_EAR,
+            geometry.RIGHT_EAR,
+            geometry.LEFT_SHOULDER,
+            geometry.RIGHT_SHOULDER,
+            geometry.LEFT_HIP,
+            geometry.RIGHT_HIP,
+        )
+        if len(body_landmarks) <= max(required):
+            return None
+        for idx in required:
+            lm = body_landmarks[idx]
+            if "xw" not in lm or lm.get("visibility", 0.0) < 0.5:
+                return None
+
+        R = geometry.torso_frame(
+            geometry.world_xyz(body_landmarks[geometry.LEFT_SHOULDER]),
+            geometry.world_xyz(body_landmarks[geometry.RIGHT_SHOULDER]),
+            geometry.world_xyz(body_landmarks[geometry.LEFT_HIP]),
+            geometry.world_xyz(body_landmarks[geometry.RIGHT_HIP]),
+        )
+        pan, tilt, roll = geometry.head_pan_tilt_roll(
+            geometry.world_xyz(body_landmarks[geometry.NOSE]),
+            geometry.world_xyz(body_landmarks[geometry.LEFT_EAR]),
+            geometry.world_xyz(body_landmarks[geometry.RIGHT_EAR]),
+            R,
+        )
+        return math.degrees(pan), math.degrees(tilt), math.degrees(roll)
+
     def _solve_pnp(
         self, face_landmarks: list
     ) -> Optional[tuple]:
@@ -553,43 +679,76 @@ class PoseEstimator:
         raw_pose_lms = None
         if pose_result.pose_landmarks:
             raw_pose_lms = pose_result.pose_landmarks[0]
+            world_lms = (
+                pose_result.pose_world_landmarks[0]
+                if pose_result.pose_world_landmarks
+                else None
+            )
             t_lm = time.time()
             for i, lm in enumerate(raw_pose_lms):
                 fx = self._lm_filters[i][0].filter(lm.x, t_lm)
                 fy = self._lm_filters[i][1].filter(lm.y, t_lm)
                 fz = self._lm_filters[i][2].filter(lm.z, t_lm)
-                body_landmarks.append({
+                entry = {
                     "x": round(fx, 4),
                     "y": round(fy, 4),
                     "z": round(fz, 4),
                     "visibility": round(lm.visibility or 0.0, 3),
-                })
+                }
+                if world_lms is not None and i < len(world_lms):
+                    wlm = world_lms[i]
+                    fxw = self._lm_world_filters[i][0].filter(wlm.x, t_lm)
+                    fyw = self._lm_world_filters[i][1].filter(wlm.y, t_lm)
+                    fzw = self._lm_world_filters[i][2].filter(wlm.z, t_lm)
+                    entry["xw"] = round(fxw, 5)
+                    entry["yw"] = round(fyw, 5)
+                    entry["zw"] = round(fzw, 5)
+                body_landmarks.append(entry)
             self._draw_pose_skeleton(overlay, raw_pose_lms)
 
-        # Solve head pose
+        # Solve head pose: prefer torso-relative from world landmarks (decouples
+        # head from torso rotation); fall back to face-PnP when shoulders/hips
+        # are not visible.
         head_pose: Optional[HeadPose] = None
         face_landmarks_out: list[dict] = []
         raw_face_lms = None
+        t_now = time.time()
+
+        world_head = self._world_head_pose(body_landmarks)
+        if world_head is not None:
+            self._pnp_fail_count = 0
+            raw_yaw, raw_pitch, raw_roll = world_head
+            raw_yaw = self._yaw_w_f.filter(raw_yaw, t_now)
+            raw_pitch = self._pitch_w_f.filter(raw_pitch, t_now)
+            raw_roll = self._roll_w_f.filter(raw_roll, t_now)
+            if self.calibration.state == CalibrationState.COLLECTING:
+                self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
+            yaw, pitch, roll = self.calibration.apply(raw_yaw, raw_pitch, raw_roll)
+            head_pose = HeadPose(yaw, pitch, roll, raw_yaw, raw_pitch, raw_roll)
+            cv2.putText(overlay, f"Y:{yaw:.1f} P:{pitch:.1f} R:{roll:.1f} [torso]",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 200), 2)
 
         if face_result.face_landmarks:
             raw_face_lms = face_result.face_landmarks[0]
             pnp_result = self._solve_pnp(raw_face_lms)
             if pnp_result is not None:
-                self._pnp_fail_count = 0
-                raw_yaw, raw_pitch, raw_roll, rvec, tvec = pnp_result
+                raw_yaw_p, raw_pitch_p, raw_roll_p, rvec, tvec = pnp_result
 
-                t_now = time.time()
-                raw_yaw = self._yaw_f.filter(raw_yaw, t_now)
-                raw_pitch = self._pitch_f.filter(raw_pitch, t_now)
-                raw_roll = self._roll_f.filter(raw_roll, t_now)
+                raw_yaw_p = self._yaw_f.filter(raw_yaw_p, t_now)
+                raw_pitch_p = self._pitch_f.filter(raw_pitch_p, t_now)
+                raw_roll_p = self._roll_f.filter(raw_roll_p, t_now)
 
-                if self.calibration.state == CalibrationState.COLLECTING:
-                    self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
+                # Use PnP only when the world-landmark path wasn't available.
+                if head_pose is None:
+                    self._pnp_fail_count = 0
+                    if self.calibration.state == CalibrationState.COLLECTING:
+                        self.calibration.add_frame(raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    yaw, pitch, roll = self.calibration.apply(raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    head_pose = HeadPose(yaw, pitch, roll, raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    cv2.putText(overlay, f"Y:{yaw:.1f} P:{pitch:.1f} R:{roll:.1f} [pnp]",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
-                yaw, pitch, roll = self.calibration.apply(raw_yaw, raw_pitch, raw_roll)
-                head_pose = HeadPose(yaw, pitch, roll, raw_yaw, raw_pitch, raw_roll)
-
-                # Extract face landmark data and draw
+                # Extract face landmark data and draw (always, for overlay/FE)
                 for idx, name in zip(_FACE_LM_INDICES, _FACE_LM_NAMES):
                     lm = raw_face_lms[idx]
                     px = int(lm.x * self._frame_width)
@@ -602,7 +761,7 @@ class PoseEstimator:
                         "y": round(lm.y, 4),
                     })
 
-                # Draw 3D orientation axes
+                # Draw 3D orientation axes (PnP-derived, for visualization only)
                 cam_matrix = self._camera_matrix()
                 dist_coeffs = np.zeros((4, 1), dtype=np.float64)
                 axis_pts = np.float32([[50, 0, 0], [0, 50, 0], [0, 0, -50], [0, 0, 0]])
@@ -615,12 +774,9 @@ class PoseEstimator:
                 cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[0].ravel()), (0, 0, 255), 2, tipLength=0.3)
                 cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[1].ravel()), (0, 255, 0), 2, tipLength=0.3)
                 cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[2].ravel()), (255, 0, 0), 2, tipLength=0.3)
-
-                cv2.putText(overlay, f"Y:{yaw:.1f} P:{pitch:.1f} R:{roll:.1f}",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            else:
+            elif head_pose is None:
                 self._pnp_fail_count += 1
-        else:
+        elif head_pose is None:
             self._pnp_fail_count += 1
 
         cal = self.calibration.to_dict()
