@@ -99,6 +99,34 @@ LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 
 Get Langfuse keys at [cloud.langfuse.com](https://cloud.langfuse.com) → Settings → API Keys.
 
+### 5. (Optional) SMPL shape calibration weights
+
+Enables per-user body-shape calibration during the stable-pose capture, used to
+normalize arm/leg segment lengths so the same pose maps to the same joint
+angles across adults and children.
+
+1. Register at <https://smpl.is.tue.mpg.de/> (academic use only).
+2. Download the *SMPL_python_v.1.1.0* archive (or newer). Inside the archive
+   the neutral weight file is `models/basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl`.
+3. Convert the legacy pickle to `.npz` using the bundled script (one-time, ~1 s).
+   The pickle stores arrays as `chumpy.Ch`, which doesn't build under Python 3.12;
+   the script stubs that out and saves clean numpy arrays:
+
+   ```bash
+   uv run python scripts/convert_smpl_pkl_to_npz.py \
+     path/to/basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl \
+     assets/smpl/SMPL_NEUTRAL.npz
+   ```
+
+4. Install the optional torch/smplx stack:
+
+   ```bash
+   uv sync --extra smpl
+   ```
+
+If you skip this step the capture flow still works — shape calibration is just
+silently disabled and a log message points you back here.
+
 ## Running
 
 ### Simulation mode

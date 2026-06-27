@@ -1,15 +1,19 @@
-"""Map MediaPipe pose landmarks + head pose to robot joint targets.
+"""Map MediaPipe pose_world_landmarks + head pose to robot joint targets.
 
 Mirror mode: person's right side (MediaPipe right_*) → robot's left arm, and
 vice versa. This makes the robot feel like a partner facing the user.
 
-Only arms (shoulder pitch/roll, elbow bend) + head (pan, tilt) are mapped.
-Elbow yaw, grippers, and legs are left at neutral.
+Joint angles are extracted in the torso-local frame so shoulder pitch and roll
+are decoupled from each other and from any global torso rotation.
+
+Only arms (shoulder pitch/roll, elbow yaw) + head (pan, tilt) are mapped.
+Elbow pitch, grippers, and legs are left at neutral.
 """
 
 from __future__ import annotations
 
 import math
+import time
 from typing import Optional
 
 from coral_agent.robot.angle_utils import rad_to_servo_units
@@ -17,15 +21,28 @@ from coral_agent.robot.interface import ServoCommand
 from coral_agent.robot.servo_config import SERVO_ID_MAP
 from coral_agent.validation import JOINT_LIMITS
 
-# MediaPipe pose landmark indices
-_LM_L_SHOULDER = 11
-_LM_R_SHOULDER = 12
-_LM_L_ELBOW = 13
-_LM_R_ELBOW = 14
-_LM_L_WRIST = 15
-_LM_R_WRIST = 16
+from . import geometry
+from .pose_estimator import OneEuroFilter
+
+# MediaPipe pose landmark indices (re-exported from geometry for clarity)
+_LM_L_SHOULDER = geometry.LEFT_SHOULDER
+_LM_R_SHOULDER = geometry.RIGHT_SHOULDER
+_LM_L_ELBOW = geometry.LEFT_ELBOW
+_LM_R_ELBOW = geometry.RIGHT_ELBOW
+_LM_L_WRIST = geometry.LEFT_WRIST
+_LM_R_WRIST = geometry.RIGHT_WRIST
+_LM_L_INDEX = geometry.LEFT_INDEX
+_LM_R_INDEX = geometry.RIGHT_INDEX
+_LM_L_PINKY = geometry.LEFT_PINKY
+_LM_R_PINKY = geometry.RIGHT_PINKY
+_LM_L_HIP = geometry.LEFT_HIP
+_LM_R_HIP = geometry.RIGHT_HIP
 
 _VISIBILITY_THRESHOLD = 0.5
+
+# Depth-gate threshold: if shoulder→elbow projects to less than this fraction of
+# the frame, the arm is aligned with the optical axis and depth is unreliable.
+_DEPTH_GATE_2D_FRACTION = 0.05
 
 # Soft caps for head — robot's full range is ±2.09 rad but small motions look natural
 _HEAD_PAN_CAP = math.radians(60)
@@ -36,39 +53,44 @@ _STAND_L_SHO_ROLL = -1.403
 _STAND_R_SHO_ROLL = 1.403
 
 
-class PoseTargetSmoother:
-    """Exponential moving average over per-joint targets to absorb 15→10 Hz jitter."""
+class JointAngleSmoother:
+    """Per-joint OneEuro filter applied after retargeting.
 
-    def __init__(self, alpha: float = 0.4):
-        self.alpha = alpha
-        self._prev: dict[str, float] = {}
+    Replaces the prior EMA-based PoseTargetSmoother. OneEuro is preferred because
+    it's adaptive: low cutoff when still (kills jitter), high cutoff when moving
+    (preserves responsiveness). Joints that disappear and reappear get a fresh
+    filter so we don't blend across discontinuities.
+    """
+
+    def __init__(self, min_cutoff: float = 1.5, beta: float = 0.05):
+        self._min_cutoff = min_cutoff
+        self._beta = beta
+        self._filters: dict[str, OneEuroFilter] = {}
+        self._last_seen: dict[str, float] = {}
 
     def reset(self) -> None:
-        self._prev.clear()
+        self._filters.clear()
+        self._last_seen.clear()
 
     def smooth(self, targets: dict[str, float]) -> dict[str, float]:
+        now = time.time()
         out: dict[str, float] = {}
         for k, v in targets.items():
-            prev = self._prev.get(k)
-            out[k] = v if prev is None else (self.alpha * v + (1 - self.alpha) * prev)
-        self._prev = out
+            # If joint was missing for >0.5s, restart its filter to avoid
+            # smoothing across a discontinuity.
+            if k not in self._filters or (now - self._last_seen.get(k, 0.0)) > 0.5:
+                self._filters[k] = OneEuroFilter(min_cutoff=self._min_cutoff, beta=self._beta)
+            out[k] = self._filters[k].filter(v, now)
+            self._last_seen[k] = now
         return out
-
-
-def _vec(a: dict, b: dict) -> tuple[float, float, float]:
-    return (b["x"] - a["x"], b["y"] - a["y"], b["z"] - a["z"])
-
-
-def _norm(v: tuple[float, float, float]) -> float:
-    return math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-
-
-def _dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
 def _visible(lm: dict) -> bool:
     return lm.get("visibility", 1.0) >= _VISIBILITY_THRESHOLD
+
+
+def _has_world(lm: dict) -> bool:
+    return "xw" in lm
 
 
 def _clamp_to_limits(joint: str, value: float) -> float:
@@ -76,29 +98,28 @@ def _clamp_to_limits(joint: str, value: float) -> float:
     return limit.clamp(value) if limit else value
 
 
-def _shoulder_pitch(shoulder: dict, elbow: dict) -> float:
-    """Forward-flexion angle. Arm hanging = 0, arm forward = ~π/2, overhead = ~π."""
-    _, dy, dz = _vec(shoulder, elbow)
-    return math.atan2(-dz, max(dy, 1e-6))
+def _torso_frame_from(body: list[dict]):
+    """Build torso frame from world landmarks; returns None if any required
+    landmark is missing world coords or visibility.
+    """
+    required = (_LM_L_SHOULDER, _LM_R_SHOULDER, _LM_L_HIP, _LM_R_HIP)
+    for idx in required:
+        lm = body[idx]
+        if not _has_world(lm) or not _visible(lm):
+            return None
+    return geometry.torso_frame(
+        geometry.world_xyz(body[_LM_L_SHOULDER]),
+        geometry.world_xyz(body[_LM_R_SHOULDER]),
+        geometry.world_xyz(body[_LM_L_HIP]),
+        geometry.world_xyz(body[_LM_R_HIP]),
+    )
 
 
-def _shoulder_roll_abduction(shoulder: dict, elbow: dict) -> float:
-    """Positive abduction magnitude (0 = arm at side, π/2 = arm out horizontally)."""
-    dx, dy, _ = _vec(shoulder, elbow)
-    return math.atan2(abs(dx), max(dy, 1e-6))
-
-
-def _elbow_bend(shoulder: dict, elbow: dict, wrist: dict) -> float:
-    """Angle between upper arm and forearm. 0 = straight, π = fully folded."""
-    upper = _vec(shoulder, elbow)
-    forearm = _vec(elbow, wrist)
-    nu = _norm(upper)
-    nf = _norm(forearm)
-    if nu < 1e-4 or nf < 1e-4:
-        return 0.0
-    cos_a = _dot(upper, forearm) / (nu * nf)
-    cos_a = max(-1.0, min(1.0, cos_a))
-    return math.acos(cos_a)
+def _arm_depth_gated(shoulder: dict, elbow: dict) -> bool:
+    """True if the arm projects into a tiny 2D segment (near optical axis)."""
+    sh_img = geometry.image_xy(shoulder)
+    el_img = geometry.image_xy(elbow)
+    return geometry.arm_image_projection_short(sh_img, el_img, _DEPTH_GATE_2D_FRACTION)
 
 
 def compute_joint_targets(
@@ -108,32 +129,82 @@ def compute_joint_targets(
     """Convert one frame of pose data into robot joint angles in radians.
 
     Mirror mapping: MediaPipe LEFT (person's left) → robot RIGHT arm; vice versa.
-    Returns a subset of joint names — only those with confident landmarks.
+    Returns a subset of joint names — only those with confident landmarks and
+    non-degenerate viewing geometry.
     """
     targets: dict[str, float] = {}
 
     if len(body_landmarks) > _LM_R_WRIST:
-        # Person's RIGHT side → robot's LEFT arm
-        if all(_visible(body_landmarks[i]) for i in (_LM_R_SHOULDER, _LM_R_ELBOW)):
-            sh = body_landmarks[_LM_R_SHOULDER]
-            el = body_landmarks[_LM_R_ELBOW]
-            targets["l_sho_pitch"] = _clamp_to_limits("l_sho_pitch", _shoulder_pitch(sh, el))
-            roll_abd = _shoulder_roll_abduction(sh, el)
-            targets["l_sho_roll"] = _clamp_to_limits("l_sho_roll", _STAND_L_SHO_ROLL + roll_abd)
-            if _visible(body_landmarks[_LM_R_WRIST]):
-                wr = body_landmarks[_LM_R_WRIST]
-                targets["l_el_yaw"] = _clamp_to_limits("l_el_yaw", -_elbow_bend(sh, el, wr))
+        R_torso = _torso_frame_from(body_landmarks)
 
-        # Person's LEFT side → robot's RIGHT arm
-        if all(_visible(body_landmarks[i]) for i in (_LM_L_SHOULDER, _LM_L_ELBOW)):
-            sh = body_landmarks[_LM_L_SHOULDER]
-            el = body_landmarks[_LM_L_ELBOW]
-            targets["r_sho_pitch"] = _clamp_to_limits("r_sho_pitch", _shoulder_pitch(sh, el))
-            roll_abd = _shoulder_roll_abduction(sh, el)
-            targets["r_sho_roll"] = _clamp_to_limits("r_sho_roll", _STAND_R_SHO_ROLL - roll_abd)
-            if _visible(body_landmarks[_LM_L_WRIST]):
+        if R_torso is not None:
+            # Person's RIGHT side → robot's LEFT arm
+            if all(
+                _visible(body_landmarks[i]) and _has_world(body_landmarks[i])
+                for i in (_LM_R_SHOULDER, _LM_R_ELBOW)
+            ) and not _arm_depth_gated(body_landmarks[_LM_R_SHOULDER], body_landmarks[_LM_R_ELBOW]):
+                sh = body_landmarks[_LM_R_SHOULDER]
+                el = body_landmarks[_LM_R_ELBOW]
+                pitch, roll_abd = geometry.shoulder_pitch_roll(
+                    geometry.world_xyz(sh), geometry.world_xyz(el), R_torso, side="right"
+                )
+                targets["l_sho_pitch"] = _clamp_to_limits("l_sho_pitch", pitch)
+                targets["l_sho_roll"] = _clamp_to_limits("l_sho_roll", _STAND_L_SHO_ROLL + roll_abd)
+                wr = body_landmarks[_LM_R_WRIST]
+                if _visible(wr) and _has_world(wr):
+                    bend = geometry.elbow_bend(
+                        geometry.world_xyz(sh),
+                        geometry.world_xyz(el),
+                        geometry.world_xyz(wr),
+                    )
+                    targets["l_el_yaw"] = _clamp_to_limits("l_el_yaw", -bend)
+                    idx_lm = body_landmarks[_LM_R_INDEX]
+                    pky_lm = body_landmarks[_LM_R_PINKY]
+                    if all(_visible(x) and _has_world(x) for x in (idx_lm, pky_lm)):
+                        twist = geometry.forearm_twist(
+                            geometry.world_xyz(el),
+                            geometry.world_xyz(wr),
+                            geometry.world_xyz(idx_lm),
+                            geometry.world_xyz(pky_lm),
+                            R_torso,
+                            side="right",
+                        )
+                        if twist is not None:
+                            targets["l_el_pitch"] = _clamp_to_limits("l_el_pitch", -twist)
+
+            # Person's LEFT side → robot's RIGHT arm
+            if all(
+                _visible(body_landmarks[i]) and _has_world(body_landmarks[i])
+                for i in (_LM_L_SHOULDER, _LM_L_ELBOW)
+            ) and not _arm_depth_gated(body_landmarks[_LM_L_SHOULDER], body_landmarks[_LM_L_ELBOW]):
+                sh = body_landmarks[_LM_L_SHOULDER]
+                el = body_landmarks[_LM_L_ELBOW]
+                pitch, roll_abd = geometry.shoulder_pitch_roll(
+                    geometry.world_xyz(sh), geometry.world_xyz(el), R_torso, side="left"
+                )
+                targets["r_sho_pitch"] = _clamp_to_limits("r_sho_pitch", pitch)
+                targets["r_sho_roll"] = _clamp_to_limits("r_sho_roll", _STAND_R_SHO_ROLL - roll_abd)
                 wr = body_landmarks[_LM_L_WRIST]
-                targets["r_el_yaw"] = _clamp_to_limits("r_el_yaw", _elbow_bend(sh, el, wr))
+                if _visible(wr) and _has_world(wr):
+                    bend = geometry.elbow_bend(
+                        geometry.world_xyz(sh),
+                        geometry.world_xyz(el),
+                        geometry.world_xyz(wr),
+                    )
+                    targets["r_el_yaw"] = _clamp_to_limits("r_el_yaw", bend)
+                    idx_lm = body_landmarks[_LM_L_INDEX]
+                    pky_lm = body_landmarks[_LM_L_PINKY]
+                    if all(_visible(x) and _has_world(x) for x in (idx_lm, pky_lm)):
+                        twist = geometry.forearm_twist(
+                            geometry.world_xyz(el),
+                            geometry.world_xyz(wr),
+                            geometry.world_xyz(idx_lm),
+                            geometry.world_xyz(pky_lm),
+                            R_torso,
+                            side="left",
+                        )
+                        if twist is not None:
+                            targets["r_el_pitch"] = _clamp_to_limits("r_el_pitch", -twist)
 
     if head_pose is not None:
         yaw = math.radians(head_pose.get("yaw", 0.0))

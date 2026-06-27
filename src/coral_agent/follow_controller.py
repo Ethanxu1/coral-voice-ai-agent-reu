@@ -21,7 +21,7 @@ import websockets
 
 from coral_agent.robot.interface import ServoCommand
 from coral_agent.vision.pose_to_robot import (
-    PoseTargetSmoother,
+    JointAngleSmoother,
     compute_joint_targets,
     targets_to_servo_commands,
 )
@@ -31,9 +31,15 @@ logger = logging.getLogger("follow_controller")
 VISION_HTTP_BASE = "http://localhost:8001"
 VISION_WS_URL = "ws://localhost:8001/ws/pose"
 
-# Follow loop tuning
-_FOLLOW_DISPATCH_HZ = 15.0
-_FOLLOW_DURATION_MS = 100
+# Follow loop tuning. duration_ms is kept slightly under one dispatch tick so
+# each interpolation completes before the next command arrives — otherwise
+# the blocking SimController.send_commands stacks up and adds latency.
+_FOLLOW_DISPATCH_HZ = 20.0
+_FOLLOW_DURATION_MS = 45
+# One-shot easing from STAND to the human's first detected pose. Going at the
+# fast loop's 45 ms straight to a fully extended arm would slam the joints in
+# one tick; this slower opening move makes the start of follow mode smooth.
+_FOLLOW_SEED_DURATION_MS = 800
 _CAPTURE_DURATION_MS = 1500
 _CAPTURE_TIMEOUT_S = 20.0
 
@@ -73,35 +79,114 @@ class FollowController:
             await status_fn({"type": "follow_status", "active": False})
 
     async def _follow_loop(self, status_fn: StatusFn) -> None:
-        smoother = PoseTargetSmoother(alpha=0.7)
-        min_interval = 1.0 / _FOLLOW_DISPATCH_HZ
+        """Split into reader + dispatcher so stale frames can't queue up.
+
+        Sequence:
+          1. Reader connects to vision WS, keeps only the freshest pose payload.
+          2. Wait for the first frame that produces a non-empty target dict, do
+             ONE long-duration ease from STAND to that pose so the start of
+             follow mode isn't a 45 ms slam.
+          3. Tick at _FOLLOW_DISPATCH_HZ, fire-and-forget; skip a tick if the
+             previous dispatch hasn't finished.
+        """
+        smoother = JointAngleSmoother()
+        latest: dict | None = None
+        latest_event = asyncio.Event()
+
         try:
             await status_fn({"type": "follow_status", "active": True})
             async with websockets.connect(VISION_WS_URL, max_queue=8) as ws:
-                last_dispatch = 0.0
-                while True:
-                    raw = await ws.recv()
-                    data = json.loads(raw)
-                    if data.get("type") not in (None, "pose_update"):
-                        continue
 
-                    now = asyncio.get_event_loop().time()
-                    if now - last_dispatch < min_interval:
-                        continue
+                async def reader() -> None:
+                    nonlocal latest
+                    try:
+                        async for raw in ws:
+                            try:
+                                data = json.loads(raw)
+                            except json.JSONDecodeError:
+                                continue
+                            if not isinstance(data, dict):
+                                continue
+                            if data.get("type") not in (None, "pose_update"):
+                                continue
+                            latest = data
+                            latest_event.set()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.warning("Follow reader exited: %s", e)
 
-                    body = data.get("body_landmarks") or []
-                    head = data.get("head_pose")
-                    if not body:
-                        continue
+                def _log_dispatch_error(t: asyncio.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc is not None:
+                        logger.warning("Follow dispatch error: %s", exc)
 
-                    targets = compute_joint_targets(body, head)
-                    if not targets:
-                        continue
-                    targets = smoother.smooth(targets)
+                reader_task = asyncio.create_task(reader())
+                in_flight: Optional[asyncio.Task] = None
+                dispatch_count = 0
+                skip_count = 0
+                empty_target_count = 0
+                last_heartbeat = asyncio.get_event_loop().time()
+                tick = 1.0 / _FOLLOW_DISPATCH_HZ
+                try:
+                    # ── Seed move: wait for the first usable pose, then ease there. ──
+                    seeded = False
+                    while not seeded:
+                        await latest_event.wait()
+                        data = latest
+                        if data is None:
+                            continue
+                        body = data.get("body_landmarks") or []
+                        head = data.get("head_pose")
+                        targets = compute_joint_targets(body, head) if body else {}
+                        if not targets:
+                            # Person partly out of frame — try again on the next push.
+                            latest_event.clear()
+                            continue
+                        targets = smoother.smooth(targets)
+                        seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
+                        logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
+                        await self._dispatch(seed_cmds)
+                        seeded = True
+                    logger.info("Follow: initial seed complete, entering live tracking")
 
-                    commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
-                    await self._dispatch(commands)
-                    last_dispatch = now
+                    # ── Live tracking loop. ──
+                    while True:
+                        await asyncio.sleep(tick)
+                        data = latest
+                        if data is None:
+                            continue
+
+                        body = data.get("body_landmarks") or []
+                        head = data.get("head_pose")
+                        targets = compute_joint_targets(body, head) if body else {}
+                        if not targets:
+                            empty_target_count += 1
+                        else:
+                            targets = smoother.smooth(targets)
+                            if in_flight is not None and not in_flight.done():
+                                skip_count += 1
+                            else:
+                                commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
+                                in_flight = asyncio.create_task(self._dispatch(commands))
+                                in_flight.add_done_callback(_log_dispatch_error)
+                                dispatch_count += 1
+
+                        # 2-second heartbeat: shows whether we're flowing.
+                        now = asyncio.get_event_loop().time()
+                        if now - last_heartbeat >= 2.0:
+                            logger.info(
+                                "Follow: %d dispatches, %d skips, %d empty-targets in last 2s",
+                                dispatch_count, skip_count, empty_target_count,
+                            )
+                            dispatch_count = skip_count = empty_target_count = 0
+                            last_heartbeat = now
+                finally:
+                    reader_task.cancel()
+                    if in_flight is not None and not in_flight.done():
+                        in_flight.cancel()
         except asyncio.CancelledError:
             logger.info("Follow loop cancelled")
             raise
