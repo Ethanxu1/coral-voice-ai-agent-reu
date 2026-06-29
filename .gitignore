@@ -210,9 +210,11 @@ __marimo__/
 # Project-specific
 # ===================
 
-# Robot model assets (cloned from mujoco_menagerie)
-# See README.md for setup instructions
-assets/
+# Robot model assets — only the AiNex model is tracked.
+# SMPL weights are academic-use only (download manually; see README).
+# Other menagerie models are gitignored to keep the repo small.
+assets/*
+!assets/ainex/
 
 # Frontend
 frontend/node_modules/
