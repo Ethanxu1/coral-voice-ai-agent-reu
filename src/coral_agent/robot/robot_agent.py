@@ -77,9 +77,7 @@ class _MotionManagerBackend:
     and roscore + the servo controller node to be running.
     """
 
-    # Head servos are not physically present on the AiNex (see README/control.py);
-    # MotionManager would error on them, so we drop them here.
-    _SKIP_SERVOS = {23, 24}
+    _SKIP_SERVOS: set[int] = set()
 
     def __init__(self):
         import rospy
@@ -91,6 +89,8 @@ class _MotionManagerBackend:
         rospy.init_node("robot_agent", anonymous=True, disable_signals=True)
         self._rospy = rospy
         self._mm = MotionManager()
+        # Track the last commanded position for each servo; initialise to stand pose.
+        self._position_cache: Dict[int, int] = dict(STAND_PULSE)
         print("[robot-agent] Using ROS MotionManager backend")
 
     def _grouped(self, moves: List[Tuple[int, int, int]]) -> Dict[int, List[List[int]]]:
@@ -111,9 +111,12 @@ class _MotionManagerBackend:
     def move_servos(self, moves: List[Tuple[int, int, int]]) -> None:
         for duration_ms, servos in self._grouped(moves).items():
             self._mm.set_servos_position(duration_ms, servos)
+        for sid, pos, _ in moves:
+            if sid not in self._SKIP_SERVOS:
+                self._position_cache[sid] = pos
 
     def read_position(self, servo_id: int) -> Optional[int]:
-        return None
+        return self._position_cache.get(servo_id)
 
 
 def _init_backend():

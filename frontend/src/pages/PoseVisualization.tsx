@@ -3,6 +3,7 @@ import CameraFeed from '../components/pose/CameraFeed'
 import SkeletonCanvas from '../components/pose/SkeletonCanvas'
 import HeadPoseDisplay from '../components/pose/HeadPoseDisplay'
 import CalibrationPanel from '../components/pose/CalibrationPanel'
+import StabilityPanel from '../components/pose/StabilityPanel'
 
 export default function PoseVisualization() {
   const {
@@ -10,10 +11,13 @@ export default function PoseVisualization() {
     faceLandmarks,
     headPose,
     calibrationStatus,
+    stabilityStatus,
     isConnected,
     trackingLost,
     startCalibration,
     resetCalibration,
+    captureStablePosition,
+    continueLive,
   } = usePoseWebSocket()
 
   return (
@@ -71,12 +75,18 @@ export default function PoseVisualization() {
       </div>
 
       {/* Controls row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
         <CalibrationPanel
           status={calibrationStatus}
           isConnected={isConnected}
           onStart={startCalibration}
           onReset={resetCalibration}
+        />
+        <StabilityPanel
+          status={stabilityStatus}
+          isConnected={isConnected}
+          onCapture={captureStablePosition}
+          onContinue={continueLive}
         />
         <HeadPoseDisplay headPose={headPose} />
       </div>

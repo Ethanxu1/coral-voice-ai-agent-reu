@@ -27,6 +27,12 @@ export interface CalibrationStatus {
   frame_count: number
 }
 
+export interface StabilityStatus {
+  state: 'idle' | 'countdown' | 'collecting' | 'frozen'
+  countdown_remaining: number
+  collection_progress: number
+}
+
 export interface PoseUpdate {
   type: 'pose_update' | 'tracking_lost' | 'calibration_status'
   timestamp: number
@@ -34,6 +40,7 @@ export interface PoseUpdate {
   face_landmarks: FaceLandmark[]
   head_pose: HeadPose | null
   calibration: CalibrationStatus
+  stability?: StabilityStatus
   reason?: string
   message?: string
 }

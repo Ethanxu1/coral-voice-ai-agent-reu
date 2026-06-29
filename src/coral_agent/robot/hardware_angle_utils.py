@@ -35,17 +35,17 @@ HW_DIRECTION: dict[str, int] = {
     # Shoulder roll — both decrease as arm lifts outward (primitives handle sign)
     "l_sho_roll":  -1,
     "r_sho_roll":  -1,
-    # Forearm rotation (calibration needed)
-    "l_el_pitch":  +1,
-    "r_el_pitch":  -1,
-    # Elbow bend — l stand=150 (bend via -rad → hw increases), r stand=850 (bend via +rad → hw decreases)
-    "l_el_yaw":    -1,
-    "r_el_yaw":    -1,
-    # Grippers (calibration needed)
+    # Forearm rotation (verified on hardware)
+    "l_el_pitch":  -1,   # was +1; confirmed flipped on hardware
+    "r_el_pitch":  +1,   # was -1; paired flip with mujoco_sim.py rotate_right_elbow signs
+    # Elbow bend — verified on hardware: extend must increase units for l, decrease for r
+    "l_el_yaw":    +1,   # was -1; confirmed flipped on hardware (extend was bending)
+    "r_el_yaw":    +1,   # was -1; confirmed flipped on hardware (extend was bending)
+    # Grippers (verified on hardware)
     "l_gripper":   +1,
-    "r_gripper":   -1,
-    # Head (calibration needed; stand=500)
-    "head_pan":    +1,
+    "r_gripper":   +1,   # was -1; confirmed flipped on hardware
+    # Head (verified on hardware)
+    "head_pan":    -1,   # was +1; confirmed flipped on hardware
     "head_tilt":   +1,
     # Legs — best-effort based on STAND_PULSE polarity; calibrate before use
     "l_ank_roll":  +1,
@@ -84,6 +84,14 @@ def rad_to_hardware_units(rad: float, joint_name: str) -> int:
 
     lo, hi = HW_SERVO_LIMITS.get(joint_name, (0, 1000))
     return max(lo, min(hi, units))
+
+
+def hardware_units_to_rad(hw_units: int, joint_name: str) -> float:
+    """Convert physical servo units (0–1000) to simulation radians for a named joint."""
+    stand_pulse = STAND_PULSE.get(joint_name, _CENTER)
+    stand_rad   = HW_STAND_RAD.get(joint_name, 0.0)
+    direction   = HW_DIRECTION.get(joint_name, +1)
+    return stand_rad + (hw_units - stand_pulse) * direction / TICKS_PER_RAD
 
 
 def sim_units_to_hardware_units(sim_units: int, joint_name: str) -> int:

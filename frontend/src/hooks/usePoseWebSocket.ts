@@ -1,8 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { Landmark, FaceLandmark, HeadPose, CalibrationStatus } from '../types/pose'
+import type { Landmark, FaceLandmark, HeadPose, CalibrationStatus, StabilityStatus } from '../types/pose'
 
 const VISION_BASE = 'http://localhost:8001'
 const VISION_WS = 'ws://localhost:8001/ws/pose'
+
+const INITIAL_STABILITY: StabilityStatus = {
+  state: 'idle',
+  countdown_remaining: 0,
+  collection_progress: 0,
+}
 
 export function usePoseWebSocket() {
   const [bodyLandmarks, setBodyLandmarks] = useState<Landmark[]>([])
@@ -13,6 +19,7 @@ export function usePoseWebSocket() {
     progress: 0,
     frame_count: 0,
   })
+  const [stabilityStatus, setStabilityStatus] = useState<StabilityStatus>(INITIAL_STABILITY)
   const [isConnected, setIsConnected] = useState(false)
   const [trackingLost, setTrackingLost] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -47,10 +54,13 @@ export function usePoseWebSocket() {
       if (data.type === 'ping') return
       if (data.type === 'pose_update') {
         setTrackingLost(false)
+        // While frozen, backend publishes the stable-frame landmarks repeatedly,
+        // so always taking the latest values naturally locks the 3D skeleton.
         if (data.body_landmarks?.length) setBodyLandmarks(data.body_landmarks)
         if (data.face_landmarks?.length) setFaceLandmarks(data.face_landmarks)
         setHeadPose(data.head_pose)
         if (data.calibration) setCalibrationStatus(data.calibration)
+        if (data.stability) setStabilityStatus(data.stability)
       } else if (data.type === 'tracking_lost') {
         setTrackingLost(true)
       } else if (data.type === 'calibration_status') {
@@ -81,14 +91,25 @@ export function usePoseWebSocket() {
     await fetch(`${VISION_BASE}/calibrate/reset`, { method: 'POST' })
   }, [])
 
+  const captureStablePosition = useCallback(async () => {
+    await fetch(`${VISION_BASE}/capture/stable_position/start`, { method: 'POST' })
+  }, [])
+
+  const continueLive = useCallback(async () => {
+    await fetch(`${VISION_BASE}/capture/stable_position/continue`, { method: 'POST' })
+  }, [])
+
   return {
     bodyLandmarks,
     faceLandmarks,
     headPose,
     calibrationStatus,
+    stabilityStatus,
     isConnected,
     trackingLost,
     startCalibration,
     resetCalibration,
+    captureStablePosition,
+    continueLive,
   }
 }
