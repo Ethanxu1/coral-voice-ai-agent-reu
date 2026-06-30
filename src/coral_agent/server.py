@@ -1072,7 +1072,7 @@ def main_robot():
 
     Requires:
       - ROBOT_IP env var set to the robot's IP (default: 192.168.8.219)
-      - robot_agent.py running on the robot (uv run robot-agent)
+      - robot_server.py running on the robot (uv run robot-server)
       - Laptop on the same network as the robot
     """
     _reexec_under_mjpython_if_needed()
@@ -1080,7 +1080,7 @@ def main_robot():
     robot_ip = os.getenv("ROBOT_IP", "192.168.8.219")
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {robot_ip})")
     logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
-    logger.info(f"Make sure robot_agent.py is running on the robot at {robot_ip}:9000")
+    logger.info(f"Make sure robot_server.py is running on the robot at {robot_ip}:9000")
     uvicorn.run(
         "coral_agent.server:app",
         host="0.0.0.0",

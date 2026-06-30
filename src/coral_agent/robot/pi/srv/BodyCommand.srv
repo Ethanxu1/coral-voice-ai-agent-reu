@@ -1,0 +1,17 @@
+# Body motion service — used by robot_server.py to drive the body/arm servos.
+#
+# Build this into a catkin package (default name: ainex_demo) on the Pi:
+#   1. Copy this file to  <ws>/src/ainex_demo/srv/BodyCommand.srv
+#   2. In that package's CMakeLists.txt add BodyCommand.srv to add_service_files()
+#      and ensure generate_messages() + message_generation/std_msgs deps are set.
+#   3. catkin_make && source devel/setup.bash
+#
+# Request: a JSON-encoded list of [pulse_dict, duration_ms] frames, plus an
+# optional global_duration (ms). If global_duration > 0 it overrides every
+# frame's per-pulse duration. The service blocks until the whole sequence has
+# played, so callers never overlap motor commands.
+string commands_json
+float64 global_duration
+---
+bool success
+float64 duration_ms
