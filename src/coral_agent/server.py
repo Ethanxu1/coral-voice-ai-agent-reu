@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -1020,8 +1021,42 @@ async def websocket_endpoint(websocket: WebSocket):
         )
 
 
+def _reexec_under_mjpython_if_needed() -> None:
+    """Re-exec under `mjpython` on macOS so the MuJoCo viewer window can open.
+
+    MuJoCo's interactive viewer (`launch_passive`) raises on macOS unless the
+    process is launched via `mjpython`, which keeps the Cocoa UI loop on the real
+    main thread while running Python on a worker thread. Under plain `python` /
+    `uv run` the viewer thread dies with:
+        RuntimeError: `launch_passive` requires ... `mjpython` on macOS
+    and no window appears (the server itself keeps running). Re-exec the current
+    entry point under mjpython so `uv run server` / `uv run robot` show the robot.
+
+    No-op off macOS, once already re-exec'd, or when CORAL_NO_VIEWER=1 — set that
+    for headless/CI runs that should stay on plain python (no window).
+    """
+    if sys.platform != "darwin":
+        return
+    if os.environ.get("CORAL_MJPYTHON") == "1" or os.environ.get("CORAL_NO_VIEWER") == "1":
+        return
+    mjpython = Path(sys.executable).with_name("mjpython")
+    if not mjpython.exists():
+        logger.warning(
+            "mjpython not found next to the interpreter; the MuJoCo viewer window "
+            "won't open on macOS. Set CORAL_NO_VIEWER=1 to silence this."
+        )
+        return
+    # Forward the current entry script + args so the same console entry (server vs
+    # robot) re-runs under mjpython. CORAL_MJPYTHON guards against a re-exec loop.
+    argv = sys.argv if sys.argv and Path(sys.argv[0]).exists() else ["-m", "coral_agent.server"]
+    os.environ["CORAL_MJPYTHON"] = "1"
+    logger.info("macOS: re-launching under mjpython so the MuJoCo viewer window opens...")
+    os.execv(str(mjpython), [str(mjpython), *argv])
+
+
 def main():
     """Entry point for simulation mode (default — starts MuJoCo)."""
+    _reexec_under_mjpython_if_needed()
     logger.info("Starting Coral AI Agent server (sim mode)...")
     uvicorn.run(
         "coral_agent.server:app",
@@ -1040,6 +1075,7 @@ def main_robot():
       - robot_agent.py running on the robot (uv run robot-agent)
       - Laptop on the same network as the robot
     """
+    _reexec_under_mjpython_if_needed()
     os.environ.setdefault("ROBOT_MODE", "robot")
     robot_ip = os.getenv("ROBOT_IP", "192.168.8.219")
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {robot_ip})")
