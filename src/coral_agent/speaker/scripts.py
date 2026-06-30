@@ -36,6 +36,12 @@ RECORD = (
     "will try my best to copy you!"
 )
 
+# NAME — spoken after RECORD, asks the child to name the pose.
+NAME = (
+    "Nice work! Now, what do you want to call that pose? "
+    "Say the name out loud after the beep!"
+)
+
 # OUTRO — a short, kid-friendly explanation of how the robot "sees".
 OUTRO = (
     "That was so much fun! Here is my little secret: I learned to recognize "
@@ -58,6 +64,7 @@ SCRIPTS: dict[str, str] = {
     "CLASSIFY_FIRST": CLASSIFY_FIRST,
     "CLASSIFY_REPEAT": CLASSIFY_REPEAT,
     "RECORD": RECORD,
+    "NAME": NAME,
     "OUTRO": OUTRO,
     "THANK_YOU": THANK_YOU,
     "3": THREE,

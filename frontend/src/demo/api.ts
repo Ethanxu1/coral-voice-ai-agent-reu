@@ -125,6 +125,35 @@ export async function captureUtterance(
   })
 }
 
+// ── Audio → transcript only (no LLM) over the existing /ws pipeline ──────────
+// Resolves as soon as Whisper returns the transcription text. The server will
+// continue on to the LLM but we close the socket early — the robot won't move.
+export function sendAudioForTranscript(blob: Blob, timeoutMs = 30000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(ACTION_WS)
+    const timer = setTimeout(() => { ws.close(); reject(new Error('transcription timed out')) }, timeoutMs)
+
+    ws.onopen = () => {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(',')[1]
+        ws.send(JSON.stringify({ type: 'audio', data: base64, format: 'webm' }))
+      }
+      reader.readAsDataURL(blob)
+    }
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      if (data.type === 'transcription') {
+        clearTimeout(timer)
+        ws.close()
+        resolve(data.text ?? '')
+      }
+      // chat_response intentionally ignored
+    }
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('transcription ws error')) }
+  })
+}
+
 // ── Audio → action over the existing server.py /ws pipeline ───────────────────
 // Sends the recorded utterance to the Whisper + LLM motion planner and waits for
 // the chat_response. Non-empty `waypoints` means the model produced an action;

@@ -4,6 +4,7 @@ import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
 import PoseVisualization from './pages/PoseVisualization'
 import DemoPage from './pages/DemoPage'
+import TestUIRouter from './TestUI/TestUIRouter'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -151,6 +152,9 @@ function App() {
           <Link to="/demo" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🎬 Demo Mode</button>
           </Link>
+          <Link to="/testui" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🎨 Test UI</button>
+          </Link>
         </div>
       </div>
       <div className="chat-panel">
@@ -170,6 +174,7 @@ function App() {
       <Route path="/" element={mainView} />
       <Route path="/pose" element={<PoseVisualization />} />
       <Route path="/demo" element={<DemoPage />} />
+      <Route path="/testui" element={<TestUIRouter />} />
     </Routes>
   )
 }
