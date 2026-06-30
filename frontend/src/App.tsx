@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
+import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
 import DemoPage from './pages/DemoPage'
 import TestUIRouter from './TestUI/TestUIRouter'
@@ -28,6 +29,8 @@ function App() {
   const [jointStates, setJointStates] = useState<JointStates>({})
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [followActive, setFollowActive] = useState(false)
+  const [captureStage, setCaptureStage] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
   const pendingAudioUrlRef = useRef<string | null>(null)
@@ -77,6 +80,13 @@ function App() {
       } else if (data.type === 'state') {
         if (data.joint_states) {
           setJointStates(data.joint_states)
+        }
+      } else if (data.type === 'follow_status') {
+        setFollowActive(!!data.active)
+      } else if (data.type === 'capture_status') {
+        setCaptureStage(data.stage ?? null)
+        if (data.stage === 'done' || data.stage === 'error') {
+          setTimeout(() => setCaptureStage(null), 2000)
         }
       }
     }
@@ -137,8 +147,32 @@ function App() {
     }
   }, [])
 
+  const handleToggleFollow = useCallback(() => {
+    const phrase = followActive ? 'stop following' : 'follow my movement'
+    sendMessage(phrase)
+  }, [followActive, sendMessage])
+
+  const handleCapturePose = useCallback(() => {
+    sendMessage('capture pose')
+  }, [sendMessage])
+
   const mainView = (
     <div className="app">
+      <HomeVisionPanel
+        followActive={followActive}
+        captureStage={captureStage}
+        onCapturePose={handleCapturePose}
+        onToggleFollow={handleToggleFollow}
+      />
+      <div className="chat-panel">
+        <ChatSidebar
+          messages={messages}
+          onSendMessage={sendMessage}
+          onSendAudio={sendAudio}
+          isConnected={isConnected}
+          isLoading={isLoading}
+        />
+      </div>
       <div className="controls-panel">
         <SimulatorControls
           onCommand={sendCommand}
@@ -156,15 +190,6 @@ function App() {
             <button className="primitives-test-btn">🎨 Test UI</button>
           </Link>
         </div>
-      </div>
-      <div className="chat-panel">
-        <ChatSidebar
-          messages={messages}
-          onSendMessage={sendMessage}
-          onSendAudio={sendAudio}
-          isConnected={isConnected}
-          isLoading={isLoading}
-        />
       </div>
     </div>
   )
