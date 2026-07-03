@@ -1,5 +1,6 @@
 import { HumanoidTPose, HumanoidCrossedArms, RobotTPose, CameraIcon } from './Characters'
-import { DummyStream } from './DummyStream'
+import { LiveStream } from './DummyStream'
+import type { PageProps } from './TestUIRouter'
 
 const steps = [
   {
@@ -24,7 +25,7 @@ const steps = [
   },
 ]
 
-export default function Page2_ClassifyInstructions() {
+export default function Page2_ClassifyInstructions({ state }: PageProps) {
   return (
     <div className="p2-layout tui-page" style={{ position: 'relative' }}>
       <div className="p2-title">How it works!</div>
@@ -39,12 +40,12 @@ export default function Page2_ClassifyInstructions() {
         ))}
       </div>
 
-      {/* Mini live stream bottom-left */}
-      <DummyStream
+      {state.caption && <div className="tui-caption tui-pop">{state.caption}</div>}
+
+      {/* Mini live camera feed bottom-left */}
+      <LiveStream
         className="p2-mini-stream tui-card"
         style={{ position: 'absolute', bottom: 16, left: 16, width: 120, height: 84, borderRadius: 14, border: '3px solid white' }}
-        showPerson
-        personWidth={60}
       />
     </div>
   )

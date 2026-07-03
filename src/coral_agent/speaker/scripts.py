@@ -13,8 +13,7 @@ advancing the on-screen number, keeping audio and visuals in lockstep.
 INTRO = (
     "Hi there! My name is Coral, and I am a robot who loves to learn. "
     "Today, I want you to help me learn some cool poses. "
-    "First, strike your very best pose! If you need an idea, look at the "
-    "pictures on the screen. When you are all ready, cross your hands "
+    " When you are all ready, cross your hands "
     "in front of you, and we will begin!"
 )
 
@@ -22,7 +21,7 @@ INTRO = (
 # The first time differs from the repeated times (REPEAT_CLASSIFY).
 CLASSIFY_FIRST = (
     "Awesome! Now hold that pose nice and still. I am going to take a "
-    "picture and try to guess what pose you are doing. Get ready, on three!"
+    "picture and try to guess what pose you are doing. Get ready!"
 )
 
 CLASSIFY_REPEAT = (

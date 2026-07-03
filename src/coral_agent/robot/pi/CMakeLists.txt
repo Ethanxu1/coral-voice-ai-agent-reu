@@ -41,5 +41,6 @@ catkin_install_python(PROGRAMS
   nodes/body.py
   nodes/robot_server.py
   nodes/motions.py
+  nodes/pose_to_robot.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

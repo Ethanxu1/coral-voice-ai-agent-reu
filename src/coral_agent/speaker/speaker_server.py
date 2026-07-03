@@ -1,15 +1,28 @@
 """Speaker server (Mac side) — blocking text-to-speech for the Director demo.
 
-A lightweight FastAPI server wrapping ``pyttsx3``. The Demo page hits
-``POST /speak`` to read a line aloud and relies on the response arriving *only
-after* the speech has fully finished — this is what lets the UI line up the
-3-2-1 countdown with the audio and step through the pipeline deterministically.
+A lightweight FastAPI server wrapping ``pyttsx3`` + ``sounddevice``. The Demo
+page hits ``POST /speak`` to read a line aloud and relies on the response
+arriving *only after* the speech has fully finished — this is what lets the
+UI line up the 3-2-1 countdown with the audio and step through the pipeline
+deterministically.
 
-pyttsx3's ``runAndWait()`` is not safe to call concurrently and is fussy across
-threads, so every utterance is funneled through a single dedicated worker
-thread. The request handler enqueues the text and blocks on a per-request
-``Event`` until the worker reports that utterance done. One engine, one worker,
-no overlapping ``runAndWait`` calls.
+Why not just call ``engine.say()`` + ``engine.runAndWait()`` directly?
+On macOS, pyttsx3 drives NSSpeechSynthesizer through the Cocoa run loop, which
+only pumps on the process main thread. This server does its speaking from a
+worker thread (``asyncio.to_thread``, to keep FastAPI's event loop responsive),
+and there BOTH ``runAndWait()`` *and* ``save_to_file()`` return immediately
+without producing any audio or file — so /speak would return early (or silent).
+
+Backend per platform:
+  - **macOS**: the ``say`` CLI. It runs in its own process, so it has no
+    run-loop/thread dependency and blocks until playback actually finishes.
+  - **Windows/Linux**: pyttsx3 renders to a file off-thread reliably, then
+    ``soundfile`` decodes it and ``sounddevice`` (PortAudio) plays + blocks on
+    ``sd.wait()``. (simpleaudio was tried but segfaults on Apple Silicon / 3.12.)
+
+A lock serializes requests so only one utterance renders/plays at a time
+(pyttsx3 engines and the shared scratch WAV file aren't safe to use
+concurrently).
 
 Run with:
     uv run speaker          # listens on 0.0.0.0:5002
@@ -20,11 +33,17 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import os
-import queue
+import subprocess
+import sys
+import tempfile
 import threading
 from contextlib import asynccontextmanager
 
+import pyttsx3
+import sounddevice as sd
+import soundfile as sf
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,71 +51,66 @@ from pydantic import BaseModel
 
 from .scripts import SCRIPTS
 
+# Reusable scratch file — avoids per-call tempfile create/delete churn.
+# Suffixed with the pid so multiple instances on one box don't collide.
+_SCRATCH_WAV = os.path.join(tempfile.gettempdir(), f"coral_speak_{os.getpid()}.wav")
 
-class _SpeechJob:
-    """A single utterance plus an Event the requester blocks on."""
+_speak_lock = threading.Lock()
 
-    def __init__(self, text: str):
-        self.text = text
-        self.done = threading.Event()
-        self.error: Exception | None = None
+# macOS `say` speaking rate in words/minute (default is ~175). Bumped up so the
+# demo feels snappier; override with the SAY_RATE env var.
+_SAY_RATE_WPM = int(os.getenv("SAY_RATE", "220"))
 
 
-class SpeechWorker:
-    """Single background thread that owns the pyttsx3 engine.
+def _speak_blocking(text: str) -> None:
+    """Synthesize ``text`` to a scratch WAV, then play it and block until done.
 
-    All speech is serialized here: jobs are pulled off a queue one at a time and
-    spoken to completion, so ``runAndWait()`` is only ever called from this one
-    thread and never concurrently.
+    Must only ever be called with ``_speak_lock`` held — pyttsx3 engines and
+    the shared scratch file are not safe for concurrent use.
     """
+    if sys.platform == "darwin":
+        # macOS: pyttsx3 drives NSSpeechSynthesizer through the Cocoa run loop,
+        # which only pumps on the process main thread. This server speaks from a
+        # worker thread (asyncio.to_thread), where BOTH runAndWait() and
+        # save_to_file() return immediately without producing audio/a file. The
+        # `say` CLI runs in its own process — no run-loop/thread dependency — and
+        # blocks until playback actually finishes.
+        subprocess.run(["say", "-r", str(_SAY_RATE_WPM), text], check=True)
+        return
 
-    def __init__(self):
-        self._queue: "queue.Queue[_SpeechJob | None]" = queue.Queue()
-        self._thread = threading.Thread(target=self._run, name="speech-worker", daemon=True)
-        self._engine = None
-
-    def start(self) -> None:
-        self._thread.start()
-
-    def _run(self) -> None:
-        import pyttsx3
-
-        # The engine must be created and driven on this same thread.
-        self._engine = pyttsx3.init()
-        while True:
-            job = self._queue.get()
-            if job is None:  # shutdown sentinel
-                break
-            try:
-                self._engine.say(job.text)
-                self._engine.runAndWait()  # blocks until this utterance finishes
-            except Exception as exc:  # noqa: BLE001 — surface to the requester
-                job.error = exc
-            finally:
-                job.done.set()
-
-    def speak(self, text: str, timeout: float = 60.0) -> None:
-        """Enqueue ``text`` and block until it has been fully spoken."""
-        job = _SpeechJob(text)
-        self._queue.put(job)
-        if not job.done.wait(timeout=timeout):
-            raise TimeoutError("speech timed out")
-        if job.error is not None:
-            raise job.error
-
-    def stop(self) -> None:
-        self._queue.put(None)
+    # Windows/Linux: pyttsx3 renders to a file off-thread just fine. Split synth
+    # from playback so we block on the real audio buffer, not the engine.
+    engine = pyttsx3.init()
+    try:
+        engine.save_to_file(text, _SCRATCH_WAV)
+        engine.runAndWait()
+    finally:
+        engine.stop()
+    data, samplerate = sf.read(_SCRATCH_WAV, dtype="int16")
+    sd.play(data, samplerate)  # sounddevice (PortAudio) — blocks on sd.wait()
+    sd.wait()
 
 
-worker = SpeechWorker()
+def speak_sync(text: str, timeout: float = 60.0) -> None:
+    """Thread-safe, blocking speak. Raises TimeoutError if another speak is stuck."""
+    acquired = _speak_lock.acquire(timeout=timeout)
+    if not acquired:
+        raise TimeoutError("speech timed out waiting for the speaker to be free")
+    try:
+        _speak_blocking(text)
+    finally:
+        _speak_lock.release()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    worker.start()
     print(f"[speaker] ready — {len(SCRIPTS)} scripts loaded", flush=True)
     yield
-    worker.stop()
+    # best-effort cleanup of the scratch file
+    try:
+        os.remove(_SCRATCH_WAV)
+    except OSError:
+        pass
 
 
 app = FastAPI(title="Coral Speaker Server", lifespan=lifespan)
@@ -141,13 +155,11 @@ def list_scripts():
 @app.post("/speak")
 async def speak(req: SpeakRequest):
     """Read a line aloud and return *only after* the speech finishes."""
-    import asyncio
-
     text = _resolve_text(req)
-    # Run the blocking wait off the event loop so the server stays responsive,
+    # Run the blocking work off the event loop so the server stays responsive,
     # while still not returning to the client until speech completes.
     try:
-        await asyncio.to_thread(worker.speak, text)
+        await asyncio.to_thread(speak_sync, text)
     except TimeoutError:
         raise HTTPException(status_code=504, detail="speech timed out")
     return {"status": "done", "spoke": text}

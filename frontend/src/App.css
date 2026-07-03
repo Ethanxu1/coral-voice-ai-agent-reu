@@ -387,3 +387,66 @@ body {
   background: linear-gradient(135deg, #7b4bb9, #1a5276);
   transform: translateY(-1px);
 }
+
+/* Sim/hardware runtime toggle */
+.robot-mode-toggle {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(123, 75, 185, 0.3);
+}
+
+.robot-mode-switch {
+  display: flex;
+  gap: 6px;
+}
+
+.robot-mode-btn {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  background: rgba(15, 52, 96, 0.5);
+  color: #cbd5e1;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.robot-mode-btn:hover {
+  border-color: #7b4bb9;
+}
+
+.robot-mode-btn.active {
+  background: linear-gradient(135deg, #533483, #0f3460);
+  color: #fff;
+  border-color: #7b4bb9;
+}
+
+.robot-mode-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.robot-mode-host label {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.robot-mode-host input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  background: rgba(15, 52, 96, 0.4);
+  border: 1px solid rgba(123, 75, 185, 0.4);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.8rem;
+}
+
+.robot-mode-host input:focus {
+  outline: none;
+  border-color: #7b4bb9;
+}

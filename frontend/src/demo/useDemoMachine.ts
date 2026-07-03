@@ -7,16 +7,18 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import {
   captureUtterance,
-  classify,
+  mapFeatures,
   motion,
+  move,
   playShutter,
   sendAudioForAction,
   sendAudioForTranscript,
+  sendTextForAction,
   setRobotState,
   sleep,
   speak,
   watchForAction,
-  type ClassifyResult,
+  type MapFeaturesResult,
 } from './api'
 import { LOOP_COUNT, WATCH_TIMEOUT_S } from './config'
 
@@ -33,6 +35,15 @@ export type Stage =
 
 export type RecordStatus = 'idle' | 'recording' | 'thinking' | 'action' | 'clarify'
 
+export type InputMode = 'voice' | 'text'
+
+/** A pose the child taught Coral: the name they gave it + the captured frame. */
+export interface LearnedMove {
+  name: string
+  /** Base64 JPEG (no data: prefix) of the frame classified for this move. */
+  frame: string | null
+}
+
 export interface DemoState {
   stage: Stage
   /** 1-8: which TestUI page to display */
@@ -43,15 +54,19 @@ export interface DemoState {
   countdown: number | null
   flash: boolean
   classifying: boolean
-  classifyResult: ClassifyResult | null
+  classifyResult: MapFeaturesResult | null
   recording: boolean
   recordStatus: RecordStatus
   caption: string
   error: string | null
   /** Name the child gave this loop's pose (set on NAME stage). */
   poseName: string | null
-  /** Running list of all pose names collected across loops (for OUTRO display). */
-  poseNames: string[]
+  /** Every move taught so far: name + captured frame (for OUTRO/Page 8 display). */
+  moves: LearnedMove[]
+  /** 'voice' = mic capture; 'text' = typed entry. Toggled by the UI. */
+  inputMode: InputMode
+  /** True while the runner is blocked waiting for a typed submission (text mode). */
+  awaitingText: boolean
 }
 
 const initialState: DemoState = {
@@ -69,7 +84,9 @@ const initialState: DemoState = {
   caption: '',
   error: null,
   poseName: null,
-  poseNames: [],
+  moves: [],
+  inputMode: 'voice',
+  awaitingText: false,
 }
 
 function reducer(state: DemoState, patch: Partial<DemoState>): DemoState {
@@ -79,18 +96,45 @@ function reducer(state: DemoState, patch: Partial<DemoState>): DemoState {
 // Thrown internally to unwind the runner when the user exits/restarts.
 const CANCELLED = Symbol('cancelled')
 
+// How many times to re-snap when the pose can't be mapped (hips out of frame)
+// before giving up and offering a retry/exit.
+const MAX_RETAKES = 3
+
 export function useDemoMachine() {
   const [state, dispatch] = useReducer(reducer, initialState)
   // Each run gets a token; if the active token changes mid-flight the runner aborts.
   const tokenRef = useRef(0)
+  // Input mode is read live inside the async runner (toggled mid-flow), so mirror
+  // it in a ref. textResolverRef holds the pending typed-input promise resolver.
+  const inputModeRef = useRef<InputMode>('voice')
+  const textResolverRef = useRef<((value: string) => void) | null>(null)
 
   useEffect(() => () => { tokenRef.current++ }, []) // abort on unmount
+
+  // Block until the user submits typed text (text mode). Resolved by submitText,
+  // or by exit() with '' to unwind a pending wait.
+  const awaitText = useCallback(
+    () => new Promise<string>((resolve) => { textResolverRef.current = resolve }),
+    [],
+  )
+
+  const submitText = useCallback((text: string) => {
+    const resolve = textResolverRef.current
+    textResolverRef.current = null
+    dispatch({ awaitingText: false })
+    resolve?.(text)
+  }, [])
+
+  const toggleInputMode = useCallback(() => {
+    inputModeRef.current = inputModeRef.current === 'voice' ? 'text' : 'voice'
+    dispatch({ inputMode: inputModeRef.current })
+  }, [])
 
   const run = useCallback(async () => {
     const token = ++tokenRef.current
     const active = () => { if (tokenRef.current !== token) throw CANCELLED }
 
-    dispatch({ ...initialState, stage: 'INTRO', page: 1, caption: 'Say hello to Coral!' })
+    dispatch({ ...initialState, inputMode: inputModeRef.current, stage: 'INTRO', page: 1, caption: 'Say hello to Coral!' })
 
     try {
       // ── INTRO (page 1) ──────────────────────────────────────────────────────
@@ -100,7 +144,7 @@ export function useDemoMachine() {
       await motion('wave'); active()
 
       // ── LOOP: (page 2 coaching → CLASSIFY → RECORD → NAME) × N ─────────────
-      const accumulatedNames: string[] = []
+      const accumulatedMoves: LearnedMove[] = []
 
       for (let i = 0; i < state.totalLoops; i++) {
         // Page 2 — classify coaching + wait for go-ahead gesture
@@ -123,27 +167,52 @@ export function useDemoMachine() {
         dispatch({ stage: 'CLASSIFY', page: 3, classifyResult: null, classifying: false })
         await setRobotState('DEMO_LOCKED'); active()
 
-        // 3-2-1: fire each speak without blocking, 1 s between digits
-        for (const n of [3, 2, 1]) {
-          dispatch({ countdown: n })
-          speak({ script: String(n) }).catch(() => {})
-          await sleep(1000); active()
+        // Countdown → snap → retarget. If the hips aren't in frame we can't map
+        // the pose, so show a message and retake (up to MAX_RETAKES times).
+        let classifyResult: MapFeaturesResult | null = null
+        for (let take = 0; take < MAX_RETAKES; take++) {
+          // 3-2-1: fire each speak without blocking, 1 s between digits
+          for (const n of [3, 2, 1]) {
+            dispatch({ countdown: n })
+            speak({ script: String(n) }).catch(() => {})
+            await sleep(1000); active()
+          }
+
+          dispatch({ countdown: null, flash: true, classifying: true, caption: '📸 Snap!' })
+          playShutter()
+          // Retarget the captured pose to servo commands (vision server) — no
+          // MobileNetV3 class, just the child's real pose.
+          const result = await mapFeatures(); active()
+          if (result.poseDetected) {
+            classifyResult = result
+            break
+          }
+          // Hips not visible — surface the reason and loop back for another take.
+          dispatch({
+            flash: false,
+            classifying: false,
+            caption: result.detail || 'Make sure your wrists, shoulders, and hips are visible in the frame!',
+          })
+          await sleep(2500); active()
         }
 
-        dispatch({ countdown: null, flash: true, classifying: true, caption: '📸 Snap!' })
-        playShutter()
-        const classifyResult = await classify(); active()
+        if (classifyResult === null) {
+          dispatch({ stage: 'TIMEOUT', caption: 'I still can\'t see your whole body. Try again or exit?' })
+          return
+        }
+
         dispatch({
           flash: false,
           classifying: false,
           classifyResult,
           page: 4,
-          caption: `I think that's a ${prettyClass(classifyResult.className)}!`,
+          caption: 'Now I\'ll copy your pose!',
         })
         await sleep(2000); active()
-        await motion(classifyResult.className).catch(() => {}); active()
+        await move(classifyResult.commands).catch(() => {}); active()
         await sleep(1500); active()
-        await motion('stand'); active()
+        // Hold the mimicked pose going into RECORD ("tell me how to fix it") —
+        // no stand here. Unlock voice commands.
         await setRobotState('IDLE'); active()
 
         // ── RECORD (page 5 → 6) ─────────────────────────────────────────────
@@ -156,10 +225,18 @@ export function useDemoMachine() {
         let gotAction = false
         while (!gotAction) {
           active()
-          dispatch({ recording: true, recordStatus: 'recording', page: 6, caption: 'I\'m listening… 🎤' })
-          const blob = await captureUtterance(); active()
-          dispatch({ recording: false, recordStatus: 'thinking', caption: 'Hmm, let me think… 🤔' })
-          const actionResult = await sendAudioForAction(blob); active()
+          let actionResult
+          if (inputModeRef.current === 'text') {
+            dispatch({ recording: false, recordStatus: 'idle', awaitingText: true, page: 6, caption: 'Type how Coral should fix the pose ⌨️' })
+            const text = await awaitText(); active()
+            dispatch({ awaitingText: false, recordStatus: 'thinking', caption: 'Hmm, let me think… 🤔' })
+            actionResult = await sendTextForAction(text); active()
+          } else {
+            dispatch({ recording: true, recordStatus: 'recording', page: 6, caption: 'I\'m listening… 🎤' })
+            const blob = await captureUtterance(); active()
+            dispatch({ recording: false, recordStatus: 'thinking', caption: 'Hmm, let me think… 🤔' })
+            actionResult = await sendAudioForAction(blob); active()
+          }
           if (actionResult.hasAction) {
             gotAction = true
             dispatch({ recordStatus: 'action', caption: actionResult.content || 'Got it! Watch me try!' })
@@ -179,15 +256,22 @@ export function useDemoMachine() {
         // ── NAME (page 6 → 7) ───────────────────────────────────────────────
         dispatch({ stage: 'NAME', page: 6, speaking: true, caption: 'What should we call this pose?' })
         await speak({ script: 'NAME' }); active()
-        dispatch({ speaking: false, recording: true, recordStatus: 'recording', caption: 'Listening for a name… 🎤' })
-        const nameBlob = await captureUtterance(); active()
-        dispatch({ recording: false, recordStatus: 'thinking', caption: 'Got it!' })
-        const transcript = await sendAudioForTranscript(nameBlob); active()
+        let transcript: string
+        if (inputModeRef.current === 'text') {
+          dispatch({ speaking: false, recording: false, recordStatus: 'idle', awaitingText: true, caption: 'Type a name for this pose ⌨️' })
+          transcript = await awaitText(); active()
+          dispatch({ awaitingText: false, recordStatus: 'thinking', caption: 'Got it!' })
+        } else {
+          dispatch({ speaking: false, recording: true, recordStatus: 'recording', caption: 'Listening for a name… 🎤' })
+          const nameBlob = await captureUtterance(); active()
+          dispatch({ recording: false, recordStatus: 'thinking', caption: 'Got it!' })
+          transcript = await sendAudioForTranscript(nameBlob); active()
+        }
         const poseName = transcript.trim() || `Pose ${i + 1}`
-        accumulatedNames.push(poseName)
+        accumulatedMoves.push({ name: poseName, frame: classifyResult.imageB64 })
         dispatch({
           poseName,
-          poseNames: [...accumulatedNames],
+          moves: [...accumulatedMoves],
           page: 7,
           recordStatus: 'idle',
           caption: '',
@@ -200,7 +284,7 @@ export function useDemoMachine() {
         stage: 'OUTRO',
         page: 8,
         speaking: true,
-        poseNames: [...accumulatedNames],
+        moves: [...accumulatedMoves],
         caption: 'How did Coral learn this?',
       })
       await speak({ script: 'OUTRO' }); active()
@@ -214,11 +298,13 @@ export function useDemoMachine() {
 
   const exit = useCallback(() => {
     tokenRef.current++ // abort any in-flight run
+    textResolverRef.current?.('') // unblock a pending typed-input wait so the runner unwinds
+    textResolverRef.current = null
     setRobotState('IDLE')
-    dispatch({ ...initialState })
+    dispatch({ ...initialState, inputMode: inputModeRef.current })
   }, [])
 
-  return { state, start: run, retry: run, exit }
+  return { state, start: run, retry: run, exit, toggleInputMode, submitText }
 }
 
 async function watchSafely(): Promise<{ detected: boolean }> {
@@ -227,8 +313,4 @@ async function watchSafely(): Promise<{ detected: boolean }> {
   } catch {
     return { detected: false }
   }
-}
-
-function prettyClass(name: string): string {
-  return name.replace(/[-_]/g, ' ')
 }

@@ -4,8 +4,9 @@ import SimulatorControls from './components/SimulatorControls'
 import ChatSidebar from './components/ChatSidebar'
 import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
-import DemoPage from './pages/DemoPage'
-import TestUIRouter from './TestUI/TestUIRouter'
+import TestUIRouter from './pages/TestUIRouter'
+import ProDemo from './pages/ProDemo'
+import RobotModeToggle from './components/RobotModeToggle'
 
 interface WaypointInfo {
   waypoint_index: number
@@ -189,7 +190,11 @@ function App() {
           <Link to="/testui" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🎨 Test UI</button>
           </Link>
+          <Link to="/prodemo" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🧪 Pro Demo</button>
+          </Link>
         </div>
+        <RobotModeToggle />
       </div>
     </div>
   )
@@ -198,8 +203,9 @@ function App() {
     <Routes>
       <Route path="/" element={mainView} />
       <Route path="/pose" element={<PoseVisualization />} />
-      <Route path="/demo" element={<DemoPage />} />
+      <Route path="/demo" element={<TestUIRouter />} />
       <Route path="/testui" element={<TestUIRouter />} />
+      <Route path="/prodemo" element={<ProDemo />} />
     </Routes>
   )
 }

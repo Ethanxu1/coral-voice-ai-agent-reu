@@ -1,4 +1,5 @@
 import { HumanoidSpeaking } from './Characters'
+import type { PageProps } from './TestUIRouter'
 
 /* Robot with right arm slightly raised to show "adjusting" */
 function RobotArmAdjusted() {
@@ -40,22 +41,25 @@ function RobotArmAdjusted() {
   )
 }
 
-export default function Page5_RecordInstructions() {
+export default function Page5_RecordInstructions({ state }: PageProps) {
+  const textMode = state.inputMode === 'text'
   return (
     <div className="tui-page p5-layout">
-      <div className="p5-title">Tell Coral how to fix it!</div>
+      <div className="p5-title">{state.caption || 'Tell Coral how to fix it!'}</div>
 
       <div className="p5-steps">
-        {/* Step 1 — child speaks */}
+        {/* Step 1 — child gives a hint (spoken or typed) */}
         <div className="p5-step">
           <div className="p5-step-num">1</div>
           <div className="p5-step-art">
-            <HumanoidSpeaking width={90} />
+            {textMode ? <div style={{ fontSize: 72 }}>⌨️</div> : <HumanoidSpeaking width={90} />}
             <div className="tui-bubble">
               "Move your right arm a little lower"
             </div>
           </div>
-          <div className="p5-step-label">You give Coral a hint with your voice</div>
+          <div className="p5-step-label">
+            {textMode ? 'You give Coral a hint by typing' : 'You give Coral a hint with your voice'}
+          </div>
         </div>
 
         {/* Step 2 — robot adjusts */}

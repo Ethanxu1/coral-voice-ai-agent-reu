@@ -5,11 +5,24 @@
 // 3-2-1 countdown locked to the speaker audio and the camera-click held until
 // /classify returns.
 
-import { ACTION_WS, ROBOT_BASE, SPEAKER_BASE } from './config'
+import { ACTION_WS, SPEAKER_BASE } from './config'
+import { getFeaturesBase, getRobotBase } from './robotConfig'
 
-export interface ClassifyResult {
-  className: string
-  probabilities: Record<string, number>
+/** One servo target: Hiwonder id + pulse (0–1000) + move time. */
+export interface ServoCommand {
+  servo_id: number
+  position: number
+  duration_ms: number
+}
+
+/** Result of retargeting the user's pose (landmarks → robot joints). Replaces
+ *  the old MobileNetV3 ClassifyResult — no class name, no probabilities. */
+export interface MapFeaturesResult {
+  /** False when the hips aren't visible: no arm retargeting, caller should retake. */
+  poseDetected: boolean
+  /** Human-readable reason to show when poseDetected is false. */
+  detail: string | null
+  commands: ServoCommand[]
   imageB64: string | null
 }
 
@@ -31,7 +44,7 @@ export async function speak(opts: { script?: string; text?: string }): Promise<v
 
 // ── Robot server (Pi :9000) ───────────────────────────────────────────────────
 export async function motion(name: string, globalDuration?: number): Promise<void> {
-  const res = await fetch(`${ROBOT_BASE}/motion`, {
+  const res = await fetch(`${getRobotBase()}/motion`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, global_duration: globalDuration ?? null }),
@@ -39,19 +52,40 @@ export async function motion(name: string, globalDuration?: number): Promise<voi
   if (!res.ok) throw new Error(`motion failed: ${res.status}`)
 }
 
-export async function classify(): Promise<ClassifyResult> {
-  const res = await fetch(`${ROBOT_BASE}/classify`, { method: 'POST' })
-  if (!res.ok) throw new Error(`classify failed: ${res.status}`)
+// Retarget the user's current pose to robot servo commands. Hits the vision
+// server directly (it owns the live landmarks); the caller executes the returned
+// commands via move(). Also returns the frame the pose was read from, for the UI.
+export async function mapFeatures(): Promise<MapFeaturesResult> {
+  const res = await fetch(`${getFeaturesBase()}/map-features`, { method: 'POST' })
+  if (!res.ok) {
+    // Surface the server's actual failure reason (e.g. a Python exception
+    // message) instead of just the status code — FastAPI puts it in `detail`.
+    const body = await res.json().catch(() => null)
+    throw new Error(`map-features failed: ${res.status} ${body?.detail ?? ''}`.trim())
+  }
   const data = await res.json()
   return {
-    className: data.class,
-    probabilities: data.probabilities ?? {},
+    poseDetected: data.pose_detected !== false,
+    detail: data.detail ?? null,
+    commands: Array.isArray(data.commands) ? data.commands : [],
     imageB64: data.image_b64 ?? null,
   }
 }
 
+// Drive the robot/sim with raw servo commands (from mapFeatures). No-op safe if
+// the command list is empty.
+export async function move(commands: ServoCommand[]): Promise<void> {
+  if (commands.length === 0) return
+  const res = await fetch(`${getRobotBase()}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(commands),
+  })
+  if (!res.ok) throw new Error(`move failed: ${res.status}`)
+}
+
 export async function watchForAction(timeoutS: number): Promise<{ detected: boolean }> {
-  const res = await fetch(`${ROBOT_BASE}/watch-for-action?timeout=${timeoutS}`)
+  const res = await fetch(`${getRobotBase()}/watch-for-action?timeout=${timeoutS}`)
   if (!res.ok) throw new Error(`watch-for-action failed: ${res.status}`)
   const data = await res.json()
   return { detected: !!data.detected }
@@ -60,7 +94,7 @@ export async function watchForAction(timeoutS: number): Promise<{ detected: bool
 export async function setRobotState(mode: string): Promise<void> {
   // Best-effort lock/unlock — never let a state toggle abort the demo.
   try {
-    await fetch(`${ROBOT_BASE}/state`, {
+    await fetch(`${getRobotBase()}/state`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
@@ -184,6 +218,30 @@ export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<Actio
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('audio-to-action ws error')) }
+  })
+}
+
+// ── Text → action over the existing server.py /ws pipeline ────────────────────
+// Text-input equivalent of sendAudioForAction: sends a typed instruction straight
+// to the LLM motion planner (skipping Whisper) and waits for the chat_response.
+export function sendTextForAction(text: string, timeoutMs = 30000): Promise<ActionResult> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(ACTION_WS)
+    const timer = setTimeout(() => { ws.close(); reject(new Error('text-to-action timed out')) }, timeoutMs)
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'chat', content: text }))
+    }
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      if (data.type === 'chat_response') {
+        clearTimeout(timer)
+        ws.close()
+        const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
+        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0 })
+      }
+    }
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('text-to-action ws error')) }
   })
 }
 

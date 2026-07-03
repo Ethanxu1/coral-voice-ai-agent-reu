@@ -1,4 +1,34 @@
+import { useState } from 'react'
+import { useRobotConfig, getRobotStream } from '../demo/robotConfig'
 import { HumanoidTPose } from './Characters'
+
+/** Live MJPEG feed from the vision server (Mac webcam) or the Pi's camera stream,
+ * depending on the sim/hardware toggle — styled like tui-stream. Auto-retries if
+ * the stream drops (e.g. vision server still warming up). */
+export function LiveStream({
+  className = '',
+  style,
+  badge = true,
+}: {
+  className?: string
+  style?: React.CSSProperties
+  badge?: boolean
+}) {
+  const [key, setKey] = useState(0)
+  useRobotConfig() // re-render so `src` picks up a sim/hardware mode change
+  return (
+    <div className={`tui-stream ${className}`} style={style}>
+      <img
+        key={key}
+        src={`${getRobotStream()}/video_feed`}
+        alt="Live camera"
+        onError={() => setTimeout(() => setKey((k) => k + 1), 2000)}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }}
+      />
+      {badge && <span className="tui-live-badge">● LIVE</span>}
+    </div>
+  )
+}
 
 interface DummyStreamProps {
   className?: string

@@ -34,6 +34,7 @@ import asyncio
 import base64
 import json
 import os
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -44,6 +45,17 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# catkin's devel-space "install" for Python scripts isn't a real symlink — it's
+# a relay stub that execs the true source file into a throwaway local dict, so
+# top-level defs never land on the actual module object (a plain `import X`
+# then finds that broken stub instead of the real file, and `from X import
+# name` fails with "cannot import name"). __file__ still points at this file's
+# real source path even under that stub, so use it to force local imports
+# (motions, pose_to_robot) to resolve from the true source directory instead.
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
 import motions  # type: ignore[import]
 
@@ -67,8 +79,14 @@ _EMPTY_SERVOS = {"head_pan", "head_tilt"}
 _SKIP_SERVO_IDS = {23, 24}
 
 SERVO_LIMITS: Dict[int, Tuple[int, int]] = {
-    19: (0, 600),
-    20: (360, 850),   # r_el_yaw DAMAGED — never command below 360
+    13: (333, 835),   # l_sho_pitch
+    14: (200, 773),   # r_sho_pitch
+    15: (440, 800),   # l_sho_roll
+    16: (213, 613),   # r_sho_roll
+    17: (440, 653),   # l_el_pitch
+    18: (320, 560),   # r_el_pitch
+    19: (90, 360),    # l_el_yaw
+    20: (573, 880),   # r_el_yaw DAMAGED — never command below 360
 }
 
 STAND_PULSE: Dict[str, int] = {
@@ -178,6 +196,9 @@ _IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 CROSS_DIST_RATIO = 0.8
 
+# Move duration (ms) for pose-mimicry commands returned by /map-features.
+_FOLLOW_DURATION_MS = 600
+
 
 # ── Classifier ────────────────────────────────────────────────────────────────
 def load_classifier(model_path: str, device):
@@ -243,10 +264,26 @@ def _clean_frame_cb(msg):
 
 
 def _landmarks_cb(msg):
+    """Merge the /landmarks topic's separate norm + world lists into the combined
+    per-landmark dicts compute_joint_targets expects: image coords under x/y and
+    world coords under xw/yw/zw. _hands_close still works off the x/y fields.
+    """
     global _latest_landmarks
     try:
         payload = json.loads(msg.data)
-        _latest_landmarks = payload.get("norm_landmarks", [])
+        norm = payload.get("norm_landmarks", [])
+        world = payload.get("world_landmarks", [])
+        merged: List[dict] = []
+        for i, n in enumerate(norm):
+            entry = {
+                "x": n["x"], "y": n["y"], "z": n["z"],
+                "visibility": n.get("visibility", 0.0),
+            }
+            if i < len(world):
+                w = world[i]
+                entry["xw"], entry["yw"], entry["zw"] = w["x"], w["y"], w["z"]
+            merged.append(entry)
+        _latest_landmarks = merged
     except Exception:  # noqa: BLE001
         pass
 
@@ -273,9 +310,31 @@ def _init_ros() -> None:
     rospy.loginfo("[robot_server] ROS ready — body service + vision topics wired")
 
 
+def _clamp_sequence(
+    sequence: List[Tuple[Dict[str, int], int]],
+) -> List[Tuple[Dict[str, int], int]]:
+    """Clamp every pulse in a motion sequence to its servo's safe range.
+
+    Named motions in motions.py are authored data, not computed at request time —
+    unlike /move, nothing upstream clamps them before they reach here. Some poses
+    (e.g. dab, superhero, muscles, stand_low) carry r_el_yaw values above its 850
+    ceiling, so without this the raw pose data would be sent straight to the
+    ROS body service, past the limit that was added after servo 20 was burned.
+    """
+    clamped = []
+    for pulse, dur in sequence:
+        safe_pulse = {
+            name: (clamp_position(SERVO_ID[name], value) if name in SERVO_ID and value is not None else value)
+            for name, value in pulse.items()
+        }
+        clamped.append((safe_pulse, dur))
+    return clamped
+
+
 def _call_body_service(sequence, global_duration: Optional[float] = None) -> float:
     if _body_srv is None or _BodyCommandReq is None:
         raise RuntimeError("body service not initialized")
+    sequence = _clamp_sequence(sequence)
     commands_json = json.dumps([[pulse, dur] for pulse, dur in sequence])
     req = _BodyCommandReq(
         commands_json=commands_json,
@@ -377,6 +436,75 @@ async def classify():
     return {
         "class": top_class,
         "probabilities": probabilities,
+        "image_b64": image_b64,
+        "image_format": "jpeg",
+    }
+
+
+@app.post("/map-features")
+async def map_features():
+    """Retarget the latest MediaPipe landmarks to servo commands (replaces the
+    MobileNetV3 /classify path). Computes locally from the /landmarks + /clean_frame
+    topics; returns the commands, the landmarks, and the frame they came from.
+    The caller executes the commands via /move."""
+    try:
+        import cv2
+
+        from pose_to_robot import (  # type: ignore[import]  # vendored — see pose_to_robot.py
+            compute_joint_targets,
+            hips_detected,
+            targets_to_hardware_servo_commands,
+        )
+    except Exception as e:  # noqa: BLE001
+        # An uncaught import/exec error here can crash the connection before
+        # CORSMiddleware attaches headers to the error response, which the
+        # browser then misreports as a CORS failure instead of the real 500.
+        # Raising HTTPException instead gives a normal response the middleware
+        # can still decorate, and surfaces the actual failure to the caller.
+        raise HTTPException(status_code=500, detail=f"map-features import failed: {e!r}")
+
+    if _latest_clean_frame is None:
+        raise HTTPException(status_code=503, detail="no camera frame available yet")
+
+    try:
+        frame = _latest_clean_frame.copy()
+        body = _latest_landmarks or []
+        ok, buf = cv2.imencode(".jpg", frame)
+        image_b64 = base64.b64encode(buf.tobytes()).decode("ascii") if ok else None
+
+        # Arm retargeting is anchored on the hips; without them we'd only move the
+        # head, so ask the caller to reframe and retake instead.
+        if not hips_detected(body):
+            return {
+                "pose_detected": False,
+                "detail": "Make sure your wrists, shoulders, and hips are visible in the frame!",
+                "commands": [],
+                "targets": {},
+                "body_landmarks": body,
+                "image_b64": image_b64,
+                "image_format": "jpeg",
+            }
+
+        # No head-pose solve on the Pi vision node, so head targets are left neutral.
+        targets = compute_joint_targets(body, None)
+
+        # Middle step: map the retargeted joint *radians* onto physical servo pulses
+        # using the per-joint hardware calibration (stand-pulse anchors, mirror-mount
+        # directions, damaged-servo limits) rather than the sim's uniform 500-centre map.
+        commands = targets_to_hardware_servo_commands(targets, _FOLLOW_DURATION_MS)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"map-features failed: {e!r}")
+
+    return {
+        "pose_detected": True,
+        "commands": [
+            {"servo_id": c.servo_id, "position": c.position, "duration_ms": c.duration_ms}
+            for c in commands
+        ],
+        "targets": targets,
+        "body_landmarks": body,
         "image_b64": image_b64,
         "image_format": "jpeg",
     }

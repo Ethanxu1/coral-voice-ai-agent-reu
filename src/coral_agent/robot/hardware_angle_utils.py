@@ -62,11 +62,18 @@ HW_DIRECTION: dict[str, int] = {
     "r_hip_yaw":   -1,
 }
 
-# Physical servo limits that override the default 0–1000.
-# Servo 20 (r_el_yaw) was mechanically damaged — never command below 360.
+# Physical servo limits that override the default 0–1000. Measured per-servo
+# safe ranges for all 8 arm servos (13-20); servo 20 (r_el_yaw) was mechanically
+# damaged — never command below 360, reflected in its range below.
 HW_SERVO_LIMITS: dict[str, tuple[int, int]] = {
-    "l_el_yaw": (0, 600),
-    "r_el_yaw": (360, 850),
+    "l_sho_pitch": (333, 835),   # servo 13
+    "r_sho_pitch": (200, 773),   # servo 14
+    "l_sho_roll":  (440, 800),   # servo 15
+    "r_sho_roll":  (213, 613),   # servo 16
+    "l_el_pitch":  (440, 653),   # servo 17
+    "r_el_pitch":  (320, 560),   # servo 18
+    "l_el_yaw":    (90, 360),    # servo 19
+    "r_el_yaw":    (573, 880),   # servo 20
 }
 
 _CENTER = 500
