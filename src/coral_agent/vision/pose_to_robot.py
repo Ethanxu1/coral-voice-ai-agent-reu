@@ -1,13 +1,19 @@
 """Map MediaPipe pose_world_landmarks + head pose to robot joint targets.
 
-Mirror mode: person's right side (MediaPipe right_*) → robot's left arm, and
-vice versa. This makes the robot feel like a partner facing the user.
+Mirror mode: person's right side (MediaPipe right_*) → robot's left arm/leg,
+and vice versa. This makes the robot feel like a partner facing the user.
 
-Joint angles are extracted in the torso-local frame so shoulder pitch and roll
-are decoupled from each other and from any global torso rotation.
+Arm angles are extracted in the torso-local frame so shoulder pitch and roll
+are decoupled from each other and from any global torso rotation. Leg angles
+use a separate pelvis frame (hip line × world-up) so they're decoupled from
+torso lean — bending at the waist doesn't swing the robot's legs.
 
-Only arms (shoulder pitch/roll, elbow yaw) + head (pan, tilt) are mapped.
-Elbow pitch, grippers, and legs are left at neutral.
+Mapped: arms (shoulder pitch/roll, elbow bend, forearm twist), head (pan,
+tilt), and legs (hip pitch/roll, knee bend). Hip yaw is NOT mapped — rotating
+the leg about its own long axis is invisible from the hip→knee landmarks
+(same reason forearm twist needs the finger landmarks), and the foot
+landmarks that could recover it are noisy and often out of frame. Grippers,
+hip yaw, and ankles stay at neutral.
 """
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ from __future__ import annotations
 import math
 import time
 from typing import Optional
+
+import numpy as np
 
 from coral_agent.robot.angle_utils import rad_to_servo_units
 from coral_agent.robot.interface import ServoCommand
@@ -42,8 +50,18 @@ _LM_L_PINKY = geometry.LEFT_PINKY
 _LM_R_PINKY = geometry.RIGHT_PINKY
 _LM_L_HIP = geometry.LEFT_HIP
 _LM_R_HIP = geometry.RIGHT_HIP
+_LM_L_KNEE = geometry.LEFT_KNEE
+_LM_R_KNEE = geometry.RIGHT_KNEE
+_LM_L_ANKLE = geometry.LEFT_ANKLE
+_LM_R_ANKLE = geometry.RIGHT_ANKLE
 
 _VISIBILITY_THRESHOLD = 0.5
+
+# World-up for the pelvis frame. MediaPipe pose_world_landmarks use Y-down
+# (empirically established — Google doesn't document the axis directions),
+# so up is -Y. Assumes a roughly level camera; a tilted camera biases leg
+# angles by the tilt.
+_WORLD_UP = np.array([0.0, -1.0, 0.0])
 
 # Depth-gate threshold: if shoulder→elbow projects to less than this fraction of
 # the frame, the arm is aligned with the optical axis and depth is unreliable.
@@ -140,11 +158,28 @@ def _torso_frame_from(body: list[dict]):
     )
 
 
-def _arm_depth_gated(shoulder: dict, elbow: dict) -> bool:
-    """True if the arm projects into a tiny 2D segment (near optical axis)."""
-    sh_img = geometry.image_xy(shoulder)
-    el_img = geometry.image_xy(elbow)
-    return geometry.arm_image_projection_short(sh_img, el_img, _DEPTH_GATE_2D_FRACTION)
+def _pelvis_frame_from(body: list[dict]):
+    """Build pelvis frame from the hip world landmarks; returns None if either
+    hip is missing world coords / visibility, or the frame is degenerate
+    (hip line near-vertical — person not upright).
+    """
+    for idx in (_LM_L_HIP, _LM_R_HIP):
+        lm = body[idx]
+        if not _has_world(lm) or not _visible(lm):
+            return None
+    return geometry.pelvis_frame(
+        geometry.world_xyz(body[_LM_L_HIP]),
+        geometry.world_xyz(body[_LM_R_HIP]),
+        _WORLD_UP,
+    )
+
+
+def _limb_depth_gated(proximal: dict, distal: dict) -> bool:
+    """True if the limb segment projects into a tiny 2D segment (near optical
+    axis) — depth is unreliable there. Used for shoulder→elbow and hip→knee."""
+    p_img = geometry.image_xy(proximal)
+    d_img = geometry.image_xy(distal)
+    return geometry.arm_image_projection_short(p_img, d_img, _DEPTH_GATE_2D_FRACTION)
 
 
 def compute_joint_targets(
@@ -153,13 +188,22 @@ def compute_joint_targets(
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
-    Mirror mapping: MediaPipe LEFT (person's left) → robot RIGHT arm; vice versa.
-    Returns a subset of joint names — only those with confident landmarks and
-    non-degenerate viewing geometry.
+    Mirror mapping: MediaPipe LEFT (person's left) → robot RIGHT arm/leg; vice
+    versa. Returns a subset of joint names — only those with confident
+    landmarks and non-degenerate viewing geometry.
+
+    Leg sign conventions (sim frame: X forward, Y left, Z up — pinned by the
+    hip body placement in ainex.xml; cross-checked against the STAND_LOW_PULSE
+    hardware crouch in motions.py):
+      l_hip_pitch: flexion (thigh forward) = negative; r_hip_pitch mirrored.
+      l_hip_roll:  abduction (leg out) = negative;     r_hip_roll mirrored.
+      l_knee:      flexion = positive;                 r_knee mirrored.
     """
     targets: dict[str, float] = {}
 
     if len(body_landmarks) > _LM_R_WRIST:
+
+        # builds the torso frame used as the local coord system
         R_torso = _torso_frame_from(body_landmarks)
 
         if R_torso is not None:
@@ -167,7 +211,7 @@ def compute_joint_targets(
             if all(
                 _visible(body_landmarks[i]) and _has_world(body_landmarks[i])
                 for i in (_LM_R_SHOULDER, _LM_R_ELBOW)
-            ) and not _arm_depth_gated(body_landmarks[_LM_R_SHOULDER], body_landmarks[_LM_R_ELBOW]):
+            ) and not _limb_depth_gated(body_landmarks[_LM_R_SHOULDER], body_landmarks[_LM_R_ELBOW]):
                 sh = body_landmarks[_LM_R_SHOULDER]
                 el = body_landmarks[_LM_R_ELBOW]
                 pitch, roll_abd = geometry.shoulder_pitch_roll(
@@ -201,14 +245,21 @@ def compute_joint_targets(
             if all(
                 _visible(body_landmarks[i]) and _has_world(body_landmarks[i])
                 for i in (_LM_L_SHOULDER, _LM_L_ELBOW)
-            ) and not _arm_depth_gated(body_landmarks[_LM_L_SHOULDER], body_landmarks[_LM_L_ELBOW]):
+            ) and not _limb_depth_gated(body_landmarks[_LM_L_SHOULDER], body_landmarks[_LM_L_ELBOW]):
                 sh = body_landmarks[_LM_L_SHOULDER]
                 el = body_landmarks[_LM_L_ELBOW]
+
+                # convert to torso frame coordinate space, then get the angles
                 pitch, roll_abd = geometry.shoulder_pitch_roll(
                     geometry.world_xyz(sh), geometry.world_xyz(el), R_torso, side="left"
                 )
+
+                # clamp these angles to their limit
                 targets["r_sho_pitch"] = _clamp_to_limits("r_sho_pitch", pitch)
                 targets["r_sho_roll"] = _clamp_to_limits("r_sho_roll", _STAND_R_SHO_ROLL - roll_abd)
+
+
+                # compute 3D bend angle between forearm and upperarm
                 wr = body_landmarks[_LM_L_WRIST]
                 if _visible(wr) and _has_world(wr):
                     bend = geometry.elbow_bend(
@@ -240,6 +291,61 @@ def compute_joint_targets(
         targets["head_tilt"] = _clamp_to_limits(
             "head_tilt", max(-_HEAD_TILT_CAP, min(_HEAD_TILT_CAP, pitch))
         )
+
+    # ── Legs: hip pitch/roll from the pelvis frame, knee bend frame-free. ──
+    # Anchored on the pelvis frame (hip line × world-up), NOT the torso frame,
+    # so leaning at the waist doesn't read as the legs swinging. Hip yaw is
+    # unobservable from hip→knee (rotation about the segment's own axis) and
+    # is deliberately not emitted.
+    if len(body_landmarks) > _LM_R_ANKLE:
+        R_pelvis = _pelvis_frame_from(body_landmarks)
+
+        if R_pelvis is not None:
+            # Person's RIGHT leg → robot's LEFT leg
+            if all(
+                _visible(body_landmarks[i]) and _has_world(body_landmarks[i])
+                for i in (_LM_R_HIP, _LM_R_KNEE)
+            ) and not _limb_depth_gated(body_landmarks[_LM_R_HIP], body_landmarks[_LM_R_KNEE]):
+                hp = body_landmarks[_LM_R_HIP]
+                kn = body_landmarks[_LM_R_KNEE]
+                pitch, roll_abd = geometry.hip_pitch_roll(
+                    geometry.world_xyz(hp), geometry.world_xyz(kn), R_pelvis, side="right"
+                )
+                # Sim signs: left hip flexion = negative, left abduction = negative
+                targets["l_hip_pitch"] = _clamp_to_limits("l_hip_pitch", -pitch)
+                targets["l_hip_roll"] = _clamp_to_limits("l_hip_roll", -roll_abd)
+                an = body_landmarks[_LM_R_ANKLE]
+                if _visible(an) and _has_world(an):
+                    bend = geometry.knee_bend(
+                        geometry.world_xyz(hp),
+                        geometry.world_xyz(kn),
+                        geometry.world_xyz(an),
+                    )
+                    # Sim sign: left knee flexion = positive
+                    targets["l_knee"] = _clamp_to_limits("l_knee", bend)
+
+            # Person's LEFT leg → robot's RIGHT leg
+            if all(
+                _visible(body_landmarks[i]) and _has_world(body_landmarks[i])
+                for i in (_LM_L_HIP, _LM_L_KNEE)
+            ) and not _limb_depth_gated(body_landmarks[_LM_L_HIP], body_landmarks[_LM_L_KNEE]):
+                hp = body_landmarks[_LM_L_HIP]
+                kn = body_landmarks[_LM_L_KNEE]
+                pitch, roll_abd = geometry.hip_pitch_roll(
+                    geometry.world_xyz(hp), geometry.world_xyz(kn), R_pelvis, side="left"
+                )
+                # Mirrored sim signs: right hip flexion = positive, abduction = positive
+                targets["r_hip_pitch"] = _clamp_to_limits("r_hip_pitch", pitch)
+                targets["r_hip_roll"] = _clamp_to_limits("r_hip_roll", roll_abd)
+                an = body_landmarks[_LM_L_ANKLE]
+                if _visible(an) and _has_world(an):
+                    bend = geometry.knee_bend(
+                        geometry.world_xyz(hp),
+                        geometry.world_xyz(kn),
+                        geometry.world_xyz(an),
+                    )
+                    # Mirrored sim sign: right knee flexion = negative
+                    targets["r_knee"] = _clamp_to_limits("r_knee", -bend)
 
     return targets
 

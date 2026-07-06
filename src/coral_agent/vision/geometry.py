@@ -32,6 +32,10 @@ LEFT_INDEX = 19
 RIGHT_INDEX = 20
 LEFT_HIP = 23
 RIGHT_HIP = 24
+LEFT_KNEE = 25
+RIGHT_KNEE = 26
+LEFT_ANKLE = 27
+RIGHT_ANKLE = 28
 
 
 def world_xyz(lm: dict) -> np.ndarray:
@@ -73,6 +77,44 @@ def torso_frame(
 def to_torso(v_world: np.ndarray, R_torso: np.ndarray) -> np.ndarray:
     """Express a world-frame vector in the torso frame."""
     return R_torso.T @ v_world
+
+
+def pelvis_frame(
+    l_hip_w: np.ndarray,
+    r_hip_w: np.ndarray,
+    up_hint_w: np.ndarray,
+) -> Optional[np.ndarray]:
+    """Build a 3x3 rotation matrix whose columns are the pelvis axes in world.
+
+    Unlike torso_frame, the up axis comes from `up_hint_w` (the caller's
+    world-up, e.g. gravity) rather than the hip→shoulder line. This decouples
+    leg retargeting from torso lean: bending forward at the waist doesn't
+    register as the legs swinging. The trade-off is an explicit dependency on
+    the caller knowing the world's up direction (for MediaPipe world landmarks
+    that's -Y, determined empirically — Google doesn't document it), and an
+    assumption that the camera is roughly level.
+
+    Axes (person-anatomical, mirroring torso_frame's column convention):
+      column 0 (x): person's right → left (along hip line)
+      column 1 (y): up (gravity, from up_hint_w)
+      column 2 (z): forward (out of pelvis), via cross
+
+    Returns None when the hip line is too close to vertical (person lying
+    down / extreme camera angle) — the frame is degenerate and legs shouldn't
+    be retargeted from it.
+    """
+    x_raw = l_hip_w - r_hip_w
+    x_axis = x_raw / (np.linalg.norm(x_raw) + 1e-9)
+
+    up = up_hint_w / (np.linalg.norm(up_hint_w) + 1e-9)
+    y_axis = up - np.dot(up, x_axis) * x_axis
+    y_norm = float(np.linalg.norm(y_axis))
+    # sqrt(1 - (x·up)^2) < 0.3 ⇔ hip line within ~17° of vertical
+    if y_norm < 0.3:
+        return None
+    y_axis = y_axis / y_norm
+    z_axis = np.cross(x_axis, y_axis)
+    return np.column_stack([x_axis, y_axis, z_axis])
 
 
 def shoulder_pitch_roll(
@@ -129,6 +171,39 @@ def elbow_bend(
     cos_a = float(np.dot(upper, forearm)) / (nu * nf)
     cos_a = max(-1.0, min(1.0, cos_a))
     return math.acos(cos_a)
+
+
+def hip_pitch_roll(
+    hip_w: np.ndarray,
+    knee_w: np.ndarray,
+    R_pelvis: np.ndarray,
+    side: Literal["left", "right"],
+) -> tuple[float, float]:
+    """Return (pitch, roll_abduction) for one hip, both in radians.
+
+    Same decomposition as shoulder_pitch_roll — the hip→knee vector plays the
+    role of the shoulder→elbow vector, expressed in the pelvis frame instead
+    of the torso frame:
+
+    pitch:        0 = leg hanging down, +π/2 = thigh forward (hip flexion),
+                  negative = leg behind the body (hip extension).
+    roll_abduct:  0 = leg straight down, positive = leg out to the side
+                  (abduction), negative = crossed inward (adduction).
+    """
+    return shoulder_pitch_roll(hip_w, knee_w, R_pelvis, side)
+
+
+def knee_bend(
+    hip_w: np.ndarray,
+    knee_w: np.ndarray,
+    ankle_w: np.ndarray,
+) -> float:
+    """Unsigned knee flexion between thigh and shank, in [0, π]. 0 = straight.
+
+    Same segment-angle math as elbow_bend (thigh ↔ upper arm, shank ↔ forearm);
+    frame-independent, so it needs no pelvis frame.
+    """
+    return elbow_bend(hip_w, knee_w, ankle_w)
 
 
 def forearm_twist(

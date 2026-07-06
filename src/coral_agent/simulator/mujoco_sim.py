@@ -230,6 +230,80 @@ class AiNexSimulator:
     def close_right_gripper(self) -> None:
         self.move_joint("r_gripper", -self.STEP_SIZE)
 
+    # === LEFT LEG CONTROLS ===
+    def move_left_hip_forward(self) -> None:
+        self.move_joint("l_hip_pitch", self.STEP_SIZE)
+
+    def move_left_hip_backward(self) -> None:
+        self.move_joint("l_hip_pitch", -self.STEP_SIZE)
+
+    def move_left_hip_out(self) -> None:
+        self.move_joint("l_hip_roll", self.STEP_SIZE)
+
+    def move_left_hip_in(self) -> None:
+        self.move_joint("l_hip_roll", -self.STEP_SIZE)
+
+    def rotate_left_hip_in(self) -> None:
+        self.move_joint("l_hip_yaw", -self.STEP_SIZE)
+
+    def rotate_left_hip_out(self) -> None:
+        self.move_joint("l_hip_yaw", self.STEP_SIZE)
+
+    def bend_left_knee(self) -> None:
+        self.move_joint("l_knee", self.STEP_SIZE)
+
+    def extend_left_knee(self) -> None:
+        self.move_joint("l_knee", -self.STEP_SIZE)
+
+    def move_left_ankle_up(self) -> None:
+        self.move_joint("l_ank_pitch", self.STEP_SIZE)
+
+    def move_left_ankle_down(self) -> None:
+        self.move_joint("l_ank_pitch", -self.STEP_SIZE)
+
+    def roll_left_ankle_in(self) -> None:
+        self.move_joint("l_ank_roll", -self.STEP_SIZE)
+
+    def roll_left_ankle_out(self) -> None:
+        self.move_joint("l_ank_roll", self.STEP_SIZE)
+
+    # === RIGHT LEG CONTROLS ===
+    def move_right_hip_forward(self) -> None:
+        self.move_joint("r_hip_pitch", self.STEP_SIZE)
+
+    def move_right_hip_backward(self) -> None:
+        self.move_joint("r_hip_pitch", -self.STEP_SIZE)
+
+    def move_right_hip_out(self) -> None:
+        self.move_joint("r_hip_roll", -self.STEP_SIZE)
+
+    def move_right_hip_in(self) -> None:
+        self.move_joint("r_hip_roll", self.STEP_SIZE)
+
+    def rotate_right_hip_in(self) -> None:
+        self.move_joint("r_hip_yaw", self.STEP_SIZE)
+
+    def rotate_right_hip_out(self) -> None:
+        self.move_joint("r_hip_yaw", -self.STEP_SIZE)
+
+    def bend_right_knee(self) -> None:
+        self.move_joint("r_knee", -self.STEP_SIZE)
+
+    def extend_right_knee(self) -> None:
+        self.move_joint("r_knee", self.STEP_SIZE)
+
+    def move_right_ankle_up(self) -> None:
+        self.move_joint("r_ank_pitch", -self.STEP_SIZE)
+
+    def move_right_ankle_down(self) -> None:
+        self.move_joint("r_ank_pitch", self.STEP_SIZE)
+
+    def roll_right_ankle_in(self) -> None:
+        self.move_joint("r_ank_roll", self.STEP_SIZE)
+
+    def roll_right_ankle_out(self) -> None:
+        self.move_joint("r_ank_roll", -self.STEP_SIZE)
+
     # === PRESET POSES ===
     def wave(self) -> None:
         """Wave with right arm."""
@@ -346,6 +420,32 @@ COMMAND_MAP = {
     "right_elbow_rotate_out": "rotate_right_elbow_out",
     "right_gripper_open": "open_right_gripper",
     "right_gripper_close": "close_right_gripper",
+    # Left leg
+    "left_hip_forward": "move_left_hip_forward",
+    "left_hip_backward": "move_left_hip_backward",
+    "left_hip_out": "move_left_hip_out",
+    "left_hip_in": "move_left_hip_in",
+    "left_hip_rotate_in": "rotate_left_hip_in",
+    "left_hip_rotate_out": "rotate_left_hip_out",
+    "left_knee_bend": "bend_left_knee",
+    "left_knee_extend": "extend_left_knee",
+    "left_ankle_up": "move_left_ankle_up",
+    "left_ankle_down": "move_left_ankle_down",
+    "left_ankle_roll_in": "roll_left_ankle_in",
+    "left_ankle_roll_out": "roll_left_ankle_out",
+    # Right leg
+    "right_hip_forward": "move_right_hip_forward",
+    "right_hip_backward": "move_right_hip_backward",
+    "right_hip_out": "move_right_hip_out",
+    "right_hip_in": "move_right_hip_in",
+    "right_hip_rotate_in": "rotate_right_hip_in",
+    "right_hip_rotate_out": "rotate_right_hip_out",
+    "right_knee_bend": "bend_right_knee",
+    "right_knee_extend": "extend_right_knee",
+    "right_ankle_up": "move_right_ankle_up",
+    "right_ankle_down": "move_right_ankle_down",
+    "right_ankle_roll_in": "roll_right_ankle_in",
+    "right_ankle_roll_out": "roll_right_ankle_out",
     # Preset poses
     "wave": "wave",
     "point": "point_forward",
