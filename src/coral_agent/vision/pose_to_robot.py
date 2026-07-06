@@ -22,7 +22,12 @@ from coral_agent.robot.servo_config import SERVO_ID_MAP
 from coral_agent.validation import JOINT_LIMITS
 
 from . import geometry
-from .pose_estimator import OneEuroFilter
+
+# NOTE: OneEuroFilter is imported lazily inside JointAngleSmoother (see __init__)
+# rather than at module load. Pulling it here would drag in pose_estimator ->
+# mediapipe/cv2, but compute_joint_targets / targets_to_servo_commands only need
+# `geometry` (numpy). Keeping the top-level import light lets the Pi robot_server
+# reuse the retargeting without installing the full vision stack.
 
 # MediaPipe pose landmark indices (re-exported from geometry for clarity)
 _LM_L_SHOULDER = geometry.LEFT_SHOULDER
@@ -63,6 +68,11 @@ class JointAngleSmoother:
     """
 
     def __init__(self, min_cutoff: float = 1.5, beta: float = 0.05):
+        # Imported here (not at module top) so compute_joint_targets stays free of
+        # the mediapipe/cv2 dependency chain that pose_estimator pulls in.
+        from .pose_estimator import OneEuroFilter
+
+        self._OneEuroFilter = OneEuroFilter
         self._min_cutoff = min_cutoff
         self._beta = beta
         self._filters: dict[str, OneEuroFilter] = {}
@@ -79,7 +89,7 @@ class JointAngleSmoother:
             # If joint was missing for >0.5s, restart its filter to avoid
             # smoothing across a discontinuity.
             if k not in self._filters or (now - self._last_seen.get(k, 0.0)) > 0.5:
-                self._filters[k] = OneEuroFilter(min_cutoff=self._min_cutoff, beta=self._beta)
+                self._filters[k] = self._OneEuroFilter(min_cutoff=self._min_cutoff, beta=self._beta)
             out[k] = self._filters[k].filter(v, now)
             self._last_seen[k] = now
         return out
@@ -96,6 +106,21 @@ def _has_world(lm: dict) -> bool:
 def _clamp_to_limits(joint: str, value: float) -> float:
     limit = JOINT_LIMITS.get(joint)
     return limit.clamp(value) if limit else value
+
+
+def hips_detected(body_landmarks: list[dict]) -> bool:
+    """True if both hips have world coords and pass the visibility gate.
+
+    The torso frame (and therefore all arm retargeting) is anchored on the hips;
+    when they drop below threshold compute_joint_targets can only map the head.
+    Callers use this to ask the user to reframe rather than move head-only.
+    """
+    if len(body_landmarks) <= _LM_R_HIP:
+        return False
+    return all(
+        _has_world(body_landmarks[i]) and _visible(body_landmarks[i])
+        for i in (_LM_L_HIP, _LM_R_HIP)
+    )
 
 
 def _torso_frame_from(body: list[dict]):
@@ -222,7 +247,13 @@ def compute_joint_targets(
 def targets_to_servo_commands(
     targets: dict[str, float], duration_ms: int
 ) -> list[ServoCommand]:
-    """Convert joint-name → radians dict to ServoCommands."""
+    """Convert joint-name → radians dict to ServoCommands for the *simulator*.
+
+    Uses the uniform 500-centre map (rad=0 ↔ 500), which round-trips correctly
+    through the MuJoCo sim. For the physical robot use
+    targets_to_hardware_servo_commands instead — real servos have asymmetric
+    stand pulses, mirror-mounted direction signs, and damaged-servo limits.
+    """
     commands: list[ServoCommand] = []
     for joint, rad in targets.items():
         servo_id = SERVO_ID_MAP.get(joint)
@@ -232,6 +263,36 @@ def targets_to_servo_commands(
             ServoCommand(
                 servo_id=servo_id,
                 position=rad_to_servo_units(rad),
+                duration_ms=duration_ms,
+            )
+        )
+    return commands
+
+
+def targets_to_hardware_servo_commands(
+    targets: dict[str, float], duration_ms: int
+) -> list[ServoCommand]:
+    """Convert joint-name → radians dict to ServoCommands for the *physical robot*.
+
+    This is the middle step the hardware /map-features needs: instead of the sim's
+    uniform 500-centre map, each joint is converted with rad_to_hardware_units,
+    which anchors on the joint's real STAND_PULSE, applies its mirror-mount
+    direction sign, and clamps to the tested safe servo range (e.g. the damaged
+    r_el_yaw is never driven below its floor). Mirrors the per-servo calibration
+    used by the on-robot pose_mimic node.
+    """
+    # Imported here to keep the sim path free of any hardware-config coupling.
+    from coral_agent.robot.hardware_angle_utils import rad_to_hardware_units
+
+    commands: list[ServoCommand] = []
+    for joint, rad in targets.items():
+        servo_id = SERVO_ID_MAP.get(joint)
+        if servo_id is None:
+            continue
+        commands.append(
+            ServoCommand(
+                servo_id=servo_id,
+                position=rad_to_hardware_units(rad, joint),
                 duration_ms=duration_ms,
             )
         )

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -19,8 +20,9 @@ load_dotenv()
 
 from langfuse import observe, get_client, Langfuse, propagate_attributes
 from langfuse.openai import openai
+import httpx
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel
@@ -40,6 +42,7 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
 
 
 from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
+from coral_agent.robot.hardware_angle_utils import hardware_units_to_rad
 from coral_agent.robot.hardware_controller import AiNexHardwareController
 from coral_agent.robot.interface import ServoCommand
 from coral_agent.robot.servo_config import SERVO_ID_MAP
@@ -158,7 +161,7 @@ app = FastAPI(title="Coral AI Agent", lifespan=lifespan)
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -431,6 +434,150 @@ async def list_primitives() -> dict[str, Any]:
     - tags for filtering
     """
     return {"primitives": get_primitives_metadata()}
+
+
+# ── Director-demo endpoints (simulation mode) ─────────────────────────────────
+# These mirror the Pi robot_server.py contract (/motion, /state, /classify,
+# /watch-for-action) so the frontend demo can run entirely on the Mac against the
+# MuJoCo sim. Point the demo at this server with VITE_ROBOT_BASE=http://localhost:8000.
+# /motion + /state drive the in-process sim here; /classify + /watch-for-action are
+# proxied to the vision server (:8001), which owns the Mac webcam.
+VISION_BASE = os.getenv("VISION_BASE", "http://localhost:8001")
+
+# Demo motion name → sim command (COMMAND_MAP key). Names not found here fall
+# through to execute_command directly (e.g. "wave"); unknown names are a no-op so
+# pose-mimicry calls for unmapped classifier classes never break the demo.
+DEMO_MOTION_ALIASES = {
+    "stand": "reset",
+    "reset": "reset",
+}
+
+_demo_state: str = "IDLE"
+_pi_motions = None
+
+
+class MotionRequest(BaseModel):
+    name: str
+    global_duration: float | None = None
+
+
+class ServoMove(BaseModel):
+    servo_id: int
+    position: int
+    duration_ms: int
+
+
+class StateRequest(BaseModel):
+    mode: str
+
+
+def _get_pi_motions():
+    """Lazily import the shared pose library (nodes/motions.py — pure data, no ROS)."""
+    global _pi_motions
+    if _pi_motions is None:
+        from coral_agent.robot.pi.nodes import motions as pi_motions
+        _pi_motions = pi_motions
+    return _pi_motions
+
+
+async def _play_sim_motion(name: str) -> bool:
+    """Play a named pose/sequence from nodes/motions.py on the MuJoCo sim.
+
+    Motion frames are hardware servo pulses (0–1000); convert each to sim radians
+    with hardware_units_to_rad and set the joint targets, holding each frame for
+    its duration so multi-frame motions (e.g. wave) animate. Returns False if the
+    name is unknown so the caller can fall back to single-step commands.
+    """
+    sequence = _get_pi_motions().get_motion(name)
+    if sequence is None or simulator is None:
+        return False
+    for pulse, duration_ms in sequence:
+        for joint, units in pulse.items():
+            try:
+                simulator.set_joint_position(joint, hardware_units_to_rad(int(units), joint))
+            except Exception as e:  # unknown joint / out-of-range — skip, keep going
+                logger.debug(f"/motion: skip joint {joint}: {e}")
+        await asyncio.sleep(max(0.0, float(duration_ms) / 1000.0))
+    return True
+
+
+@app.post("/motion")
+async def demo_motion(req: MotionRequest) -> dict[str, Any]:
+    """Run a named motion on the simulator (demo). Drives the sim from the shared
+    nodes/motions.py pose library (wave, stand, and the 7 classifier poses), with
+    a fall-back to single-step COMMAND_MAP primitives. Always 200 so an unmapped
+    name never aborts the demo pipeline."""
+    if simulator is None:
+        return {"status": "error", "motion": req.name, "detail": "simulator not initialized"}
+    name = req.name.strip()
+    if await _play_sim_motion(name):
+        return {"status": "done", "motion": name}
+    # Fall back to single-step primitives (e.g. legacy COMMAND_MAP names).
+    command = DEMO_MOTION_ALIASES.get(name.lower(), name.lower())
+    if execute_command(simulator, command):
+        return {"status": "done", "motion": name}
+    logger.warning(f"/motion: no sim motion or command for '{name}' — skipped")
+    return {"status": "skipped", "motion": name}
+
+
+@app.get("/state")
+async def demo_get_state() -> dict[str, str]:
+    return {"state": _demo_state}
+
+
+@app.post("/state")
+async def demo_set_state(req: StateRequest) -> dict[str, str]:
+    """Best-effort lock/unlock — the sim has no hard locks, so just record it."""
+    global _demo_state
+    _demo_state = req.mode
+    return {"state": _demo_state}
+
+
+@app.post("/classify")
+async def demo_classify() -> dict[str, Any]:
+    """Proxy to the vision server's real MobileNetV3 classifier (Mac webcam)."""
+    try:
+        # Generous timeout: the first call lazily loads the MobileNetV3 model.
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{VISION_BASE}/classify")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"vision server unreachable at {VISION_BASE}: {e}")
+
+
+@app.post("/move")
+async def demo_move(moves: list[ServoMove]) -> dict[str, Any]:
+    """Execute raw servo commands on the sim (and hardware, in robot mode).
+
+    Used by the demo's pose-mimicry path: the frontend fetches servo commands
+    from the vision server's /map-features (landmark retargeting) and posts them
+    here to drive the robot. Mirrors the Pi robot_server's /move contract.
+    """
+    if simulator is None:
+        return {"status": "error", "detail": "simulator not initialized"}
+    commands = [
+        ServoCommand(servo_id=m.servo_id, position=m.position, duration_ms=max(100, m.duration_ms))
+        for m in moves
+    ]
+    await dispatch_servo_commands(commands)
+    return {"status": "done", "count": len(commands)}
+
+
+@app.get("/watch-for-action")
+async def demo_watch_for_action(timeout: float = 30.0) -> dict[str, Any]:
+    """Proxy to the vision server's hands-close gesture watcher (Mac webcam)."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout + 5.0) as client:
+            resp = await client.get(f"{VISION_BASE}/watch-for-action", params={"timeout": timeout})
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as e:
+        # Don't break the demo's intro gate if vision is down — report "not detected".
+        logger.warning(f"/watch-for-action proxy failed: {e}")
+        return {"detected": False, "timeout": True}
 
 
 class HierarchicalMemory:
@@ -1020,8 +1167,42 @@ async def websocket_endpoint(websocket: WebSocket):
         )
 
 
+def _reexec_under_mjpython_if_needed() -> None:
+    """Re-exec under `mjpython` on macOS so the MuJoCo viewer window can open.
+
+    MuJoCo's interactive viewer (`launch_passive`) raises on macOS unless the
+    process is launched via `mjpython`, which keeps the Cocoa UI loop on the real
+    main thread while running Python on a worker thread. Under plain `python` /
+    `uv run` the viewer thread dies with:
+        RuntimeError: `launch_passive` requires ... `mjpython` on macOS
+    and no window appears (the server itself keeps running). Re-exec the current
+    entry point under mjpython so `uv run server` / `uv run robot` show the robot.
+
+    No-op off macOS, once already re-exec'd, or when CORAL_NO_VIEWER=1 — set that
+    for headless/CI runs that should stay on plain python (no window).
+    """
+    if sys.platform != "darwin":
+        return
+    if os.environ.get("CORAL_MJPYTHON") == "1" or os.environ.get("CORAL_NO_VIEWER") == "1":
+        return
+    mjpython = Path(sys.executable).with_name("mjpython")
+    if not mjpython.exists():
+        logger.warning(
+            "mjpython not found next to the interpreter; the MuJoCo viewer window "
+            "won't open on macOS. Set CORAL_NO_VIEWER=1 to silence this."
+        )
+        return
+    # Forward the current entry script + args so the same console entry (server vs
+    # robot) re-runs under mjpython. CORAL_MJPYTHON guards against a re-exec loop.
+    argv = sys.argv if sys.argv and Path(sys.argv[0]).exists() else ["-m", "coral_agent.server"]
+    os.environ["CORAL_MJPYTHON"] = "1"
+    logger.info("macOS: re-launching under mjpython so the MuJoCo viewer window opens...")
+    os.execv(str(mjpython), [str(mjpython), *argv])
+
+
 def main():
     """Entry point for simulation mode (default — starts MuJoCo)."""
+    _reexec_under_mjpython_if_needed()
     logger.info("Starting Coral AI Agent server (sim mode)...")
     uvicorn.run(
         "coral_agent.server:app",
@@ -1037,14 +1218,15 @@ def main_robot():
 
     Requires:
       - ROBOT_IP env var set to the robot's IP (default: 192.168.8.219)
-      - robot_agent.py running on the robot (uv run robot-agent)
+      - robot_server.py running on the robot (uv run robot-server)
       - Laptop on the same network as the robot
     """
+    _reexec_under_mjpython_if_needed()
     os.environ.setdefault("ROBOT_MODE", "robot")
     robot_ip = os.getenv("ROBOT_IP", "192.168.8.219")
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {robot_ip})")
     logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
-    logger.info(f"Make sure robot_agent.py is running on the robot at {robot_ip}:9000")
+    logger.info(f"Make sure robot_server.py is running on the robot at {robot_ip}:9000")
     uvicorn.run(
         "coral_agent.server:app",
         host="0.0.0.0",

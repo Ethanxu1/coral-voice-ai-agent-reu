@@ -1,0 +1,777 @@
+/* TestUI — kid-friendly wireframe pages. Same vibe as DemoPage. */
+
+/* ── Root / Nav ─────────────────────────────────────────────────────────── */
+.tui-root {
+  min-height: 100vh;
+  background: linear-gradient(160deg, #ffe29a 0%, #ffa6c9 45%, #8ec5ff 100%);
+  background-size: 200% 200%;
+  animation: tui-bg 18s ease infinite;
+  font-family: 'Baloo 2', 'Comic Sans MS', system-ui, sans-serif;
+  color: #2a2350;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100vh;
+}
+@keyframes tui-bg {
+  0%   { background-position: 0% 0%; }
+  50%  { background-position: 100% 100%; }
+  100% { background-position: 0% 0%; }
+}
+
+.tui-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(10px);
+  border-bottom: 3px solid rgba(255, 255, 255, 0.9);
+  gap: 12px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+.tui-nav-left, .tui-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+}
+.tui-nav-right { justify-content: flex-end; }
+.tui-nav-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.tui-nav-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: #6a5acd;
+  white-space: nowrap;
+}
+.tui-dots {
+  display: flex;
+  gap: 6px;
+}
+.tui-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: rgba(106, 90, 205, 0.25);
+  cursor: pointer;
+  transition: background 0.3s, transform 0.3s;
+  border: none;
+}
+.tui-dot.active {
+  background: #6a5acd;
+  transform: scale(1.4);
+}
+
+.tui-btn {
+  border: none;
+  border-radius: 999px;
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 9px 20px;
+  cursor: pointer;
+  background: #6a5acd;
+  color: white;
+  box-shadow: 0 4px 0 #4a3a9d;
+  transition: transform 0.1s, box-shadow 0.1s;
+  white-space: nowrap;
+}
+.tui-btn:hover:not(:disabled) { transform: scale(1.05); }
+.tui-btn:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 2px 0 #4a3a9d; }
+.tui-btn:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
+.tui-btn-home {
+  background: rgba(255,255,255,0.8);
+  color: #6a5acd;
+  box-shadow: 0 4px 0 rgba(106, 90, 205, 0.3);
+  font-size: 13px;
+  padding: 7px 14px;
+}
+
+/* ── Page wrapper ────────────────────────────────────────────────────────── */
+.tui-page {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  animation: tui-page-in 0.45s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+@keyframes tui-page-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Shared card ─────────────────────────────────────────────────────────── */
+.tui-card {
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 28px;
+  box-shadow: 0 10px 0 rgba(0, 0, 0, 0.10);
+  padding: 24px;
+}
+
+/* ── Dummy stream ────────────────────────────────────────────────────────── */
+.tui-stream {
+  position: relative;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #0d1321;
+  border: 5px solid white;
+  box-shadow: 0 10px 0 rgba(0, 0, 0, 0.18);
+}
+.tui-stream-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 35% 60%, rgba(50, 80, 120, 0.8) 0%, transparent 55%),
+    radial-gradient(ellipse at 65% 30%, rgba(30, 50, 90, 0.6) 0%, transparent 45%),
+    #0d1321;
+  animation: tui-stream-shift 5s ease-in-out infinite;
+}
+@keyframes tui-stream-shift {
+  0%, 100% { filter: brightness(1); }
+  50%       { filter: brightness(1.18); }
+}
+.tui-stream-silhouette {
+  position: absolute;
+  bottom: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0.22;
+  pointer-events: none;
+}
+.tui-live-badge {
+  position: absolute;
+  top: 10px; left: 10px;
+  background: rgba(255, 59, 92, 0.92);
+  color: white;
+  font-weight: 800;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  animation: tui-blink 2s ease infinite;
+  z-index: 5;
+}
+@keyframes tui-blink {
+  0%, 80%, 100% { opacity: 1; }
+  40%           { opacity: 0.55; }
+}
+
+/* ── Character animations ────────────────────────────────────────────────── */
+@keyframes tui-float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-10px); }
+}
+@keyframes tui-bob {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-5px); }
+}
+@keyframes tui-wave-arm {
+  0%, 100% { transform: rotate(0deg); }
+  40%       { transform: rotate(-30deg); }
+}
+@keyframes tui-adjust-arm {
+  0%, 100% { transform: rotate(0deg); }
+  50%       { transform: rotate(25deg); }
+}
+.tui-adjust-arm-anim {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: tui-adjust-arm 2s ease-in-out infinite;
+}
+@keyframes tui-pulse-glow {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(255,107,157,0.8)); }
+  50%       { filter: drop-shadow(0 0 20px rgba(255,107,157,1)); }
+}
+
+.tui-float  { animation: tui-float 3s ease-in-out infinite; }
+.tui-bob    { animation: tui-bob 2.5s ease-in-out infinite; }
+.tui-glow   { animation: tui-pulse-glow 2s ease-in-out infinite; }
+.tui-wave-arm-anim {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  animation: tui-wave-arm 1.3s ease-in-out infinite;
+}
+
+/* ── Pop-in keyframe (shared) ────────────────────────────────────────────── */
+@keyframes tui-pop {
+  0%   { transform: scale(0.5) rotate(-8deg); opacity: 0; }
+  65%  { transform: scale(1.08) rotate(2deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+@keyframes tui-slide-up {
+  from { transform: translateY(28px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@keyframes tui-slide-right {
+  from { transform: translateX(-28px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+.tui-pop { animation: tui-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+
+/* ── Page 1 — Welcome ────────────────────────────────────────────────────── */
+.p1-layout {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 20px;
+  width: 100%;
+  padding: 20px 24px;
+  align-items: center;
+}
+@media (max-width: 760px) {
+  .p1-layout { grid-template-columns: 1fr; }
+}
+.p1-stream { height: 100%; min-height: 340px; }
+.p1-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  text-align: center;
+}
+.p1-welcome {
+  font-size: clamp(30px, 5vw, 52px);
+  font-weight: 900;
+  text-shadow: 3px 3px 0 white;
+  letter-spacing: 1px;
+  color: #6a5acd;
+}
+.p1-instruction {
+  background: rgba(255,255,255,0.9);
+  border-radius: 22px;
+  padding: 18px 22px;
+  font-size: clamp(15px, 2vw, 20px);
+  font-weight: 700;
+  box-shadow: 0 6px 0 rgba(0,0,0,0.1);
+  line-height: 1.5;
+}
+.p1-instruction strong { color: #6a5acd; font-size: 1.1em; }
+
+/* ── Page 2 — Classify Instructions ─────────────────────────────────────── */
+.p2-layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 16px 24px;
+  gap: 14px;
+}
+.p2-title {
+  font-size: clamp(22px, 4vw, 36px);
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 2px 2px 0 white;
+  color: #6a5acd;
+  flex-shrink: 0;
+}
+.p2-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  flex: 1;
+}
+@media (max-width: 800px) {
+  .p2-steps { grid-template-columns: repeat(2, 1fr); }
+}
+.p2-step {
+  background: rgba(255,255,255,0.92);
+  border-radius: 22px;
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 0 rgba(0,0,0,0.10);
+  opacity: 0;
+  animation: tui-slide-up 0.5s cubic-bezier(0.2,1.2,0.4,1) forwards;
+}
+.p2-step:nth-child(1) { animation-delay: 0.0s; }
+.p2-step:nth-child(2) { animation-delay: 0.35s; }
+.p2-step:nth-child(3) { animation-delay: 0.70s; }
+.p2-step:nth-child(4) { animation-delay: 1.05s; }
+
+.p2-step-num {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 18px; color: white;
+  flex-shrink: 0;
+}
+.p2-step:nth-child(1) .p2-step-num { background: #ff6b9d; box-shadow: 0 4px 0 #c03060; }
+.p2-step:nth-child(2) .p2-step-num { background: #f7c43e; box-shadow: 0 4px 0 #b8861c; }
+.p2-step:nth-child(3) .p2-step-num { background: #34c759; box-shadow: 0 4px 0 #1e8a3e; }
+.p2-step:nth-child(4) .p2-step-num { background: #6a5acd; box-shadow: 0 4px 0 #3d2e8a; }
+
+.p2-step-label {
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.4;
+  color: #3a2d6a;
+}
+.p2-step-art { flex: 1; display: flex; align-items: center; justify-content: center; }
+.p2-mini-stream {
+  position: absolute;
+  bottom: 16px; left: 16px;
+  width: 120px; height: 80px;
+  z-index: 5;
+}
+
+/* ── Page 3 — Countdown ──────────────────────────────────────────────────── */
+.p3-layout {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+.p3-stream-full {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  border: none;
+}
+.p3-stream-full .tui-stream-bg {
+  border-radius: 0;
+}
+.p3-countdown-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+.p3-number {
+  font-size: clamp(140px, 28vw, 300px);
+  font-weight: 900;
+  color: white;
+  text-shadow:
+    0 0 40px rgba(106, 90, 205, 0.9),
+    6px 6px 0 #ff5e9a;
+  animation: tui-countdown-pop 0.8s cubic-bezier(0.2, 1.4, 0.3, 1);
+  line-height: 1;
+}
+@keyframes tui-countdown-pop {
+  0%   { transform: scale(0.1) rotate(-20deg); opacity: 0; }
+  55%  { transform: scale(1.18) rotate(4deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+/* ── Page 4 — Classify Results ───────────────────────────────────────────── */
+.p4-layout {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+.p4-frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #87CEEB 55%, #90EE90 55%);
+}
+.p4-result-bar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(10,6,30,0.88) 40%);
+  padding: 36px 28px 22px;
+  z-index: 5;
+  animation: tui-slide-up 0.6s 0.3s cubic-bezier(0.2,1.2,0.4,1) both;
+}
+.p4-class-name {
+  font-size: clamp(28px, 5vw, 52px);
+  font-weight: 900;
+  color: white;
+  text-shadow: 2px 2px 0 #ff5e9a;
+  margin-bottom: 10px;
+}
+.p4-bars { display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.p4-bar-row { display: flex; align-items: center; gap: 10px; }
+.p4-bar-label { color: rgba(255,255,255,0.85); font-weight: 700; font-size: 13px; width: 90px; }
+.p4-bar-track { flex: 1; height: 14px; background: rgba(255,255,255,0.2); border-radius: 999px; overflow: hidden; }
+.p4-bar-fill {
+  height: 100%; border-radius: 999px;
+  background: rgba(255,255,255,0.5);
+  transition: width 1s cubic-bezier(0.2,1,0.3,1);
+}
+.p4-bar-fill.top { background: linear-gradient(90deg, #34c759, #8ee06b); }
+.p4-bar-pct { color: white; font-weight: 800; font-size: 13px; width: 40px; text-align: right; }
+
+/* ── Page 5 — Record Instructions ───────────────────────────────────────── */
+.p5-layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 16px 24px;
+  gap: 16px;
+  align-items: center;
+}
+.p5-title {
+  font-size: clamp(22px, 4vw, 36px);
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 2px 2px 0 white;
+  color: #6a5acd;
+}
+.p5-steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  width: 100%;
+  flex: 1;
+}
+@media (max-width: 640px) {
+  .p5-steps { grid-template-columns: 1fr; }
+}
+.p5-step {
+  background: rgba(255,255,255,0.92);
+  border-radius: 24px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 8px 0 rgba(0,0,0,0.1);
+  opacity: 0;
+  animation: tui-slide-up 0.5s cubic-bezier(0.2,1.2,0.4,1) forwards;
+}
+.p5-step:nth-child(1) { animation-delay: 0.1s; }
+.p5-step:nth-child(2) { animation-delay: 0.5s; }
+.p5-step-num {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 900; font-size: 18px; color: white;
+  background: #ff6b9d; box-shadow: 0 4px 0 #c03060;
+  align-self: flex-start;
+}
+.p5-step:nth-child(2) .p5-step-num { background: #6a5acd; box-shadow: 0 4px 0 #3d2e8a; }
+.p5-step-label { font-size: 15px; font-weight: 700; text-align: center; color: #3a2d6a; line-height: 1.5; }
+.p5-step-art { flex: 1; display: flex; align-items: center; justify-content: center; gap: 12px; }
+
+/* Speech bubble */
+.tui-bubble {
+  background: white;
+  border-radius: 18px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #3a2d6a;
+  box-shadow: 0 4px 0 rgba(0,0,0,0.1);
+  position: relative;
+  max-width: 160px;
+  text-align: center;
+  line-height: 1.4;
+}
+.tui-bubble::before {
+  content: '';
+  position: absolute;
+  left: -10px; top: 50%; transform: translateY(-50%);
+  width: 0; height: 0;
+  border: 10px solid transparent;
+  border-right-color: white;
+  border-left: 0;
+  margin-top: -10px;
+}
+
+/* ── Page 6 — Mic / Waveform ─────────────────────────────────────────────── */
+.p6-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 28px;
+  padding: 24px;
+}
+.p6-mic-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.p6-ring {
+  position: absolute;
+  width: 140px; height: 140px;
+  border-radius: 50%;
+  background: rgba(255, 94, 126, 0.15);
+  animation: tui-mic-ring 1.4s ease-out infinite;
+}
+.p6-ring:nth-child(2) { animation-delay: 0.5s; }
+.p6-ring:nth-child(3) { animation-delay: 1.0s; }
+@keyframes tui-mic-ring {
+  0%   { transform: scale(0.8); opacity: 0.7; }
+  100% { transform: scale(2.0); opacity: 0; }
+}
+.p6-mic-circle {
+  width: 110px; height: 110px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff5e7e, #ff9ab5);
+  box-shadow: 0 8px 0 #c0304a;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 52px;
+  position: relative;
+  z-index: 2;
+  animation: tui-bob 2s ease-in-out infinite;
+}
+.p6-waveform {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 70px;
+}
+.p6-bar {
+  width: 10px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ff5e7e, #6a5acd);
+  animation: tui-bar-wave 1s ease-in-out infinite;
+}
+@keyframes tui-bar-wave {
+  0%, 100% { height: 20%; opacity: 0.7; }
+  50%       { height: 95%; opacity: 1; }
+}
+.p6-label {
+  font-size: clamp(18px, 3vw, 28px);
+  font-weight: 800;
+  color: #6a5acd;
+  text-shadow: 2px 2px 0 white;
+  text-align: center;
+}
+
+/* ── Page 7 — Name ───────────────────────────────────────────────────────── */
+.p7-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 16px 24px;
+  gap: 14px;
+}
+.p7-quote-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: clamp(22px, 3.5vw, 36px);
+  font-weight: 800;
+  color: #6a5acd;
+}
+.p7-quote-mark {
+  font-size: 1.6em;
+  color: rgba(106, 90, 205, 0.4);
+  line-height: 0.8;
+}
+.p7-quote-text {
+  font-style: italic;
+  color: #2a2350;
+  min-width: 200px;
+  text-align: center;
+}
+.p7-frame-wrap {
+  flex: 1;
+  width: 100%;
+  max-width: 680px;
+  border-radius: 22px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #87CEEB 55%, #90EE90 55%);
+  border: 5px solid white;
+  box-shadow: 0 10px 0 rgba(0,0,0,0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.p7-recording {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.9);
+  border-radius: 999px;
+  padding: 10px 22px;
+  font-weight: 800;
+  font-size: 15px;
+  box-shadow: 0 5px 0 rgba(0,0,0,0.1);
+  color: #ff5e7e;
+}
+.p7-rec-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #ff3b5c;
+  animation: tui-blink 1s ease infinite;
+}
+
+/* ── Page 8 — Outro ──────────────────────────────────────────────────────── */
+.p8-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 24px;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+}
+.p8-thank-you {
+  font-size: clamp(36px, 7vw, 72px);
+  font-weight: 900;
+  text-shadow: 4px 4px 0 white, 8px 8px 0 rgba(106,90,205,0.25);
+  color: #6a5acd;
+  animation: tui-pop 0.7s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.p8-subtitle {
+  font-size: clamp(16px, 2.5vw, 24px);
+  font-weight: 700;
+  color: #3a2d6a;
+  background: rgba(255,255,255,0.85);
+  border-radius: 999px;
+  padding: 10px 24px;
+  box-shadow: 0 5px 0 rgba(0,0,0,0.1);
+  animation: tui-slide-up 0.5s 0.4s both;
+}
+
+/* Confetti stars */
+.p8-star {
+  position: absolute;
+  font-size: 22px;
+  pointer-events: none;
+  animation: tui-star-fall linear infinite;
+}
+@keyframes tui-star-fall {
+  0%   { transform: translateY(-60px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+}
+
+/* ── State-machine additions (wired demo flow) ─────────────────────────────── */
+
+/* Primary call-to-action button */
+.tui-btn-go {
+  background: linear-gradient(135deg, #6a5acd, #ff6b9d);
+  color: #fff;
+  border: none;
+  font-weight: 800;
+}
+.tui-btn-go:hover { filter: brightness(1.05); }
+
+/* Caption bubble used on coaching/record pages */
+.tui-caption {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(6px);
+  border-radius: 999px;
+  padding: 8px 22px;
+  font-weight: 800;
+  font-size: 15px;
+  color: #6a5acd;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  z-index: 6;
+  max-width: 80%;
+  text-align: center;
+}
+
+/* Shutter flash on the countdown page */
+.p3-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  z-index: 7;
+  animation: tui-flash 0.4s ease-out;
+  pointer-events: none;
+}
+@keyframes tui-flash {
+  0% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+/* Stage overlay (start / timeout / error / done) */
+.tui-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 27, 42, 0.55);
+  backdrop-filter: blur(4px);
+  z-index: 20;
+}
+.tui-overlay-card {
+  background: #fff;
+  border-radius: 24px;
+  padding: 32px 40px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+  max-width: 460px;
+}
+.tui-overlay-title { font-size: 26px; font-weight: 900; color: #2c2c54; }
+.tui-overlay-msg { margin: 10px 0 22px; font-size: 16px; color: #555; }
+.tui-overlay-btns { display: flex; gap: 12px; justify-content: center; }
+.tui-text-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  font-size: 18px;
+  border: 2px solid #d8d3f0;
+  border-radius: 12px;
+  outline: none;
+  text-align: center;
+}
+.tui-text-input:focus { border-color: #6a5acd; }
+
+/* Inline text entry (record/name pages in text mode) */
+.tui-text-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(560px, 90%);
+  margin: auto;
+}
+.tui-text-entry-prompt {
+  font-size: 22px;
+  font-weight: 800;
+  color: #2c2c54;
+  text-align: center;
+}
+.tui-text-entry .tui-text-input { margin-bottom: 0; font-size: 20px; }
+
+/* Page 8 — learned-moves gallery */
+.p8-moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  justify-content: center;
+  align-items: flex-start;
+  margin-top: 18px;
+  max-width: 900px;
+  z-index: 2;
+}
+.p8-move-card {
+  background: #fff;
+  border-radius: 18px;
+  padding: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.15);
+  width: 200px;
+}
+.p8-move-img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+  background: linear-gradient(180deg, #87ceeb 55%, #90ee90 55%);
+}
+.p8-move-name {
+  margin-top: 8px;
+  font-weight: 800;
+  font-size: 16px;
+  color: #6a5acd;
+  text-align: center;
+}

@@ -1,7 +1,8 @@
 """Hardware controller — sends servo commands to the robot over HTTP.
 
-Runs on the laptop. The physical robot must be running robot_agent.py, reachable
-at ROBOT_IP:ROBOT_AGENT_PORT on the local network.
+Runs on the laptop. The physical robot must be running robot_server.py, reachable
+at ROBOT_IP:ROBOT_AGENT_PORT on the local network. The legacy /move, /stand,
+/feedback and /positions endpoints it uses are preserved by robot_server.py.
 
 Environment variables:
     ROBOT_IP          Robot's IP address (default: 192.168.8.219)

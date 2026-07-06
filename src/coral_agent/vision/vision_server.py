@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import uvicorn
@@ -13,8 +16,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from . import pose_classifier
 from .frame_broadcaster import FrameBroadcaster
 from .pose_estimator import PoseEstimator
+from .pose_to_robot import compute_joint_targets, hips_detected, targets_to_servo_commands
 
 logger = logging.getLogger("vision")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -26,13 +31,32 @@ _loop: Optional[asyncio.AbstractEventLoop] = None
 _pose_throttle_fps = 30
 _last_pose_time = 0.0
 
+# Latest frame + landmarks, kept for the demo's /features and /watch-for-action.
+# Updated every vision-loop iteration so they never need to touch the camera.
+_latest_jpeg: Optional[bytes] = None
+_latest_landmarks: list = []
+# Latest head pose (dict with yaw/pitch/roll), consumed by /features so the
+# pose→robot retargeting can drive head_pan/head_tilt. None when no face solve.
+_latest_head_pose: Optional[dict] = None
+
+# MobileNetV3 pose classifier — lazily loaded on first /classify (keeps torch off
+# the startup path and optional unless the demo actually classifies).
+_classifier = None
+_classes: list = []
+_device = None
+_classifier_lock = threading.Lock()
+
+_DEFAULT_CLASSIFIER_PATH = str(
+    Path(__file__).resolve().parent.parent / "robot" / "pi" / "model" / "pose_classifier.pt"
+)
+
 
 def _vision_loop():
     assert _estimator is not None and _broadcaster is not None
     logger.info("Vision thread started — loading models and opening camera...")
     _estimator.open()
     logger.info("Vision thread ready — publishing frames")
-    global _last_pose_time
+    global _last_pose_time, _latest_jpeg, _latest_landmarks, _latest_head_pose
     while _estimator.is_running:
         result = _estimator.process_frame()
         if result is None:
@@ -40,6 +64,10 @@ def _vision_loop():
             continue
 
         _broadcaster.publish_video(result.jpeg_bytes)
+        # Keep the freshest frame + landmarks for /features and /watch-for-action.
+        _latest_jpeg = result.jpeg_bytes
+        _latest_landmarks = result.body_landmarks
+        _latest_head_pose = result.head_pose.to_dict() if result.head_pose else None
 
         now = time.time()
         if now - _last_pose_time >= 1.0 / _pose_throttle_fps:
@@ -71,7 +99,7 @@ app = FastAPI(title="Coral Vision Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000","http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -123,6 +151,108 @@ async def websocket_pose(websocket: WebSocket):
         logger.warning("WebSocket error for %s: %s", client, exc)
     finally:
         _broadcaster.unsubscribe_pose(q)
+
+
+def _ensure_classifier() -> None:
+    """Load the MobileNetV3 classifier on first use (thread-safe, idempotent)."""
+    global _classifier, _classes, _device
+    if _classifier is not None:
+        return
+    with _classifier_lock:
+        if _classifier is not None:
+            return
+        model_path = os.getenv("CLASSIFIER_PATH", _DEFAULT_CLASSIFIER_PATH)
+        if not os.path.exists(model_path):
+            raise HTTPException(status_code=503, detail=f"classifier model not found: {model_path}")
+        _device = pose_classifier.select_device()
+        _classifier, _classes = pose_classifier.load_classifier(model_path, _device)
+        logger.info("Pose classifier loaded on %s — classes: %s", _device, _classes)
+
+
+@app.post("/classify")
+async def classify():
+    """Classify the current camera frame (MobileNetV3) → class + probabilities + image."""
+    import cv2
+    import numpy as np
+
+    _ensure_classifier()
+    jpeg = _latest_jpeg
+    if jpeg is None:
+        raise HTTPException(status_code=503, detail="no camera frame available yet")
+
+    frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=503, detail="could not decode camera frame")
+
+    top_class, probabilities = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: pose_classifier.classify_frame(frame, _classifier, _classes, _device)
+    )
+    return {
+        "class": top_class,
+        "probabilities": probabilities,
+        "image_b64": base64.b64encode(jpeg).decode("ascii"),
+        "image_format": "jpeg",
+    }
+
+
+# Move duration (ms) for pose-mimicry commands. Slow enough to look deliberate,
+# fast enough that the child sees Coral react promptly to their pose.
+_FOLLOW_DURATION_MS = 600
+
+
+@app.post("/map-features")
+async def map_features():
+    """Retarget the latest MediaPipe landmarks to robot servo commands.
+
+    Replaces the MobileNetV3 /classify path: instead of picking a canned pose
+    class, we map the person's actual body geometry to joint angles and hand back
+    the servo commands for the caller to execute. Returns the landmarks and the
+    frame they were computed from so the UI can show what Coral saw.
+    """
+    if _latest_jpeg is None:
+        raise HTTPException(status_code=503, detail="no camera frame available yet")
+
+    body = _latest_landmarks or []
+    image_b64 = base64.b64encode(_latest_jpeg).decode("ascii")
+
+    # The arm retargeting is anchored on the hips; without them we'd only be able
+    # to move the head, so ask the caller to reframe and retake instead.
+    if not hips_detected(body):
+        return {
+            "pose_detected": False,
+            "detail": "Make sure your wrists, shoulders, and hips are visible in the frame!",
+            "commands": [],
+            "targets": {},
+            "body_landmarks": body,
+            "image_b64": image_b64,
+            "image_format": "jpeg",
+        }
+
+    head = _latest_head_pose
+    targets = compute_joint_targets(body, head)
+    commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
+    return {
+        "pose_detected": True,
+        "commands": [
+            {"servo_id": c.servo_id, "position": c.position, "duration_ms": c.duration_ms}
+            for c in commands
+        ],
+        "targets": targets,
+        "body_landmarks": body,
+        "image_b64": image_b64,
+        "image_format": "jpeg",
+    }
+
+
+@app.get("/watch-for-action")
+async def watch_for_action(timeout: float = 30.0):
+    """Block until the 'hands close' gesture is seen, or until timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if pose_classifier.hands_close(_latest_landmarks):
+            return {"detected": True, "timeout": False}
+        await asyncio.sleep(0.1)
+    return {"detected": False, "timeout": True}
 
 
 @app.post("/calibrate/start")
