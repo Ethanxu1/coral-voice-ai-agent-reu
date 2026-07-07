@@ -54,6 +54,10 @@ export interface ProState {
   inputMode: InputMode
   moves: ProMove[]
   error: string | null
+  /** Live mic RMS during voice capture (0 when not recording). */
+  micLevel: number
+  /** Last transcription returned from the server — shown to the user for verification. */
+  lastTranscript: string | null
 }
 
 const initialState: ProState = {
@@ -70,6 +74,8 @@ const initialState: ProState = {
   inputMode: 'voice',
   moves: [],
   error: null,
+  micLevel: 0,
+  lastTranscript: null,
 }
 
 function reducer(state: ProState, patch: Partial<ProState>): ProState {
@@ -160,24 +166,45 @@ export function useProDemoMachine() {
           return
         }
 
-        // ── ADJUST: voice or text instruction, looped until an action lands ──
-        let gotAction = false
-        while (!gotAction) {
+        // ── ADJUST: loop until the user says they're satisfied ──
+        let satisfied = false
+        let firstTurn = true
+        while (!satisfied) {
           active()
+          const promptCaption = firstTurn
+            ? 'Describe an adjustment'
+            : 'Any more adjustments? Say "looks good" when done'
+          const listenCaption = firstTurn
+            ? 'Listening — describe an adjustment'
+            : 'Listening — more tweaks, or say "looks good"'
+
           let result
           if (inputModeRef.current === 'text') {
-            dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: 'Describe an adjustment' })
+            dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: promptCaption, lastTranscript: null })
             const text = await awaitText(); active()
-            dispatch({ awaitingText: false, status: 'thinking', caption: 'Applying adjustment…' })
+            dispatch({ awaitingText: false, status: 'thinking', caption: 'Thinking…' })
             result = await sendTextForAction(text); active()
           } else {
-            dispatch({ stage: 'ADJUST', status: 'recording', caption: 'Listening — describe an adjustment' })
-            const blob = await captureUtterance(); active()
-            dispatch({ status: 'thinking', caption: 'Applying adjustment…' })
+            dispatch({ stage: 'ADJUST', status: 'recording', caption: listenCaption, lastTranscript: null, micLevel: 0 })
+            const blob = await captureUtterance({
+              onLevel: (rms) => dispatch({ micLevel: rms }),
+            }); active()
+            dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
             result = await sendAudioForAction(blob); active()
+            dispatch({ lastTranscript: result.transcript || '(no speech detected)' })
           }
-          if (result.hasAction) {
-            gotAction = true
+          firstTurn = false
+
+          if (result.satisfied === true) {
+            // Combined case: apply any final tweak that came with the "done" signal.
+            if (result.hasAction) {
+              dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
+              await sleep(1200); active()
+            }
+            satisfied = true
+            dispatch({ status: 'idle', caption: result.content || 'Locked in' })
+            await sleep(600); active()
+          } else if (result.hasAction) {
             dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
             await sleep(1400); active()
           } else {
@@ -189,14 +216,17 @@ export function useProDemoMachine() {
         // ── NAME: label this move ────────────────────────────────────────────
         let label: string
         if (inputModeRef.current === 'text') {
-          dispatch({ stage: 'NAME', status: 'idle', awaitingText: true, caption: 'Name this move' })
+          dispatch({ stage: 'NAME', status: 'idle', awaitingText: true, caption: 'Name this move', lastTranscript: null })
           label = (await awaitText()); active()
           dispatch({ awaitingText: false, status: 'thinking' })
         } else {
-          dispatch({ stage: 'NAME', status: 'recording', caption: 'Say a name for this move' })
-          const nameBlob = await captureUtterance(); active()
-          dispatch({ status: 'thinking', caption: 'Saving…' })
+          dispatch({ stage: 'NAME', status: 'recording', caption: 'Say a name for this move', lastTranscript: null, micLevel: 0 })
+          const nameBlob = await captureUtterance({
+            onLevel: (rms) => dispatch({ micLevel: rms }),
+          }); active()
+          dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
           label = await sendAudioForTranscript(nameBlob); active()
+          dispatch({ lastTranscript: label || '(no speech detected)' })
         }
         const name = label.trim() || `Move ${i + 1}`
         moves.push({ name, frame: mapped.imageB64 })

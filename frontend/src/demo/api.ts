@@ -30,6 +30,7 @@ export interface ActionResult {
   transcript: string
   content: string
   hasAction: boolean
+  satisfied?: boolean | null
 }
 
 // ── Speaker (Mac :5002) — resolves only after speech finishes ─────────────────
@@ -214,7 +215,7 @@ export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<Actio
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
-        resolve({ transcript, content: data.content ?? '', hasAction: waypoints.length > 0 })
+        resolve({ transcript, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null })
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('audio-to-action ws error')) }
@@ -238,7 +239,7 @@ export function sendTextForAction(text: string, timeoutMs = 30000): Promise<Acti
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
-        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0 })
+        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null })
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('text-to-action ws error')) }

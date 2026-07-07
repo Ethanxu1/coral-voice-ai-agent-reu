@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useProDemoMachine, type ProState, type ProStatus } from '../demo/useProDemoMachine'
 import { LiveStream } from './DummyStream'
@@ -113,6 +113,15 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
             ) : (
               <StatusPill status={state.status} />
             )}
+            {state.inputMode === 'voice' && state.status === 'recording' && (
+              <Waveform level={state.micLevel} />
+            )}
+            {state.lastTranscript && (
+              <div className="pro-transcript">
+                <span className="pro-transcript-label">Heard</span>
+                <span className="pro-transcript-text">"{state.lastTranscript}"</span>
+              </div>
+            )}
           </div>
         </div>
       )
@@ -178,6 +187,28 @@ function StatusPill({ status }: { status: ProStatus }) {
     <div className={`pro-status pro-status-${status}`}>
       <span className="pro-status-icon">{icon}</span>
       <span>{label}</span>
+    </div>
+  )
+}
+
+const WAVE_BARS = 32
+function Waveform({ level }: { level: number }) {
+  const [bars, setBars] = useState<number[]>(() => Array(WAVE_BARS).fill(0))
+
+  useEffect(() => {
+    setBars((prev) => [...prev.slice(1), level])
+  }, [level])
+
+  const peak = Math.max(24, ...bars)
+  return (
+    <div className="pro-wave" aria-label="microphone level">
+      {bars.map((b, i) => (
+        <span
+          key={i}
+          className="pro-wave-bar"
+          style={{ height: `${Math.min(100, (b / peak) * 100)}%` }}
+        />
+      ))}
     </div>
   )
 }

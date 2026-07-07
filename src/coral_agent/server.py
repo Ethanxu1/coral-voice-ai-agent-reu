@@ -824,6 +824,7 @@ async def process_chat_message(
         plan_data = json.loads(planner_response_text)
 
         response = plan_data.get("verbal_response", "")
+        satisfied = plan_data.get("satisfied")
 
         # Each step is either a single Waypoint (sequential) or a list of parallel tracks.
         # A parallel track is itself a list[Waypoint] that executes concurrently with siblings.
@@ -927,6 +928,7 @@ async def process_chat_message(
             "content": response,
             "waypoints": executed_waypoints,
             "joint_states": _get_robot_state() or None,
+            "satisfied": satisfied,
         }
 
         if validation_warnings:

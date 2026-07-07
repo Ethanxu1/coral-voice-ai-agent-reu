@@ -165,6 +165,35 @@
 .pro-status-action { border-color: var(--good); color: var(--good); }
 .pro-status-clarify { border-color: var(--warn); color: var(--warn); }
 
+/* ── Waveform (live mic level) ───────────────────────────────────────────── */
+.pro-wave {
+  display: flex; align-items: center; gap: 3px;
+  height: 42px; padding: 6px 12px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  align-self: stretch;
+}
+.pro-wave-bar {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 2px;
+  min-height: 3px;
+  transition: height 60ms linear;
+  opacity: 0.85;
+}
+
+/* ── Transcript (what Whisper heard) ─────────────────────────────────────── */
+.pro-transcript {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 10px 14px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 14px;
+}
+.pro-transcript-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.pro-transcript-text { color: var(--text); font-style: italic; }
+
 .pro-text-entry { display: flex; gap: 10px; }
 .pro-text-input {
   flex: 1; padding: 12px 14px; border-radius: 10px;
