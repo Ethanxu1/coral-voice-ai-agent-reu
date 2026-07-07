@@ -48,6 +48,7 @@ from coral_agent.robot.interface import ServoCommand
 from coral_agent.robot.servo_config import SERVO_ID_MAP
 from coral_agent.robot.sim_controller import SimController
 from coral_agent.simulator import AiNexSimulator
+from coral_agent.collision_checker import CollisionChecker
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
     StateManager,
@@ -73,6 +74,7 @@ sim_dispatcher: SimController | None = None
 hardware_dispatcher: AiNexHardwareController | None = None
 robot_mode: str = "sim"
 follow_controller: FollowController | None = None
+collision_checker: CollisionChecker | None = None
 
 
 def _get_robot_state() -> dict[str, float]:
@@ -118,7 +120,7 @@ def get_router_prompt() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
-    global simulator, sim_dispatcher, hardware_dispatcher, robot_mode, follow_controller
+    global simulator, sim_dispatcher, hardware_dispatcher, robot_mode, follow_controller, collision_checker
 
     robot_mode = os.getenv("ROBOT_MODE", "sim")
 
@@ -136,6 +138,12 @@ async def lifespan(app: FastAPI):
         _sync_sim_to_hardware()
 
     logger.info(f"Robot dispatchers initialized (mode={robot_mode})")
+
+    if os.getenv("ENABLE_COLLISION_CHECK", "true").lower() in ("true", "1", "yes"):
+        collision_checker = CollisionChecker()
+        logger.info("Collision checker enabled — waypoints will be shadow-rolled before dispatch")
+    else:
+        logger.info("Collision checker disabled via ENABLE_COLLISION_CHECK=false")
 
     follow_controller = FollowController(dispatch_servo_commands)
 
@@ -322,6 +330,19 @@ async def execute_waypoints(
 
     for i, waypoint in enumerate(waypoints):
         duration_ms = speed_to_duration_ms(waypoint.speed)
+
+        if collision_checker is not None:
+            current = simulator.get_all_joint_states()
+            safe_joints, safe_frac, bad_pairs = collision_checker.check_trajectory(
+                current, waypoint.joints
+            )
+            if safe_frac < 1.0:
+                logger.warning(
+                    f"Waypoint {i} collision risk ({bad_pairs}); "
+                    f"reduced to {safe_frac:.0%} of target"
+                )
+                waypoint.joints = safe_joints
+
         commands = []
         for joint_name, rad in waypoint.joints.items():
             servo_id = SERVO_ID_MAP.get(joint_name)
