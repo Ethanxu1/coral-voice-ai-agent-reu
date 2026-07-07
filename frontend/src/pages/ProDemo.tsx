@@ -116,12 +116,7 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
             {state.inputMode === 'voice' && state.status === 'recording' && (
               <Waveform level={state.micLevel} />
             )}
-            {state.lastTranscript && (
-              <div className="pro-transcript">
-                <span className="pro-transcript-label">Heard</span>
-                <span className="pro-transcript-text">"{state.lastTranscript}"</span>
-              </div>
-            )}
+            <Conversation you={state.lastTranscript} coral={state.lastResponse} />
           </div>
         </div>
       )
@@ -209,6 +204,26 @@ function Waveform({ level }: { level: number }) {
           style={{ height: `${Math.min(100, (b / peak) * 100)}%` }}
         />
       ))}
+    </div>
+  )
+}
+
+function Conversation({ you, coral }: { you: string | null; coral: string | null }) {
+  if (!you && !coral) return null
+  return (
+    <div className="pro-convo">
+      {you && (
+        <div className="pro-convo-row">
+          <span className="pro-convo-who pro-convo-who-you">You</span>
+          <span className="pro-convo-msg pro-convo-msg-you">"{you}"</span>
+        </div>
+      )}
+      {coral && (
+        <div className="pro-convo-row">
+          <span className="pro-convo-who pro-convo-who-coral">Coral</span>
+          <span className="pro-convo-msg">{coral}</span>
+        </div>
+      )}
     </div>
   )
 }

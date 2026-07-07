@@ -9,10 +9,9 @@ import {
   captureUtterance,
   mapFeatures,
   move,
+  openActionSession,
   playShutter,
-  sendAudioForAction,
   sendAudioForTranscript,
-  sendTextForAction,
   setRobotState,
   sleep,
   watchForAction,
@@ -56,8 +55,10 @@ export interface ProState {
   error: string | null
   /** Live mic RMS during voice capture (0 when not recording). */
   micLevel: number
-  /** Last transcription returned from the server — shown to the user for verification. */
+  /** Last user utterance (voice transcription or typed text) — shown to the user for verification. */
   lastTranscript: string | null
+  /** Agent's most recent verbal_response — persists so the user can read it while the next turn is being captured. */
+  lastResponse: string | null
 }
 
 const initialState: ProState = {
@@ -76,6 +77,7 @@ const initialState: ProState = {
   error: null,
   micLevel: 0,
   lastTranscript: null,
+  lastResponse: null,
 }
 
 function reducer(state: ProState, patch: Partial<ProState>): ProState {
@@ -167,60 +169,74 @@ export function useProDemoMachine() {
         }
 
         // ── ADJUST: loop until the user says they're satisfied ──
-        let satisfied = false
-        let firstTurn = true
-        while (!satisfied) {
-          active()
-          const promptCaption = firstTurn
-            ? 'Describe an adjustment'
-            : 'Any more adjustments? Say "looks good" when done'
-          const listenCaption = firstTurn
-            ? 'Listening — describe an adjustment'
-            : 'Listening — more tweaks, or say "looks good"'
+        // One WebSocket for the whole refinement so the server's per-connection
+        // HierarchicalMemory + Langfuse session_id span every turn — otherwise
+        // each utterance would look like a stateless first message to the LLM.
+        const session = openActionSession()
+        // Reset the mini-conversation for this pose. Subsequent turns intentionally
+        // leave lastTranscript / lastResponse alone so the user can still read the
+        // prior exchange while the next input is being captured.
+        dispatch({ lastTranscript: null, lastResponse: null })
+        try {
+          let satisfied = false
+          let firstTurn = true
+          while (!satisfied) {
+            active()
+            const promptCaption = firstTurn
+              ? 'Describe an adjustment'
+              : 'Any more adjustments? Say "looks good" when done'
+            const listenCaption = firstTurn
+              ? 'Listening — describe an adjustment'
+              : 'Listening — more tweaks, or say "looks good"'
 
-          let result
-          if (inputModeRef.current === 'text') {
-            dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: promptCaption, lastTranscript: null })
-            const text = await awaitText(); active()
-            dispatch({ awaitingText: false, status: 'thinking', caption: 'Thinking…' })
-            result = await sendTextForAction(text); active()
-          } else {
-            dispatch({ stage: 'ADJUST', status: 'recording', caption: listenCaption, lastTranscript: null, micLevel: 0 })
-            const blob = await captureUtterance({
-              onLevel: (rms) => dispatch({ micLevel: rms }),
-            }); active()
-            dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
-            result = await sendAudioForAction(blob); active()
-            dispatch({ lastTranscript: result.transcript || '(no speech detected)' })
-          }
-          firstTurn = false
-
-          if (result.satisfied === true) {
-            // Combined case: apply any final tweak that came with the "done" signal.
-            if (result.hasAction) {
-              dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
-              await sleep(1200); active()
+            let result
+            if (inputModeRef.current === 'text') {
+              dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: promptCaption })
+              const text = await awaitText(); active()
+              dispatch({ awaitingText: false, status: 'thinking', caption: 'Thinking…', lastTranscript: text })
+              result = await session.sendText(text); active()
+            } else {
+              dispatch({ stage: 'ADJUST', status: 'recording', caption: listenCaption, micLevel: 0 })
+              const blob = await captureUtterance({
+                onLevel: (rms) => dispatch({ micLevel: rms }),
+              }); active()
+              dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
+              result = await session.sendAudio(blob); active()
+              dispatch({ lastTranscript: result.transcript || '(no speech detected)' })
             }
-            satisfied = true
-            dispatch({ status: 'idle', caption: result.content || 'Locked in' })
-            await sleep(600); active()
-          } else if (result.hasAction) {
-            dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
-            await sleep(1400); active()
-          } else {
-            dispatch({ status: 'clarify', caption: result.content || 'Didn\'t catch that — try rephrasing' })
-            await sleep(1600); active()
+            dispatch({ lastResponse: result.content || null })
+            firstTurn = false
+
+            if (result.satisfied === true) {
+              // Combined case: apply any final tweak that came with the "done" signal.
+              if (result.hasAction) {
+                dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
+                await sleep(1200); active()
+              }
+              satisfied = true
+              dispatch({ status: 'idle', caption: result.content || 'Locked in' })
+              await sleep(600); active()
+            } else if (result.hasAction) {
+              dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
+              await sleep(1400); active()
+            } else {
+              dispatch({ status: 'clarify', caption: result.content || 'Didn\'t catch that — try rephrasing' })
+              await sleep(1600); active()
+            }
           }
+        } finally {
+          session.close()
         }
 
         // ── NAME: label this move ────────────────────────────────────────────
+        // Clear the ADJUST mini-conversation so it doesn't sit over the NAME prompt.
         let label: string
         if (inputModeRef.current === 'text') {
-          dispatch({ stage: 'NAME', status: 'idle', awaitingText: true, caption: 'Name this move', lastTranscript: null })
+          dispatch({ stage: 'NAME', status: 'idle', awaitingText: true, caption: 'Name this move', lastTranscript: null, lastResponse: null })
           label = (await awaitText()); active()
-          dispatch({ awaitingText: false, status: 'thinking' })
+          dispatch({ awaitingText: false, status: 'thinking', lastTranscript: label })
         } else {
-          dispatch({ stage: 'NAME', status: 'recording', caption: 'Say a name for this move', lastTranscript: null, micLevel: 0 })
+          dispatch({ stage: 'NAME', status: 'recording', caption: 'Say a name for this move', lastTranscript: null, lastResponse: null, micLevel: 0 })
           const nameBlob = await captureUtterance({
             onLevel: (rms) => dispatch({ micLevel: rms }),
           }); active()

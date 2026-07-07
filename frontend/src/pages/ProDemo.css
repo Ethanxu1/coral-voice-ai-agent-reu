@@ -181,18 +181,26 @@
   opacity: 0.85;
 }
 
-/* ── Transcript (what Whisper heard) ─────────────────────────────────────── */
-.pro-transcript {
-  display: flex; align-items: baseline; gap: 10px;
-  padding: 10px 14px; border-radius: 10px;
+/* ── Mini-conversation (last You / Coral exchange) ───────────────────────── */
+/* Persists across turns so the user has time to read what they said and what
+   the agent replied even after the loop moves on to the next input. */
+.pro-convo {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px; border-radius: 12px;
   background: var(--surface-2); border: 1px solid var(--border);
-  font-size: 14px;
 }
-.pro-transcript-label {
+.pro-convo-row {
+  display: grid; grid-template-columns: 52px 1fr; align-items: baseline;
+  gap: 12px; font-size: 15px; line-height: 1.35;
+}
+.pro-convo-who {
   font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
-  text-transform: uppercase; color: var(--text-dim);
+  text-transform: uppercase; text-align: right;
 }
-.pro-transcript-text { color: var(--text); font-style: italic; }
+.pro-convo-who-you { color: var(--text-dim); }
+.pro-convo-who-coral { color: var(--accent); }
+.pro-convo-msg { color: var(--text); }
+.pro-convo-msg-you { font-style: italic; color: var(--text-dim); }
 
 .pro-text-entry { display: flex; gap: 10px; }
 .pro-text-input {
