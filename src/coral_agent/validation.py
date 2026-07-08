@@ -50,15 +50,23 @@ JOINT_LIMITS: dict[str, JointLimit] = {
     "r_el_pitch": JointLimit(-2.09, 2.09),
     "r_el_yaw": JointLimit(-2.09, 2.09),
     "r_gripper": JointLimit(-2.09, 2.09),
-    # Left leg (flexion −0.79 = 45° fwd, extension +0.35 = 20° back;
-    # abduction −0.52 = 30° out, adduction +0.35 = 20° in; knee bend ≤ 1.05 = 60°)
+    # Legs: tightened per-joint "safe" caps to keep a free-standing robot from
+    # tipping during LIVE retargeting. These are enforced in compute_joint_targets
+    # (retarget/legacy) — NOT at the sim, which clamps only to the mechanical
+    # jnt_range. So classify mode's canned poses (dab/warrior2 crouches) bypass
+    # these caps and render in full; only the live person-driven leg mapping is
+    # capped here.
+    #   hip_roll  — user-tested servo sweep (outward 30°, inward 20°).
+    #   hip_pitch/knee — conservative caps (flexion 45° / bend 60°).
+    #   ankles — tighter physical limits matching ainex_primitives.xml.
+    # Sign conventions (sim frame): l_hip_pitch flexion = −, l_hip_roll abduction
+    # = −, l_knee flexion = +; right side mirrored. See pose_to_robot.py.
     "l_hip_yaw": JointLimit(-2.09, 2.09),
     "l_hip_roll": JointLimit(-0.52, 0.35),
     "l_hip_pitch": JointLimit(-0.79, 0.35),
     "l_knee": JointLimit(0.0, 1.05),
     "l_ank_pitch": JointLimit(-1.0, 1.0),
     "l_ank_roll": JointLimit(-0.4, 0.4),
-    # Right leg (mirror of left: signs flipped)
     "r_hip_yaw": JointLimit(-2.09, 2.09),
     "r_hip_roll": JointLimit(-0.35, 0.52),
     "r_hip_pitch": JointLimit(-0.35, 0.79),

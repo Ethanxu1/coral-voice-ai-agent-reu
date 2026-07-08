@@ -6,6 +6,7 @@ import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
 import TestUIRouter from './pages/TestUIRouter'
 import ProDemo from './pages/ProDemo'
+import PoseTester from './pages/PoseTester'
 import RobotModeToggle from './components/RobotModeToggle'
 
 interface WaypointInfo {
@@ -193,6 +194,9 @@ function App() {
           <Link to="/prodemo" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🧪 Pro Demo</button>
           </Link>
+          <Link to="/pose-tester" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🦿 Pose Tester</button>
+          </Link>
         </div>
         <RobotModeToggle />
       </div>
@@ -206,6 +210,7 @@ function App() {
       <Route path="/demo" element={<TestUIRouter />} />
       <Route path="/testui" element={<TestUIRouter />} />
       <Route path="/prodemo" element={<ProDemo />} />
+      <Route path="/pose-tester" element={<PoseTester />} />
     </Routes>
   )
 }

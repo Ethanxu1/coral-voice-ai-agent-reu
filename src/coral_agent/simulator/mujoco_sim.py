@@ -137,8 +137,17 @@ class AiNexSimulator:
         if actuator_id is None:
             raise ValueError(f"Unknown joint: {joint_name}")
 
-        if joint_name in JOINT_LIMITS:
-            position = JOINT_LIMITS[joint_name].clamp(position)
+        # Clamp to the joint's MECHANICAL range (jnt_range), not the tighter
+        # retargeting caps in validation.JOINT_LIMITS. Those safety caps are a
+        # planning-layer concern — enforced in compute_joint_targets (live
+        # retarget/legacy leg mapping) and validate_waypoint. Classify mode's
+        # canned poses (dab/warrior2 crouches) deliberately bypass them, so the
+        # sim must render whatever it's commanded, bounded only by what the
+        # hardware can physically reach.
+        joint_id = int(self.model.actuator_trnid[actuator_id, 0])
+        lo, hi = self.model.jnt_range[joint_id]
+        if lo < hi:  # jnt_range is (0, 0) for unlimited joints — skip those
+            position = max(float(lo), min(float(hi), float(position)))
 
         with self._lock:
             self.data.ctrl[actuator_id] = position
@@ -232,22 +241,22 @@ class AiNexSimulator:
 
     # === LEFT LEG CONTROLS ===
     def move_left_hip_forward(self) -> None:
-        self.move_joint("l_hip_pitch", self.STEP_SIZE)
-
-    def move_left_hip_backward(self) -> None:
         self.move_joint("l_hip_pitch", -self.STEP_SIZE)
 
-    def move_left_hip_out(self) -> None:
-        self.move_joint("l_hip_roll", self.STEP_SIZE)
+    def move_left_hip_backward(self) -> None:
+        self.move_joint("l_hip_pitch", self.STEP_SIZE)
 
-    def move_left_hip_in(self) -> None:
+    def move_left_hip_out(self) -> None:
         self.move_joint("l_hip_roll", -self.STEP_SIZE)
 
+    def move_left_hip_in(self) -> None:
+        self.move_joint("l_hip_roll", self.STEP_SIZE)
+
     def rotate_left_hip_in(self) -> None:
-        self.move_joint("l_hip_yaw", -self.STEP_SIZE)
+        self.move_joint("l_hip_yaw", self.STEP_SIZE)
 
     def rotate_left_hip_out(self) -> None:
-        self.move_joint("l_hip_yaw", self.STEP_SIZE)
+        self.move_joint("l_hip_yaw", -self.STEP_SIZE)
 
     def bend_left_knee(self) -> None:
         self.move_joint("l_knee", self.STEP_SIZE)
@@ -275,16 +284,16 @@ class AiNexSimulator:
         self.move_joint("r_hip_pitch", -self.STEP_SIZE)
 
     def move_right_hip_out(self) -> None:
-        self.move_joint("r_hip_roll", -self.STEP_SIZE)
-
-    def move_right_hip_in(self) -> None:
         self.move_joint("r_hip_roll", self.STEP_SIZE)
 
+    def move_right_hip_in(self) -> None:
+        self.move_joint("r_hip_roll", -self.STEP_SIZE)
+
     def rotate_right_hip_in(self) -> None:
-        self.move_joint("r_hip_yaw", self.STEP_SIZE)
+        self.move_joint("r_hip_yaw", -self.STEP_SIZE)
 
     def rotate_right_hip_out(self) -> None:
-        self.move_joint("r_hip_yaw", -self.STEP_SIZE)
+        self.move_joint("r_hip_yaw", self.STEP_SIZE)
 
     def bend_right_knee(self) -> None:
         self.move_joint("r_knee", -self.STEP_SIZE)

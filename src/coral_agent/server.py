@@ -467,6 +467,11 @@ class ServoMove(BaseModel):
     duration_ms: int
 
 
+class SetPoseRequest(BaseModel):
+    """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
+    pulses: dict[str, int]
+
+
 class StateRequest(BaseModel):
     mode: str
 
@@ -546,6 +551,36 @@ async def demo_classify() -> dict[str, Any]:
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"vision server unreachable at {VISION_BASE}: {e}")
+
+
+@app.post("/set-pose")
+async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
+    """Apply a raw {joint: hardware_pulse} pose to the sim (testing tool).
+
+    Accepts the exact pulse dicts authored in motions.py. Each pulse is a
+    *hardware* servo unit, so it's converted to sim radians with
+    hardware_units_to_rad (the same path /motion uses for named poses) — this
+    is what makes joints whose hardware neutral isn't 500 (hip_pitch, ankles,
+    sho_pitch, el_yaw) land at the right MuJoCo angle. set_joint_position then
+    clamps each to its JOINT_LIMITS. Sim only; unknown joints are reported back.
+    """
+    if simulator is None:
+        return {"status": "error", "detail": "simulator not initialized"}
+
+    applied: list[str] = []
+    skipped: list[str] = []
+    for joint, pulse in req.pulses.items():
+        if joint not in SERVO_ID_MAP:
+            skipped.append(joint)
+            continue
+        try:
+            simulator.set_joint_position(joint, hardware_units_to_rad(int(pulse), joint))
+            applied.append(joint)
+        except Exception as e:  # unknown sim joint / bad value — skip, keep going
+            logger.debug(f"/set-pose: skip joint {joint}: {e}")
+            skipped.append(joint)
+
+    return {"status": "done", "applied": applied, "skipped": skipped}
 
 
 @app.post("/move")

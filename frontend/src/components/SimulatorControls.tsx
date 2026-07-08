@@ -224,28 +224,28 @@ function SimulatorControls({
               onClick={() => onCommand('left_hip_forward')}
               disabled={!isConnected}
             >
-              Hip Back
+              Hip Forward
             </button>
             <button
               className="control-btn"
               onClick={() => onCommand('left_hip_backward')}
               disabled={!isConnected}
             >
-              Hip Forward
+              Hip Back
             </button>
             <button
               className="control-btn"
               onClick={() => onCommand('left_hip_out')}
               disabled={!isConnected}
             >
-              Hip In
+              Hip Out
             </button>
             <button
               className="control-btn"
               onClick={() => onCommand('left_hip_in')}
               disabled={!isConnected}
             >
-              Hip Out
+              Hip In
             </button>
           </div>
           <div className="button-row" style={{ marginTop: '0.5rem' }}>
@@ -254,14 +254,14 @@ function SimulatorControls({
               onClick={() => onCommand('left_hip_rotate_in')}
               disabled={!isConnected}
             >
-              Hip Rotate Out
+              Hip Rotate In
             </button>
             <button
               className="control-btn"
               onClick={() => onCommand('left_hip_rotate_out')}
               disabled={!isConnected}
             >
-              Hip Rotate In
+              Hip Rotate Out
             </button>
             <button
               className="control-btn"
@@ -332,14 +332,14 @@ function SimulatorControls({
               onClick={() => onCommand('right_hip_out')}
               disabled={!isConnected}
             >
-              Hip In
+              Hip Out
             </button>
             <button
               className="control-btn"
               onClick={() => onCommand('right_hip_in')}
               disabled={!isConnected}
             >
-              Hip Out
+              Hip In
             </button>
           </div>
           <div className="button-row" style={{ marginTop: '0.5rem' }}>
@@ -348,14 +348,14 @@ function SimulatorControls({
               onClick={() => onCommand('right_hip_rotate_in')}
               disabled={!isConnected}
             >
-              Hip Rotate Out
+              Hip Rotate In
             </button>
             <button
               className="control-btn"
               onClick={() => onCommand('right_hip_rotate_out')}
               disabled={!isConnected}
             >
-              Hip Rotate In
+              Hip Rotate Out
             </button>
             <button
               className="control-btn"

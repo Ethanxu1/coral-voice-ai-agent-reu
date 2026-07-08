@@ -71,9 +71,9 @@ _DEPTH_GATE_2D_FRACTION = 0.05
 _HEAD_PAN_CAP = math.radians(60)
 _HEAD_TILT_CAP = math.radians(30)
 
-# Stand-pose offsets (radians) — must match primitives.py
-_STAND_L_SHO_ROLL = -1.403
-_STAND_R_SHO_ROLL = 1.403
+# Stand-pose offsets (radians) — must match primitives.py / ainex.xml keyframe
+_STAND_L_SHO_ROLL = -1.3614
+_STAND_R_SHO_ROLL = 1.3614
 
 
 class JointAngleSmoother:

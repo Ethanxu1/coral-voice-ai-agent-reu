@@ -8,21 +8,30 @@ Conversion formula per joint:
     delta_rad = rad - HW_STAND_RAD[joint]
     hw_units  = STAND_PULSE[joint] + round(delta_rad * TICKS_PER_RAD * HW_DIRECTION[joint])
 
-HW_STAND_RAD captures the MuJoCo ctrl value at the stand keyframe (non-zero for
-shoulder-roll and elbow-yaw joints whose stand poses are offset from zero).
+HW_STAND_RAD captures the MuJoCo ctrl value at the stand keyframe. It MUST stay
+equal, joint-for-joint, to the `stand` keyframe in assets/ainex/ainex.xml — that
+equality is what makes hardware_units_to_rad(STAND_PULSE[j], j) render exactly the
+sim's stand. The stand is a calibrated bent-knee stance, so the legs (hip pitch,
+knee, ankle pitch) are non-zero alongside the shoulder-roll/elbow-yaw arm offsets.
 HW_DIRECTION is +1 when hardware and sim have the same increasing direction, -1 otherwise.
 """
 
 import math
 from .servo_config import STAND_PULSE, TICKS_PER_RAD
 
-# Arm joints whose MuJoCo stand-keyframe ctrl value is not 0.0.
-# Derived from the STAND_* constants in primitives.py.
+# Joints whose MuJoCo stand-keyframe ctrl value is not 0.0. Must match the
+# `stand` keyframe in ainex.xml exactly (see module docstring). Calibrated to
+# the physical robot's stand at STAND_PULSE via tools/author_stand.py; the legs
+# carry a bent-knee stance and the arms keep their shoulder-roll/elbow-yaw offsets.
 HW_STAND_RAD: dict[str, float] = {
-    "l_sho_roll": -1.403,   # STAND_L_SHO_ROLL
-    "r_sho_roll":  1.403,   # STAND_R_SHO_ROLL
-    "l_el_yaw":   -1.226,   # STAND_L_EL_YAW
-    "r_el_yaw":    1.226,   # STAND_R_EL_YAW
+    # Legs (bent-knee stand)
+    "r_hip_pitch": 0.4887,  "l_hip_pitch": -0.4887,
+    "r_knee":     -0.9250,  "l_knee":       0.9250,
+    "r_ank_pitch": -0.4887, "l_ank_pitch":  0.4887,
+    # Arms
+    "r_sho_pitch": -0.4363, "l_sho_pitch": -0.4363,
+    "r_sho_roll":   1.3614, "l_sho_roll":  -1.3614,
+    "r_el_yaw":     1.5708, "l_el_yaw":    -1.5708,
 }
 
 # +1: hw increases as sim rad increases; -1: hw decreases as sim rad increases.
@@ -57,13 +66,13 @@ HW_DIRECTION: dict[str, int] = {
     # sweep (servo 9: 400=outward, servo 10: 600=outward, servo 11:
     # 300=outward, servo 12: 700=outward). Verify on hardware before driving.
     "l_ank_roll":  +1,   # no calibration data — unverified guess
-    "l_ank_pitch": -1,   # crouch: dorsiflexion (−rad) → pulse up
+    "l_ank_pitch": +1,   # crouch: dorsiflexion (−rad) → pulse up
     "l_knee":      +1,   # crouch: flexion (+rad) → pulse up
     "l_hip_pitch": +1,   # crouch: flexion (−rad) → pulse down
     "l_hip_roll":  +1,   # sweep: abduction (−rad) → 400 (down)
     "l_hip_yaw":   +1,   # sweep: external rotation (−rad) → 300 (down)
     "r_ank_roll":  -1,   # no calibration data — unverified guess
-    "r_ank_pitch": -1,   # was +1; crouch: dorsiflexion (+rad) → pulse down
+    "r_ank_pitch": +1,   # was +1; crouch: dorsiflexion (+rad) → pulse down
     "r_knee":      +1,   # was -1; crouch: flexion (−rad) → pulse down
     "r_hip_pitch": +1,   # was -1; crouch: flexion (+rad) → pulse up
     "r_hip_roll":  +1,   # was -1; sweep: abduction (+rad) → 600 (up)
