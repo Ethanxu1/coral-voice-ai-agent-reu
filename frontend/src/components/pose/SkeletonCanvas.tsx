@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react'
+import { useMemo } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Line } from '@react-three/drei'
 import * as THREE from 'three'
@@ -103,8 +103,10 @@ function SkeletonScene({ landmarks, headPose }: SceneProps) {
           <Line
             key={i}
             points={[positions[a], positions[b]]}
-            color={`rgba(120,180,255,${Math.max(0.3, avg * 0.8)})`}
+            color="#78b4ff"
             lineWidth={1.5}
+            transparent
+            opacity={Math.max(0.3, avg * 0.8)}
           />
         )
       })}
@@ -145,6 +147,7 @@ export default function SkeletonCanvas({ landmarks, headPose }: Props) {
   return (
     <Canvas
       camera={{ position: [0, 0.1, 4.5], fov: 45 }}
+      dpr={1}
       style={{ background: '#0d0d0d', borderRadius: 8, width: '100%', height: '100%' }}
     >
       <ambientLight intensity={0.9} />

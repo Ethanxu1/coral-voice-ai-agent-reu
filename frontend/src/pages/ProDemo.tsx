@@ -1,19 +1,27 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useProDemoMachine, type ProState, type ProStatus } from '../demo/useProDemoMachine'
 import { LiveStream } from './DummyStream'
 import './ProDemo.css'
 
-const PHASES: { key: ProState['stage'][]; label: string }[] = [
-  { key: ['WATCH'], label: 'Capture' },
-  { key: ['COUNTDOWN', 'LOADING'], label: 'Retarget' },
-  { key: ['ADJUST'], label: 'Adjust' },
-  { key: ['NAME'], label: 'Name' },
-]
-
 export default function ProDemo() {
-  const { state, start, retry, exit, toggleInputMode, submitText } = useProDemoMachine()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { state, start, retry, exit: exitMachine, toggleInputMode, submitText } = useProDemoMachine()
   const running = !['IDLE', 'DONE', 'ERROR'].includes(state.stage)
+
+  const exit = useCallback(() => {
+    exitMachine()
+    navigate('/')
+  }, [exitMachine, navigate])
+
+  useEffect(() => {
+    if (!(location.state as { fromApp?: boolean } | null)?.fromApp) {
+      navigate('/', { replace: true })
+      return
+    }
+    start()
+  }, [])
 
   return (
     <div className="pro-root">
@@ -45,21 +53,11 @@ export default function ProDemo() {
         </div>
       </header>
 
-      {running && <PhaseBar stage={state.stage} />}
-
       <main className="pro-stage">
         <Stage state={state} onSubmitText={submitText} />
         {state.flash && <div className="pro-flash" />}
       </main>
 
-      {state.stage === 'IDLE' && (
-        <Overlay
-          title="Motion Retargeting Demo"
-          message="Three rounds: strike a pose, Coral mirrors it, refine by voice or text, then name it."
-          primaryLabel="▶ Start"
-          onPrimary={start}
-        />
-      )}
       {state.stage === 'ERROR' && (
         <Overlay
           title="Something went wrong"
@@ -69,20 +67,6 @@ export default function ProDemo() {
           onExit={exit}
         />
       )}
-    </div>
-  )
-}
-
-function PhaseBar({ stage }: { stage: ProState['stage'] }) {
-  const activeIdx = PHASES.findIndex((p) => p.key.includes(stage))
-  return (
-    <div className="pro-phasebar">
-      {PHASES.map((p, i) => (
-        <div key={p.label} className={`pro-phase ${i === activeIdx ? 'active' : ''} ${i < activeIdx ? 'done' : ''}`}>
-          <span className="pro-phase-idx">{i + 1}</span>
-          <span className="pro-phase-label">{p.label}</span>
-        </div>
-      ))}
     </div>
   )
 }
@@ -99,12 +83,14 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
             {state.frame ? (
               <img className="pro-frame" src={`data:image/jpeg;base64,${state.frame}`} alt="Captured pose" />
             ) : (
-              <div className="pro-frame pro-frame-empty">No frame</div>
+              <LiveStream className="pro-live" />
             )}
           </div>
           <div className="pro-input-pane">
-            <div className="pro-input-title">{state.stage === 'NAME' ? 'Name this move' : 'Refine the pose'}</div>
-            <div className="pro-caption-lg">{state.caption}</div>
+            <div className="pro-input-title">
+              {state.stage === 'NAME' ? 'Name this move' : state.frame ? 'Refine the pose' : 'Coral'}
+            </div>
+            {state.caption && <div className="pro-caption-lg">{state.caption}</div>}
             {state.awaitingText ? (
               <TextEntry
                 placeholder={state.stage === 'NAME' ? 'e.g. Victory Stance' : 'e.g. raise the left arm higher'}
@@ -117,11 +103,12 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
               <Waveform level={state.micLevel} />
             )}
             <Conversation you={state.lastTranscript} coral={state.lastResponse} />
+            {state.detail && <div className="pro-detail">{state.detail}</div>}
           </div>
         </div>
       )
     default:
-      // WATCH / COUNTDOWN / LOADING — live stream stage
+      // COUNTDOWN / LOADING / IDLE — full-screen live stream
       return (
         <div className="pro-live-wrap">
           <LiveStream className="pro-live" />
@@ -136,11 +123,7 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
               <span key={state.countdown}>{state.countdown}</span>
             </div>
           )}
-          <div className="pro-live-caption">
-            {state.stage === 'WATCH' && <span className="pro-pulse-dot" />}
-            {state.caption}
-          </div>
-          {state.detail && <div className="pro-detail">{state.detail}</div>}
+          {state.caption && <div className="pro-live-caption">{state.caption}</div>}
         </div>
       )
   }

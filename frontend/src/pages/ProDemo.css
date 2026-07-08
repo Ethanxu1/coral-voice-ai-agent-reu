@@ -89,6 +89,10 @@
   border: 1px solid var(--border);
   font-size: 15px; font-weight: 600; white-space: nowrap;
 }
+.pro-capture-btn {
+  position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+  font-size: 15px; padding: 10px 28px;
+}
 .pro-detail {
   position: absolute; bottom: 62px; left: 50%; transform: translateX(-50%);
   padding: 8px 16px; border-radius: 8px;
@@ -140,9 +144,11 @@
 @keyframes pro-flash { from { opacity: 0.9; } to { opacity: 0; } }
 
 /* ── Split (adjust / name) ───────────────────────────────────────────────── */
-.pro-split { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; height: 100%; }
-.pro-frame-pane { border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--border); }
+.pro-split { display: grid; grid-template-columns: 1.3fr 1fr; grid-template-rows: 1fr; gap: 20px; height: 100%; }
+.pro-frame-pane { border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--border); height: 100%; }
 .pro-frame { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Override tui-stream's TestUI styling when used inside the pro frame pane */
+.pro-frame-pane .tui-stream { border-radius: 0; border: none; width: 100%; height: 100%; }
 .pro-frame-empty { display: grid; place-items: center; color: var(--text-dim); background: var(--surface-2); }
 
 .pro-input-pane {

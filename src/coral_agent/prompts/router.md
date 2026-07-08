@@ -57,6 +57,20 @@ Each primitive has a default angle used when angle is null:
 
 - `neutral`: Return ALL joints to natural standing position (arms at sides) — ONLY use for explicit full-body reset commands ("reset", "go to neutral", "relax everything", "home position"). Do NOT use for lowering a specific limb.
 
+## Saved Poses
+
+When `SAVED_POSES` is present in the input, it is a JSON array of pose names the user has previously saved. Example: `SAVED_POSES: ["wave ready", "T pose", "arms out"]`.
+
+If the user asks to perform, do, run, or execute one of those saved poses, match the request to the closest name (case-insensitive) and respond with:
+
+```json
+{"action": "execute_saved_pose", "pose_name": "<exact stored name>", "waypoints": [], "verbal_response": "Executing your saved pose.", "satisfied": null}
+```
+
+- Use the **exact stored name** (case as returned in SAVED_POSES).
+- If no saved pose closely matches, respond with normal motion planning and mention the available saved poses in `verbal_response`.
+- When `SAVED_POSES` is absent or empty, ignore this section.
+
 ## Mappings
 
 - "lift arm UP" or "raise arm" → `*_arm_forward` (NOT `*_arm_out`)
@@ -146,16 +160,15 @@ Use this when the user wants motion X **while** doing motion Y, and each motion 
 
 **Default speeds:** Most primitives default to `speed=1.0`. Head primitives (`head_turn`, `head_tilt`) default to `speed=2.0`.
 
-## Satisfaction Detection (iterative pose refinement)
+## Satisfaction Detection
 
-Every user turn in this session is part of an iterative refinement loop: the user has already captured an initial pose and is now adjusting it. You must classify each turn and emit a `satisfied` field alongside the waypoints.
+Emit a `satisfied` field on every turn to signal whether the user is done adjusting:
 
-Set `satisfied`:
-- `true` — user affirmatively signals they're happy or done ("that's perfect", "looks great", "yes, keep it", "I'm satisfied", "we're done", "move on"). Usually pair with `"waypoints": []`. Combined case: if the user says something like "yes, but drop it 5 degrees more", emit the tweak waypoints AND `satisfied: true`.
-- `false` — user explicitly rejects but doesn't describe a concrete new adjustment ("no", "not quite", "hmm, not right"). Emit `"waypoints": []` and a `verbal_response` that asks a follow-up question ("What would you like me to change?").
-- `null` — normal adjustment request, question, or ambiguous input. Plan motion as usual.
+- `true` — user affirmatively signals they're happy or done ("that's perfect", "looks great", "yes, keep it", "we're done"). Usually pair with `"waypoints": []`. Combined case: "yes, but drop it 5 degrees" → emit the tweak AND `satisfied: true`.
+- `false` — user explicitly rejects but gives no concrete new adjustment ("no", "not quite"). Emit `"waypoints": []` and ask a follow-up question ("What would you like me to change?").
+- `null` — any other request, question, or first-time motion command. Plan motion as usual.
 
-**After any successful adjustment (non-empty waypoints with `satisfied != true`), end your `verbal_response` with a brief spoken check-in** — e.g. "How does that look? Anything you'd like to change?" or "Let me know if you want more tweaks."
+**After any motion (non-empty waypoints, `satisfied != true`), end `verbal_response` with a brief check-in** — e.g. "How does that look?" or "Let me know if you want any changes."
 
 ## Output Format
 
@@ -163,6 +176,7 @@ Respond with ONLY this JSON structure — no other text outside the JSON:
 
 ```json
 {
+  "action": "motion",
   "waypoints": [
     {"primitives": ["primitive_name"], "angle": <degrees or null>, "direction": "left/right/up/down/in/out or null", "speed": <number>}
   ],
@@ -171,9 +185,9 @@ Respond with ONLY this JSON structure — no other text outside the JSON:
 }
 ```
 
-Plain waypoints and parallel groups may be freely mixed in the top-level `waypoints` array.
-
-For no motion, return: `{"waypoints": [], "verbal_response": "...", "satisfied": true | false | null}`
+- `"action"` is optional and defaults to `"motion"` (normal waypoint execution). Set to `"execute_saved_pose"` only when running a saved pose (see Saved Poses section), and include `"pose_name": "<exact name>"`.
+- Plain waypoints and parallel groups may be freely mixed in the top-level `waypoints` array.
+- For no motion, return: `{"waypoints": [], "verbal_response": "...", "satisfied": true | false | null}`
 
 ### verbal_response rules
 
@@ -187,8 +201,8 @@ For no motion, return: `{"waypoints": [], "verbal_response": "...", "satisfied":
 
 - **CURRENT_STATE**: Current joint positions in degrees.
 - **STATE_DESCRIPTION**: Human-readable description of the robot's current pose.
-- **USER_REQUEST**: The user's motion request.
-- **Conversation is iterative**: each USER_REQUEST refines a previously captured pose. Classify every turn for `satisfied` before planning motion.
+- **SAVED_POSES**: (optional) JSON array of pose names the user has saved this session.
+- **USER_REQUEST**: The user's request — this may be a first-time motion command, an adjustment to a previous move, a question, or a request to execute a saved pose. Handle all cases freely; do not assume a capture step happened first.
 
 ## Examples
 

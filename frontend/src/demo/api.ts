@@ -361,6 +361,32 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+export async function classifyIntent(text: string, followActive: boolean): Promise<string> {
+  const res = await fetch('http://localhost:8000/classify-intent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, follow_active: followActive }),
+  })
+  if (!res.ok) return 'chat'
+  const data = await res.json()
+  return data.intent ?? 'chat'
+}
+
+export async function listPoses(): Promise<string[]> {
+  const res = await fetch('http://localhost:8000/poses')
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.poses ?? []
+}
+
+export async function saveCurrentPose(name: string): Promise<void> {
+  await fetch('http://localhost:8000/poses/save-current', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
 // Short camera-shutter blip via WebAudio (no asset needed).
 export function playShutter(): void {
   try {

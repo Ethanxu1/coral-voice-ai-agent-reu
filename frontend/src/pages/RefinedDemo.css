@@ -1,0 +1,735 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Baloo+2:wght@400;600;700;800&display=swap');
+
+/* ── Root ───────────────────────────────────────────────────────────────────── */
+.rd-root {
+  min-height: 100vh;
+  background: #EFE8DA;
+  font-family: 'Nunito', sans-serif;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 20px 24px;
+  gap: 16px;
+  box-sizing: border-box;
+}
+
+/* ── Top bar ────────────────────────────────────────────────────────────────── */
+.rd-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.rd-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rd-logo {
+  font-family: 'Baloo 2', cursive;
+  font-size: 22px;
+  font-weight: 800;
+  color: #2D2926;
+  letter-spacing: -0.5px;
+}
+
+.rd-logo span {
+  color: #E05A2B;
+}
+
+.rd-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rd-topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 50px;
+  border: none;
+  font-family: 'Nunito', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rd-topbar-btn.ghost {
+  background: rgba(45, 41, 38, 0.08);
+  color: #2D2926;
+}
+
+.rd-topbar-btn.ghost:hover {
+  background: rgba(45, 41, 38, 0.14);
+}
+
+.rd-topbar-btn.danger {
+  background: #E05A2B;
+  color: #fff;
+}
+
+.rd-topbar-btn.danger:hover {
+  background: #c94e22;
+}
+
+/* ── Main layout ────────────────────────────────────────────────────────────── */
+.rd-main {
+  flex: 1;
+  display: flex;
+  gap: 18px;
+  min-height: 0;
+}
+
+/* ── Camera panel ───────────────────────────────────────────────────────────── */
+.rd-camera-panel {
+  flex: 1.55;
+  position: relative;
+  border-radius: 28px;
+  background: #26232F;
+  overflow: hidden;
+  min-height: 460px;
+}
+
+.rd-camera-panel img,
+.rd-camera-panel .tui-stream {
+  width: 100%;
+  height: 100%;
+  border-radius: 28px;
+  object-fit: cover;
+}
+
+.rd-camera-panel .tui-stream {
+  position: absolute;
+  inset: 0;
+}
+
+/* Follow badge */
+.rd-follow-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: rgba(38, 35, 47, 0.75);
+  backdrop-filter: blur(6px);
+  border: 2px solid #7C5CBF;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 50px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+}
+
+.rd-follow-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #A87DFF;
+  animation: rd-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rd-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* Countdown modal */
+.rd-countdown-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(38, 35, 47, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 200;
+}
+
+.rd-countdown-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: #FFFDF8;
+  border-radius: 32px;
+  padding: 48px 72px 52px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.25);
+}
+
+.rd-countdown-label {
+  font-family: 'Nunito', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #7B6F8A;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.rd-countdown-num {
+  font-family: 'Baloo 2', cursive;
+  font-size: 120px;
+  font-weight: 900;
+  color: #E05A2B;
+  line-height: 1;
+  animation: rd-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes rd-pop {
+  0% { transform: scale(0.5); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Captured frame */
+.rd-captured-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 28px;
+}
+
+/* Flash */
+.rd-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  border-radius: 28px;
+  animation: rd-flash 0.35s ease-out forwards;
+  z-index: 20;
+}
+
+@keyframes rd-flash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* No camera placeholder */
+.rd-camera-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: rgba(255,255,255,0.3);
+  font-size: 14px;
+}
+
+.rd-camera-icon {
+  font-size: 48px;
+  opacity: 0.3;
+}
+
+/* Captured badge on camera */
+.rd-captured-badge {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2E7D32;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 20px;
+  border-radius: 50px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Right panel ────────────────────────────────────────────────────────────── */
+.rd-right-panel {
+  flex: 1;
+  min-width: 360px;
+  max-width: 460px;
+  background: #FFFDF8;
+  border-radius: 28px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Orb section ────────────────────────────────────────────────────────────── */
+.rd-orb-section {
+  padding: 24px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  flex-shrink: 0;
+}
+
+.rd-orb-wrap {
+  position: relative;
+  width: 88px;
+  height: 88px;
+}
+
+.rd-orb {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 35%, #A87DFF, #6B3FA0 65%);
+  box-shadow: 0 4px 20px rgba(168, 125, 255, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: transform 0.2s ease;
+}
+
+.rd-orb-inner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+}
+
+.rd-orb.listening {
+  animation: rd-orb-breathe 2.4s ease-in-out infinite;
+}
+
+.rd-orb.thinking {
+  animation: rd-orb-spin 1s linear infinite;
+}
+
+.rd-orb.countdown {
+  background: radial-gradient(circle at 38% 35%, #FFD54F, #F57F17 65%);
+  box-shadow: 0 4px 20px rgba(255, 213, 79, 0.5);
+  animation: rd-orb-breathe-fast 0.6s ease-in-out infinite;
+}
+
+@keyframes rd-orb-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 4px 20px rgba(168,125,255,0.45); }
+  50% { transform: scale(1.06); box-shadow: 0 6px 28px rgba(168,125,255,0.65); }
+}
+
+@keyframes rd-orb-breathe-fast {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@keyframes rd-orb-spin {
+  0% { box-shadow: 0 4px 20px rgba(168,125,255,0.45), 4px 0 0 rgba(168,125,255,0.2); }
+  25% { box-shadow: 0 4px 20px rgba(168,125,255,0.45), 0 4px 0 rgba(168,125,255,0.2); }
+  50% { box-shadow: 0 4px 20px rgba(168,125,255,0.45), -4px 0 0 rgba(168,125,255,0.2); }
+  75% { box-shadow: 0 4px 20px rgba(168,125,255,0.45), 0 -4px 0 rgba(168,125,255,0.2); }
+  100% { box-shadow: 0 4px 20px rgba(168,125,255,0.45), 4px 0 0 rgba(168,125,255,0.2); }
+}
+
+.rd-mic-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(168, 125, 255, 0.35);
+  animation: rd-mic-ring 1s ease-out infinite;
+  transform-origin: center;
+}
+
+@keyframes rd-mic-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+
+.rd-status-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #6B6560;
+  text-align: center;
+}
+
+/* Mic level bar */
+.rd-mic-level {
+  width: 100%;
+  max-width: 180px;
+  height: 4px;
+  background: rgba(0,0,0,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.rd-mic-level-fill {
+  height: 100%;
+  background: #A87DFF;
+  border-radius: 2px;
+  transition: width 0.05s linear;
+}
+
+/* ── Chat area ──────────────────────────────────────────────────────────────── */
+.rd-chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-behavior: smooth;
+}
+
+.rd-chat-area::-webkit-scrollbar {
+  width: 4px;
+}
+
+.rd-chat-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rd-chat-area::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  border-radius: 2px;
+}
+
+/* Message bubbles */
+.rd-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rd-msg.agent {
+  align-items: flex-start;
+}
+
+.rd-msg.child {
+  align-items: flex-end;
+}
+
+.rd-msg.system {
+  align-items: center;
+}
+
+.rd-bubble {
+  max-width: 86%;
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.rd-msg.agent .rd-bubble {
+  background: #F0EBF8;
+  color: #2D2926;
+  border-bottom-left-radius: 4px;
+}
+
+.rd-msg.child .rd-bubble {
+  background: #E05A2B;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.rd-msg.system .rd-bubble {
+  background: #E8F5E9;
+  color: #2E7D32;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 50px;
+  padding: 5px 14px;
+}
+
+/* Chips */
+.rd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.rd-chip {
+  padding: 5px 12px;
+  border-radius: 50px;
+  border: 1.5px solid #C9A8E8;
+  background: transparent;
+  color: #7C5CBF;
+  font-family: 'Nunito', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rd-chip:hover {
+  background: #F0EBF8;
+  border-color: #A87DFF;
+}
+
+/* ── Library overlay ────────────────────────────────────────────────────────── */
+.rd-library-bar {
+  padding: 14px 20px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  background: #F7F3ED;
+  flex-shrink: 0;
+}
+
+.rd-library-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #6B6560;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+}
+
+.rd-pose-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.rd-pose-chip {
+  padding: 6px 14px;
+  border-radius: 50px;
+  background: #fff;
+  border: 1.5px solid #D4C5B0;
+  color: #2D2926;
+  font-family: 'Nunito', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rd-pose-chip:hover {
+  background: #EFE8DA;
+  border-color: #A87DFF;
+  color: #7C5CBF;
+}
+
+.rd-pose-empty {
+  font-size: 13px;
+  color: #9E9591;
+  font-weight: 600;
+}
+
+/* ── Full-page overlays ─────────────────────────────────────────────────────── */
+.rd-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(239, 232, 218, 0.9);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.rd-overlay-card {
+  background: #FFFDF8;
+  border-radius: 28px;
+  padding: 36px 40px;
+  max-width: 440px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+}
+
+.rd-overlay-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 26px;
+  font-weight: 800;
+  color: #2D2926;
+  margin-bottom: 10px;
+}
+
+.rd-overlay-subtitle {
+  font-size: 15px;
+  color: #6B6560;
+  font-weight: 600;
+  margin-bottom: 28px;
+  line-height: 1.5;
+}
+
+.rd-overlay-btns {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.rd-overlay-btn {
+  padding: 12px 24px;
+  border-radius: 50px;
+  border: none;
+  font-family: 'Nunito', sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rd-overlay-btn.primary {
+  background: #E05A2B;
+  color: #fff;
+}
+
+.rd-overlay-btn.primary:hover {
+  background: #c94e22;
+}
+
+.rd-overlay-btn.secondary {
+  background: rgba(45, 41, 38, 0.08);
+  color: #2D2926;
+}
+
+.rd-overlay-btn.secondary:hover {
+  background: rgba(45, 41, 38, 0.14);
+}
+
+/* Poses gallery in exit overlay */
+.rd-exit-poses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.rd-exit-pose-tag {
+  padding: 6px 14px;
+  background: #F0EBF8;
+  color: #7C5CBF;
+  border-radius: 50px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ── Naming overlay ─────────────────────────────────────────────────────────── */
+.rd-naming-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(38, 35, 47, 0.6);
+  backdrop-filter: blur(6px);
+  z-index: 15;
+  border-radius: 28px;
+}
+
+.rd-naming-card {
+  background: #FFFDF8;
+  border-radius: 24px;
+  padding: 28px 32px;
+  text-align: center;
+  max-width: 340px;
+  width: 85%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+}
+
+.rd-naming-tag {
+  display: inline-block;
+  background: #F0EBF8;
+  color: #7C5CBF;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  padding: 5px 12px;
+  border-radius: 50px;
+  margin-bottom: 14px;
+}
+
+.rd-naming-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 22px;
+  font-weight: 700;
+  color: #2D2926;
+  margin-bottom: 16px;
+}
+
+.rd-naming-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #6B6560;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rd-naming-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #A87DFF;
+  animation: rd-pulse 1.3s ease-in-out infinite;
+}
+
+/* ── IDLE / startup ─────────────────────────────────────────────────────────── */
+.rd-idle-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(239, 232, 218, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  border-radius: 28px;
+  z-index: 50;
+}
+
+.rd-idle-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 28px;
+  font-weight: 900;
+  color: #2D2926;
+}
+
+.rd-start-btn {
+  padding: 14px 36px;
+  border-radius: 50px;
+  border: none;
+  background: #E05A2B;
+  color: #fff;
+  font-family: 'Nunito', sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 4px 16px rgba(224, 90, 43, 0.4);
+}
+
+.rd-start-btn:hover {
+  background: #c94e22;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(224, 90, 43, 0.5);
+}
+
+/* LiveStream LIVE badge inside camera panel */
+.rd-camera-panel .tui-stream {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.rd-camera-panel .tui-live-badge {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  padding: 5px 12px;
+  border-radius: 50px;
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(220, 38, 38, 0.88);
+  color: #fff;
+  letter-spacing: 0.06em;
+  z-index: 3;
+}
+
+.rd-freeze-badge {
+  background: rgba(60, 55, 75, 0.85) !important;
+}

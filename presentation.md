@@ -1,162 +1,229 @@
----
-marp: true
-theme: default
-paginate: true
-header: "CORAL Voice AI Agent"
-footer: "REU Research Progress"
-style: |
-  section {
-    font-size: 24px;
-  }
-  h1 {
-    color: #2563eb;
-  }
-  h2 {
-    color: #1e40af;
-  }
-  code {
-    background: #f1f5f9;
-  }
----
+# CORAL Voice AI Agent: Slide Presentation Outline
 
-# CORAL: Voice-Controlled Robot Motion Planning
+## Slide 1: Project Title
 
-## A Multimodal AI Dialogue Agent for Child-Robot Instruction
+**Title:** CORAL Voice AI Agent  
+**Subtitle:** Multimodal child-robot interaction for the Hiwonder AiNex humanoid robot
 
-**Research Progress Presentation**
+**Key points:**
+- Voice, vision, and robot motion are combined into one interactive demo system.
+- The system supports both open-ended robot control and a structured pose-capture workflow.
+
+**Visual placeholder:** Photo or screenshot of the AiNex robot beside the Coral UI.
 
 ---
 
-# Project Overview
+## Slide 2: Problem and Goal
 
-## Goal
-Enable natural voice/text control of an **Apptronik Apollo humanoid robot** through conversational AI
+**Title:** Why This Project Exists
 
-## Core Challenge
-> LLMs lack geometric grounding and struggle with raw angle regression
+**Key points:**
+- Children need natural ways to communicate desired robot poses and motion.
+- Speech alone can be ambiguous; body pose gives another grounding signal.
+- CORAL explores a workflow where a child can show a pose, refine it with language, and save it as a named move.
 
-## Solution
-Multi-stage LLM architecture that separates:
-- **Intent understanding** (what does the user want?)
-- **Motion planning** (how do we achieve it?)
+**Visual placeholder:** Simple "child speaks + poses -> robot responds" diagram.
 
 ---
 
-# System Architecture
+## Slide 3: System Overview
 
-```
-                    User Message
-                         |
-            +------------v------------+
-            |   STAGE 1: Intent       |
-            |   Classification        |
-            |   (Fast-path + LLM)     |
-            +------------+------------+
-                         |
-     +-------------------+-------------------+
-     |                   |                   |
-  motion_command     rollback         conversation
-     |                   |                   |
-     v                   v                   v
-+----+----+        +-----+-----+      +-----+-----+
-| STAGE 2 |        | Rollback  |      | Direct    |
-| Router  |        | to prior  |      | Response  |
-| Agent   |        | state     |      +-----------+
-+---------+
-```
+**Title:** Main System Components
+
+**Key points:**
+- React frontend runs the guided demo and displays camera, status, transcript, and captured moves.
+- FastAPI agent server handles Whisper transcription, LLM motion planning, simulation, and hardware dispatch.
+- Vision service reads camera frames, MediaPipe landmarks, head pose, and pose retargeting.
+- Robot server on the Pi bridges HTTP requests to ROS body-control services.
+- Speaker server provides blocking text-to-speech so UI timing stays synchronized.
+
+**Visual placeholder:** Architecture block diagram:
+Frontend -> Agent Server / Vision Server / Speaker Server -> Pi Robot Server -> ROS body service -> AiNex servos.
+
+**Code references:** `frontend/src/demo/useProDemoMachine.ts`, `src/coral_agent/server.py`, `src/coral_agent/vision/vision_server.py`, `src/coral_agent/robot/pi/nodes/robot_server.py`, `src/coral_agent/speaker/speaker_server.py`
 
 ---
 
-# Chain-of-Thought Process
+## Slide 4: Two Main Interaction Modes
 
-## Router Agent Decision Flow
-1. Receives user request + current robot state
-2. Analyzes request against available primitives library (14 parameterized primitives)
-3. Decides routing: **PRIMITIVE** (use library) or **NEED_CONTEXT** (request clarification)
+**Title:** What CORAL Can Do
 
-## Router Output Format
-```json
-{
-  "status": "PRIMITIVE",
-  "primitive_name": "right_arm_out",
-  "angle": 45,
-  "direction": null,
-  "speed": 1.0,
-  "reasoning": "Right arm sideways 45 degrees. Using right_arm_out primitive.",
-  "verbal_response": "Moving right arm out 45 degrees."
-}
-```
+**Key points:**
+- **Open-ended voice control:** user speaks or types a command; the robot plans and executes motion.
+- **Pro demo pose workflow:** user talks freely, says "capture my pose," the system maps their pose to robot joints, then supports language-based refinement.
+- Both modes reuse the same WebSocket action pipeline for speech/text to robot motion.
 
-**Forces explicit reasoning** before selecting primitives and parameters
+**Visual placeholder:** Split-screen workflow graphic: "Voice command" path and "Pose capture + refinement" path.
 
 ---
 
-# Memory Management
+## Slide 5: Pro Demo Workflow
 
-## Three-Tier Hierarchical Context
+**Title:** Guided Pose-Capture Loop
 
-| Tier | Content | Size |
-|------|---------|------|
-| **Short-term** | Last 6 exchanges (full detail) | ~6 turns |
-| **Mid-term** | Summarized older exchanges | ~10 summaries |
-| **Last action** | Most recent waypoints | 1 action |
+**Key points:**
+- The demo starts in an adjustment conversation where the user can speak freely.
+- Capture is triggered by phrases like "capture my pose."
+- The UI locks the robot state, runs a 3-2-1 countdown, captures the latest pose, maps it to robot commands, and executes them.
+- The user then refines the robot pose with voice or text until satisfied.
+- Finally, the user names the move and the loop repeats until all rounds are complete.
 
-## Benefits
-- Bounded token usage (prevents context overflow)
-- Preserves relevant history for corrections/follow-ups
-- Enables "try again" and "undo" with full context
-- Supports conversational flow across long sessions
+**Visual placeholder:** State-machine flow:
+ADJUST -> COUNTDOWN -> LOADING -> ADJUST/refine -> NAME -> next round -> DONE.
 
----
-
-# Current Limitations
-
-## 1. LLM Hallucination
-- Model sometimes outputs non-existent primitives
-- Sign errors persist despite chain-of-thought prompting
-- Inconsistent handling of plural requests ("both arms")
-
-## 2. Long Response Delay
-- Local Llama 3.2 inference adds latency
-- Multi-stage pipeline compounds delay (intent + routing + response)
-- Chain-of-thought reasoning adds processing overhead
-
-## 3. Limited Child Language Understanding
-- Trained on adult dialogue patterns
-- Struggles with disfluencies ("um", "uh", false starts)
-- Imprecise language not well handled ("move it up kinda")
+**Code references:** `frontend/src/demo/useProDemoMachine.ts`
 
 ---
 
-# Next Steps
+## Slide 6: Voice-to-Motion Pipeline
 
-## Fine-Tuning Strategy
-**Base Model**: Llama 3.2 (8B parameters)
+**Title:** How Spoken Commands Become Robot Motion
 
-```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   Stage 1    │───>│   Stage 2    │───>│   Stage 3    │
-│  Base Model  │    │  GrounDialog │    │ Robot Instr. │
-│  (Llama 3.2) │    │  Fine-tune   │    │  Fine-tune   │
-└──────────────┘    └──────────────┘    └──────────────┘
-```
+**Key points:**
+- Browser records one utterance and sends WebM audio over WebSocket.
+- Agent server transcribes audio with local `faster-whisper`.
+- The LLM receives current robot state, saved poses, conversation memory, and the user request.
+- The LLM returns JSON with a short spoken response, waypoints, and satisfaction status.
+- Waypoints are resolved into joint targets, validated, converted to servo commands, and dispatched.
 
-## Key Objectives
-- **GrounDialog Fine-tuning**: Learn repair & grounding patterns from dialogue research
-- **Robot Instruction Fine-tuning**: Train on child-robot interaction data
-- **Latency Optimization**: Explore smaller/quantized models for faster inference
-- **Improved Chain-of-Thought**: Reduce hallucinations through targeted training
+**Visual placeholder:** Pipeline diagram:
+Mic -> WebSocket -> Whisper -> LLM JSON -> primitives -> validation -> servo commands -> robot/sim.
+
+**Code references:** `frontend/src/demo/api.ts`, `src/coral_agent/server.py`, `src/coral_agent/prompts/router.md`
 
 ---
 
-# Questions?
+## Slide 7: Motion Planning Details
 
-## Repository
-`coral-voice-ai-agent-reu`
+**Title:** LLM Output Is Constrained by Motion Primitives
 
-## Key Files
-- `server.py` - Two-agent motion planning
-- `intent.py` - Intent classification
-- `primitives.py` - Motion library
-- `prompts/*.md` - LLM system prompts
+**Key points:**
+- The LLM does not directly send arbitrary motor commands.
+- It selects named primitives such as arm forward, arm out, elbow bend, elbow rotate, head turn, head tilt, or neutral.
+- Angles are specified in degrees, then converted to radians and clamped to joint limits.
+- Multiple primitives can be merged into one waypoint for simultaneous motion.
+- Parallel tracks are supported when separate body parts need independent sequences.
 
+**Visual placeholder:** Table of representative primitives and mapped joints.
+
+**Code references:** `src/coral_agent/primitives.py`, `src/coral_agent/prompts/router.md`, `src/coral_agent/validation.py`
+
+---
+
+## Slide 8: Pose Retargeting
+
+**Title:** How the Robot Mimics the User's Pose
+
+**Key points:**
+- The vision server keeps the latest camera frame, body landmarks, and head pose.
+- `/map-features` converts MediaPipe landmarks into robot joint targets.
+- The mapping uses a torso-local coordinate frame so arm angles are based on body geometry rather than camera orientation.
+- Mirror mode maps the user's right side to the robot's left side, making the robot feel like it is facing the user.
+- If hips are not visible, capture is rejected because arm retargeting needs a reliable torso frame.
+
+**Visual placeholder:** Annotated pose image showing shoulders, elbows, wrists, hips, and mirrored robot arms.
+
+**Code references:** `src/coral_agent/vision/vision_server.py`, `src/coral_agent/vision/pose_to_robot.py`
+
+---
+
+## Slide 9: Robot Execution and Safety
+
+**Title:** From Joint Targets to Safe Servo Movement
+
+**Key points:**
+- Joint targets are converted to Hiwonder servo units on a 0-1000 scale.
+- Speed is converted into movement duration.
+- In simulation mode, MuJoCo receives the commands and interpolates joint motion.
+- In robot mode, commands are sent over HTTP to the Pi robot server and then through ROS body commands.
+- A collision checker can shadow-rollout the motion in MuJoCo and back off before self-collision.
+- Hardware-side limits clamp servo commands, including special limits for damaged or risky servos.
+
+**Visual placeholder:** Graph or diagram of angle -> servo pulse -> movement duration; optional collision-check rollout graphic.
+
+**Code references:** `src/coral_agent/robot/angle_utils.py`, `src/coral_agent/server.py`, `src/coral_agent/collision_checker.py`, `src/coral_agent/robot/pi/nodes/robot_server.py`
+
+---
+
+## Slide 10: Frontend Experience
+
+**Title:** What the User Sees
+
+**Key points:**
+- The main demo view shows the live camera stream or the captured frame.
+- Status changes between listening, transcribing, thinking, action applied, and clarification.
+- The UI supports both voice and text input.
+- Finished sessions display saved move cards with pose images and names.
+
+**Visual placeholder:** Screenshot sequence:
+Live stream, countdown, captured pose/refinement, final results grid.
+
+**Code references:** `frontend/src/pages/ProDemo.tsx`, `frontend/src/demo/api.ts`
+
+---
+
+## Slide 11: Data and Observability
+
+**Title:** How the System Keeps Context
+
+**Key points:**
+- Each WebSocket action session keeps short-term conversation memory for iterative refinement.
+- The Pro Demo stores named move cards in frontend state for the final review screen.
+- The backend also has a separate "save current pose" voice flow that stores joint states in SQLite for the current server session.
+- Conversations are recorded to JSON files for debugging.
+- Langfuse tracing records LLM calls and action history.
+
+**Visual placeholder:** Example trace/log screenshot or simplified memory diagram.
+
+**Code references:** `src/coral_agent/server.py`, `src/coral_agent/pose_db.py`
+
+---
+
+## Slide 12: Current Capabilities and Limitations
+
+**Title:** What Works Now
+
+**Key points:**
+- Voice or text commands can drive head, arm, and elbow primitives.
+- Human pose capture can retarget arms and head in simulation; on Pi, pose retargeting uses hardware-calibrated servo pulses.
+- Backend system intents can start live follow mode, stop follow mode, trigger one-shot pose capture, or save the current robot pose.
+- The guided workflow supports capture, retake, refinement, naming, and final review.
+- The physical robot path includes state locking, ROS body-command execution, and servo clamping.
+
+**Limitations:**
+- Retargeting depends on visible hips, shoulders, elbows, and wrists.
+- Legs are not currently retargeted from human pose.
+- Head pose is included in the Mac vision path, but the Pi `/map-features` path leaves head targets neutral.
+- The MobileNetV3 classifier still exists, but the active pose-mimicry path uses landmark retargeting instead.
+
+**Visual placeholder:** Capability matrix: Voice, pose retargeting, simulation, physical robot, saved poses, safety checks.
+
+---
+
+## Slide 13: Suggested Demo Walkthrough
+
+**Title:** Live Demo Script
+
+**Key points:**
+- Start on the Pro Demo screen.
+- Ask Coral to make a simple motion, such as raising an arm.
+- Say "capture my pose" and hold a clear full-body pose.
+- Let the robot mimic the pose.
+- Refine with a command like "raise the left arm higher" or "turn your head left."
+- Say "looks good," name the move, and show the results grid.
+
+**Visual placeholder:** Timeline with screenshots from each live demo step.
+
+---
+
+## Slide 14: Takeaways
+
+**Title:** Key Contributions
+
+**Key points:**
+- CORAL combines speech, vision, simulation, and physical robot control in one workflow.
+- The system grounds language in the robot's current state and motion primitives.
+- Pose retargeting lets the child demonstrate motion directly instead of only describing it.
+- The architecture separates UI, AI planning, vision, speech, simulation, and hardware execution so each piece can be improved independently.
+
+**Visual placeholder:** Final system summary diagram or photo of robot performing a captured pose.
