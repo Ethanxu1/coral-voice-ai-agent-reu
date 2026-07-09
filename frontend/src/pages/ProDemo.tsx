@@ -12,7 +12,7 @@ const PHASES: { key: ProState['stage'][]; label: string }[] = [
 ]
 
 export default function ProDemo() {
-  const { state, start, retry, exit, toggleInputMode, submitText } = useProDemoMachine()
+  const { state, start, retry, exit, toggleInputMode, submitText, skip } = useProDemoMachine()
   const running = !['IDLE', 'DONE', 'ERROR'].includes(state.stage)
 
   return (
@@ -48,7 +48,7 @@ export default function ProDemo() {
       {running && <PhaseBar stage={state.stage} />}
 
       <main className="pro-stage">
-        <Stage state={state} onSubmitText={submitText} />
+        <Stage state={state} onSubmitText={submitText} onSkip={skip} />
         {state.flash && <div className="pro-flash" />}
       </main>
 
@@ -87,7 +87,7 @@ function PhaseBar({ stage }: { stage: ProState['stage'] }) {
   )
 }
 
-function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: string) => void }) {
+function Stage({ state, onSubmitText, onSkip }: { state: ProState; onSubmitText: (t: string) => void; onSkip: () => void }) {
   switch (state.stage) {
     case 'DONE':
       return <Results state={state} />
@@ -112,6 +112,11 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
               />
             ) : (
               <StatusPill status={state.status} />
+            )}
+            {state.stage === 'ADJUST' && (
+              <button className="pro-btn ghost pro-skip" onClick={onSkip}>
+                Skip adjustment → name it
+              </button>
             )}
           </div>
         </div>

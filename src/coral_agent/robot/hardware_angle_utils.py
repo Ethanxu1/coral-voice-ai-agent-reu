@@ -27,7 +27,7 @@ HW_STAND_RAD: dict[str, float] = {
     # Legs (bent-knee stand)
     "r_hip_pitch": 0.4887,  "l_hip_pitch": -0.4887,
     "r_knee":     -0.9250,  "l_knee":       0.9250,
-    "r_ank_pitch": -0.4887, "l_ank_pitch":  0.4887,
+    "r_ank_pitch": -0.4538, "l_ank_pitch":  0.4538,
     # Arms
     "r_sho_pitch": -0.4363, "l_sho_pitch": -0.4363,
     "r_sho_roll":   1.3614, "l_sho_roll":  -1.3614,

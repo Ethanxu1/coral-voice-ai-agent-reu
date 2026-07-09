@@ -127,6 +127,11 @@ class FrameResult:
     jpeg_bytes: bytes
     calibration: dict
     timestamp: float = field(default_factory=time.time)
+    # Un-annotated BGR frame (no skeleton/text overlay). Carried so consumers
+    # like the pose classifier can run on the clean image — the model was
+    # trained on clean photos, so the drawn overlay is a train/test mismatch.
+    # Mirrors the Pi vision node's separate /clean_frame topic.
+    clean_frame: Optional["np.ndarray"] = None
 
     def to_pose_dict(self) -> dict:
         return {
@@ -397,6 +402,7 @@ class StabilityCapture:
             head_pose=chosen.head_pose,
             jpeg_bytes=jpeg.tobytes(),
             calibration=calibration,
+            clean_frame=chosen.clean_bgr,
         )
 
         with self._lock:
@@ -804,6 +810,7 @@ class PoseEstimator:
             head_pose=head_pose,
             jpeg_bytes=jpeg.tobytes(),
             calibration=cal,
+            clean_frame=clean_frame,
         )
 
     def _draw_pose_skeleton(self, frame: np.ndarray, landmarks: list):

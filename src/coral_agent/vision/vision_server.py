@@ -34,6 +34,9 @@ _last_pose_time = 0.0
 # Latest frame + landmarks, kept for the demo's /features and /watch-for-action.
 # Updated every vision-loop iteration so they never need to touch the camera.
 _latest_jpeg: Optional[bytes] = None
+# Un-annotated BGR frame (no skeleton overlay). Fed to the pose classifier so it
+# sees clean images like it was trained on — matches the Pi's /clean_frame.
+_latest_clean_frame = None
 _latest_landmarks: list = []
 # Latest head pose (dict with yaw/pitch/roll), consumed by /features so the
 # pose→robot retargeting can drive head_pan/head_tilt. None when no face solve.
@@ -56,7 +59,7 @@ def _vision_loop():
     logger.info("Vision thread started — loading models and opening camera...")
     _estimator.open()
     logger.info("Vision thread ready — publishing frames")
-    global _last_pose_time, _latest_jpeg, _latest_landmarks, _latest_head_pose
+    global _last_pose_time, _latest_jpeg, _latest_clean_frame, _latest_landmarks, _latest_head_pose
     while _estimator.is_running:
         result = _estimator.process_frame()
         if result is None:
@@ -66,6 +69,7 @@ def _vision_loop():
         _broadcaster.publish_video(result.jpeg_bytes)
         # Keep the freshest frame + landmarks for /features and /watch-for-action.
         _latest_jpeg = result.jpeg_bytes
+        _latest_clean_frame = result.clean_frame
         _latest_landmarks = result.body_landmarks
         _latest_head_pose = result.head_pose.to_dict() if result.head_pose else None
 
@@ -172,38 +176,26 @@ def _ensure_classifier() -> None:
 @app.post("/classify")
 async def classify():
     """Classify the current camera frame (MobileNetV3) → class + probabilities + image."""
-    import cv2
-    import numpy as np
-
-    _ensure_classifier()
-    jpeg = _latest_jpeg
-    if jpeg is None:
+    if _latest_jpeg is None:
         raise HTTPException(status_code=503, detail="no camera frame available yet")
 
-    frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-    if frame is None:
-        raise HTTPException(status_code=503, detail="could not decode camera frame")
-
-    top_class, probabilities = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: pose_classifier.classify_frame(frame, _classifier, _classes, _device)
-    )
+    # Classify the CLEAN frame (no skeleton overlay) — the model was trained on
+    # clean photos. The returned preview stays the annotated frame for the UI.
+    top_class, probabilities = await _classify_clean_frame()
     return {
         "class": top_class,
         "probabilities": probabilities,
-        "image_b64": base64.b64encode(jpeg).decode("ascii"),
+        "image_b64": base64.b64encode(_latest_jpeg).decode("ascii"),
         "image_format": "jpeg",
     }
 
 
-async def _classify_latest_frame(jpeg: bytes) -> tuple[str, dict]:
-    """Decode a JPEG and run the pose classifier. Returns (top_class, probs)."""
-    import cv2
-    import numpy as np
-
+async def _classify_clean_frame() -> tuple[str, dict]:
+    """Run the pose classifier on the latest clean (un-annotated) frame."""
     _ensure_classifier()
-    frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    frame = _latest_clean_frame
     if frame is None:
-        raise HTTPException(status_code=503, detail="could not decode camera frame")
+        raise HTTPException(status_code=503, detail="no clean camera frame available yet")
     return await asyncio.get_event_loop().run_in_executor(
         None, lambda: pose_classifier.classify_frame(frame, _classifier, _classes, _device)
     )
@@ -211,7 +203,7 @@ async def _classify_latest_frame(jpeg: bytes) -> tuple[str, dict]:
 
 # Move duration (ms) for pose-mimicry commands. Slow enough to look deliberate,
 # fast enough that the child sees Coral react promptly to their pose.
-_FOLLOW_DURATION_MS = 600
+_FOLLOW_DURATION_MS = 1000
 
 
 @app.post("/map-features")
@@ -267,7 +259,7 @@ async def map_features(leg_mode: str = "retarget"):
         if leg_mode == "legacy":
             leg_pulses = leg_modes.legacy_leg_pulses(body)
         else:  # "classify"
-            pose_class, probs = await _classify_latest_frame(_latest_jpeg)
+            pose_class, probs = await _classify_clean_frame()
             conf = probs.get(pose_class) if isinstance(probs, dict) else None
             logger.info(
                 "classify: pose=%s%s",

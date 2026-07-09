@@ -1271,5 +1271,80 @@ def main_robot():
     )
 
 
+def main_sim_test():
+    """Entry point for sim test mode — cycle the sim robot through every pose in motions.py.
+
+    Launches only the MuJoCo simulator (no server, no LLM, no hardware) and walks
+    the robot through each motion in ``motions.MOTIONS`` sequentially, resetting to
+    stand between motions, looping until the viewer window is closed or Ctrl+C.
+
+    Usage:
+        uv run sim-test              # cycle through all motions
+        uv run sim-test dab wave     # only these motions
+    """
+    import time
+
+    from coral_agent.robot.motions import MOTIONS
+
+    _reexec_under_mjpython_if_needed()
+
+    hold_seconds = float(os.getenv("SIM_TEST_HOLD_SECONDS", "2.0"))
+
+    requested = [a for a in sys.argv[1:] if not a.startswith("-")]
+    names = requested or list(MOTIONS.keys())
+    unknown = [n for n in names if n not in MOTIONS]
+    if unknown:
+        logger.error(f"Unknown motion(s): {unknown}. Available: {list(MOTIONS.keys())}")
+        return
+
+    logger.info("Starting AiNex MuJoCo simulator (sim test mode)...")
+    sim = AiNexSimulator()
+    sim.start_viewer()
+    time.sleep(1.0)  # let the viewer window come up
+
+    logger.info(f"Cycling through {len(names)} motion(s): {names}")
+    try:
+        while sim.is_running():
+            for name in names:
+                if not sim.is_running():
+                    break
+                motion = MOTIONS[name]
+                logger.info(f"=== Motion: {name} ({len(motion)} frame(s)) ===")
+                for pulse, duration_ms in motion:
+                    # Motion frames are hardware servo pulses (STAND_PULSE = per-joint
+                    # neutral). Convert with hardware_units_to_rad — anchored to the sim's
+                    # stand keyframe — so joints held at their stand pulse stay put. The
+                    # naive servo_units_to_rad (500 = 0 rad for every joint) would move the
+                    # bent-knee legs and tip the robot even on stand-identical poses.
+                    #
+                    # Ramp each joint from its current target to the frame target across
+                    # duration_ms in ~20ms steps, so duration_ms sets the actual move
+                    # speed. Setting the target instantly makes the PD controller snap
+                    # the legs and topple the robot.
+                    ramps = []
+                    for joint, units in pulse.items():
+                        try:
+                            start = sim.get_joint_position(joint)
+                            target = hardware_units_to_rad(int(units), joint)
+                        except Exception as e:  # unknown joint — skip, keep going
+                            logger.debug(f"sim-test: skip joint {joint}: {e}")
+                            continue
+                        ramps.append((joint, start, target))
+                    steps = max(1, int(duration_ms) // 20)
+                    for i in range(1, steps + 1):
+                        frac = i / steps
+                        for joint, start, target in ramps:
+                            sim.set_joint_position(joint, start + frac * (target - start))
+                        time.sleep(0.02)
+                time.sleep(hold_seconds)
+                logger.info("  resetting to stand")
+                sim.reset_pose()
+                time.sleep(hold_seconds)
+    except KeyboardInterrupt:
+        logger.info("Interrupted — stopping sim test.")
+    finally:
+        sim.stop_viewer()
+
+
 if __name__ == "__main__":
     main()

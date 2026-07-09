@@ -47,6 +47,7 @@ smpl = [
 [project.scripts]
 server = "coral_agent.server:main"
 robot = "coral_agent.server:main_robot"
+sim-test = "coral_agent.server:main_sim_test"
 robot-agent = "coral_agent.robot.robot_agent:main"
 robot-server = "coral_agent.robot.nodes.robot_server:main"
 speaker = "coral_agent.speaker.speaker_server:main"
