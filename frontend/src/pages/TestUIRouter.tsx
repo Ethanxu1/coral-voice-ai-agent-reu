@@ -1,7 +1,9 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import './TestUI.css'
 
 import { useDemoMachine, type DemoState } from '../demo/useDemoMachine'
+import type { MapFeaturesResult } from '../demo/api'
 
 import Page1_Welcome from './Page1_Welcome'
 import Page2_ClassifyInstructions from './Page2_ClassifyInstructions'
@@ -33,7 +35,80 @@ const PAGES: { label: string; component: React.ComponentType<PageProps> }[] = [
   { label: 'All Done', component: Page8_Outro },
 ]
 
+// Baseline mock state for preview mode. Each page overrides the fields it reads
+// (see mockStateForPage) so every screen renders something representative with
+// no backend running.
+const baseMockState: DemoState = {
+  stage: 'INTRO',
+  page: 1,
+  loop: 0,
+  totalLoops: 3,
+  speaking: false,
+  countdown: null,
+  flash: false,
+  classifying: false,
+  classifyResult: null,
+  recording: false,
+  recordStatus: 'idle',
+  caption: '',
+  error: null,
+  poseName: null,
+  moves: [],
+  inputMode: 'voice',
+  awaitingText: false,
+}
+
+// A pose result with no real frame — pages fall back to <DummyFrame/>.
+const mockClassifyResult: MapFeaturesResult = {
+  poseDetected: true,
+  detail: null,
+  commands: [],
+  imageB64: null,
+  legMode: 'retarget',
+  poseClass: null,
+}
+
+/** Build representative display state for a given 1-based page in preview mode. */
+function mockStateForPage(page: number): DemoState {
+  const per: Record<number, Partial<DemoState>> = {
+    1: { page: 1, caption: 'Say hello to Coral!' },
+    2: { page: 2, caption: 'Cross your hands in front of you when you are ready!' },
+    3: { page: 3, stage: 'CLASSIFY', countdown: 3 },
+    4: { page: 4, stage: 'CLASSIFY', classifyResult: mockClassifyResult, caption: "Now I'll copy your pose!" },
+    5: { page: 5, stage: 'RECORD', caption: 'Your turn — tell me how to fix my pose!' },
+    6: { page: 6, stage: 'RECORD', recordStatus: 'recording', caption: "I'm listening… 🎤" },
+    7: {
+      page: 7,
+      stage: 'NAME',
+      classifyResult: mockClassifyResult,
+      poseName: 'Superhero',
+      caption: '',
+    },
+    8: {
+      page: 8,
+      stage: 'OUTRO',
+      moves: [
+        { name: 'Superhero', frame: null },
+        { name: 'T-Rex', frame: null },
+        { name: 'Robot', frame: null },
+      ],
+    },
+  }
+  return { ...baseMockState, ...per[page] }
+}
+
 export default function TestUIRouter() {
+  const [searchParams] = useSearchParams()
+  const [preview, setPreview] = useState(searchParams.has('preview'))
+
+  if (preview) {
+    return <PreviewMode onExit={() => setPreview(false)} />
+  }
+  return <LiveDemo onPreview={() => setPreview(true)} />
+}
+
+/** The real, backend-driven demo (speaker/robot/vision servers must be running). */
+function LiveDemo({ onPreview }: { onPreview: () => void }) {
   const { state, start, retry, exit, toggleInputMode, submitText } = useDemoMachine()
   const pageIndex = Math.min(Math.max(state.page, 1), PAGES.length) - 1
   const Page = PAGES[pageIndex].component
@@ -57,6 +132,13 @@ export default function TestUIRouter() {
           )}
         </div>
         <div className="tui-nav-right">
+          <button
+            className="tui-btn"
+            onClick={onPreview}
+            title="Browse every page without any backend servers running"
+          >
+            👁 Preview
+          </button>
           <button
             className="tui-btn"
             onClick={toggleInputMode}
@@ -100,6 +182,44 @@ export default function TestUIRouter() {
           onExit={exit}
         />
       )}
+    </div>
+  )
+}
+
+/** Backend-free page browser: steps through all pages with mock state so the UI
+ *  can be viewed/designed without the speaker/robot/vision servers running. */
+function PreviewMode({ onExit }: { onExit: () => void }) {
+  const [page, setPage] = useState(1)
+  const pageIndex = page - 1
+  const Page = PAGES[pageIndex].component
+  const state = mockStateForPage(page)
+  // Runner controls are inert in preview — nothing should hit the network.
+  const noop = () => {}
+  const props: PageProps = { state, start: noop, retry: noop, exit: onExit, submitText: noop }
+
+  const go = (delta: number) =>
+    setPage((p) => Math.min(Math.max(p + delta, 1), PAGES.length))
+
+  return (
+    <div className="tui-root">
+      <nav className="tui-nav">
+        <div className="tui-nav-left">
+          <button className="tui-btn tui-btn-home" onClick={onExit}>← Live demo</button>
+          <span style={{ fontWeight: 700, fontSize: 13, opacity: 0.6 }}>
+            Preview · {PAGES[pageIndex].label}
+          </span>
+        </div>
+        <div className="tui-nav-center">
+          <div className="tui-nav-title">Page {page} / {PAGES.length}</div>
+        </div>
+        <div className="tui-nav-right">
+          <button className="tui-btn" onClick={() => go(-1)} disabled={page === 1}>← Prev</button>
+          <button className="tui-btn" onClick={() => go(1)} disabled={page === PAGES.length}>Next →</button>
+        </div>
+      </nav>
+
+      {/* Remount per page so entry animations replay as you step through. */}
+      <Page key={page} {...props} />
     </div>
   )
 }

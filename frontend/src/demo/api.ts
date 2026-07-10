@@ -47,6 +47,17 @@ export async function speak(opts: { script?: string; text?: string }): Promise<v
   if (!res.ok) throw new Error(`speak failed: ${res.status}`)
 }
 
+// Stop any in-progress speech immediately (tab closed / demo restarted).
+// Best-effort: a failure here must never block teardown. `keepalive` lets the
+// request survive a page unload so a closing tab still silences Coral.
+export async function killSpeech(): Promise<void> {
+  try {
+    await fetch(`${SPEAKER_BASE}/kill`, { method: 'POST', keepalive: true })
+  } catch {
+    /* ignore */
+  }
+}
+
 // ── Robot server (Pi :9000) ───────────────────────────────────────────────────
 export async function motion(name: string, globalDuration?: number): Promise<void> {
   const res = await fetch(`${getRobotBase()}/motion`, {
@@ -221,7 +232,11 @@ export function sendAudioForTranscript(blob: Blob, timeoutMs = 30000): Promise<s
 // Sends the recorded utterance to the Whisper + LLM motion planner and waits for
 // the chat_response. Non-empty `waypoints` means the model produced an action;
 // empty means it asked for clarification (or nothing was understood).
-export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<ActionResult> {
+export function sendAudioForAction(
+  blob: Blob,
+  timeoutMs = 30000,
+  onActionStarted?: () => void,
+): Promise<ActionResult> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(ACTION_WS)
     let transcript = ''
@@ -239,6 +254,8 @@ export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<Actio
       const data = JSON.parse(event.data)
       if (data.type === 'transcription') {
         transcript = data.text ?? ''
+      } else if (data.type === 'action_started') {
+        onActionStarted?.() // robot execution has begun server-side
       } else if (data.type === 'chat_response') {
         clearTimeout(timer)
         ws.close()
@@ -253,7 +270,11 @@ export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<Actio
 // ── Text → action over the existing server.py /ws pipeline ────────────────────
 // Text-input equivalent of sendAudioForAction: sends a typed instruction straight
 // to the LLM motion planner (skipping Whisper) and waits for the chat_response.
-export function sendTextForAction(text: string, timeoutMs = 30000): Promise<ActionResult> {
+export function sendTextForAction(
+  text: string,
+  timeoutMs = 30000,
+  onActionStarted?: () => void,
+): Promise<ActionResult> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(ACTION_WS)
     const timer = setTimeout(() => { ws.close(); reject(new Error('text-to-action timed out')) }, timeoutMs)
@@ -263,7 +284,9 @@ export function sendTextForAction(text: string, timeoutMs = 30000): Promise<Acti
     }
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      if (data.type === 'chat_response') {
+      if (data.type === 'action_started') {
+        onActionStarted?.() // robot execution has begun server-side
+      } else if (data.type === 'chat_response') {
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []

@@ -14,3 +14,7 @@ export const LOOP_COUNT = Number(env.VITE_LOOP_COUNT ?? 3)
 
 // Gesture watch timeout (seconds) for the intro "hands close" trigger.
 export const WATCH_TIMEOUT_S = 30
+
+// If interpreting the child's spoken/typed direction takes longer than this,
+// give up on that attempt and re-ask for directions (re-speak the RECORD prompt).
+export const RECORD_PROCESS_TIMEOUT_MS = 7000
