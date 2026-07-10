@@ -30,6 +30,7 @@ export interface ActionResult {
   transcript: string
   content: string
   hasAction: boolean
+  satisfied?: boolean | null
 }
 
 // ── Speaker (Mac :5002) — resolves only after speech finishes ─────────────────
@@ -105,7 +106,10 @@ export async function setRobotState(mode: string): Promise<void> {
 }
 
 // ── Audio capture (one utterance, auto-stop on silence) ───────────────────────
-// Compact VAD: record until ~1.2s of silence after speech, or maxMs elapsed.
+// Compact VAD: wait indefinitely for speech to start, then record until ~1.2s
+// of trailing silence, or `maxMs` after speech began (whichever comes first).
+// `maxMs` bounds utterance length only — silent waiting time is unbounded so
+// the demo doesn't fire the WebSocket timeout on a user who's still thinking.
 export async function captureUtterance(
   opts: { silenceMs?: number; maxMs?: number; threshold?: number; onLevel?: (rms: number) => void } = {},
 ): Promise<Blob> {
@@ -123,9 +127,8 @@ export async function captureUtterance(
   recorder.start()
 
   const buf = new Uint8Array(analyser.fftSize)
-  let speaking = false
+  let speechStartedAt: number | null = null
   let silenceSince: number | null = null
-  const startedAt = performance.now()
 
   const cleanup = () => {
     stream.getTracks().forEach((t) => t.stop())
@@ -146,13 +149,13 @@ export async function captureUtterance(
       onLevel?.(rms)
       const now = performance.now()
       if (rms > threshold) {
-        speaking = true
+        if (speechStartedAt == null) speechStartedAt = now
         silenceSince = null
-      } else if (speaking) {
+      } else if (speechStartedAt != null) {
         if (silenceSince == null) silenceSince = now
         else if (now - silenceSince > silenceMs) { recorder.stop(); return }
       }
-      if (now - startedAt > maxMs) { recorder.stop(); return }
+      if (speechStartedAt != null && now - speechStartedAt > maxMs) { recorder.stop(); return }
       requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
@@ -214,10 +217,118 @@ export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<Actio
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
-        resolve({ transcript, content: data.content ?? '', hasAction: waypoints.length > 0 })
+        resolve({ transcript, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null })
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('audio-to-action ws error')) }
+  })
+}
+
+// ── Persistent action session (multi-turn refinement) ────────────────────────
+// Each call to sendAudioForAction / sendTextForAction opens a fresh WebSocket,
+// which makes the server spin up a new HierarchicalMemory + Langfuse session —
+// so the LLM never sees prior turns during an iterative pose refinement. An
+// ActionSession keeps one socket open across the whole ADJUST loop so memory
+// (and the Langfuse trace) span every turn.
+export interface ActionSession {
+  sendAudio(blob: Blob, timeoutMs?: number): Promise<ActionResult>
+  sendText(text: string, timeoutMs?: number): Promise<ActionResult>
+  close(): void
+}
+
+export function openActionSession(): ActionSession {
+  const ws = new WebSocket(ACTION_WS)
+
+  const openPromise = new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      ws.removeEventListener('open', onOpen)
+      ws.removeEventListener('error', onError)
+    }
+    const onOpen = () => { cleanup(); resolve() }
+    const onError = () => { cleanup(); reject(new Error('action session ws failed to open')) }
+    ws.addEventListener('open', onOpen)
+    ws.addEventListener('error', onError)
+  })
+
+  type Pending = {
+    transcript: string
+    resolve: (r: ActionResult) => void
+    reject: (e: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }
+  let pending: Pending | null = null
+  let closed = false
+
+  const failPending = (err: Error) => {
+    if (pending) {
+      clearTimeout(pending.timer)
+      pending.reject(err)
+      pending = null
+    }
+  }
+
+  ws.addEventListener('message', (event) => {
+    if (!pending) return
+    const data = JSON.parse(event.data)
+    if (data.type === 'transcription') {
+      pending.transcript = data.text ?? ''
+    } else if (data.type === 'chat_response') {
+      const p = pending
+      pending = null
+      clearTimeout(p.timer)
+      const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
+      p.resolve({
+        transcript: p.transcript,
+        content: data.content ?? '',
+        hasAction: waypoints.length > 0,
+        satisfied: data.satisfied ?? null,
+      })
+    }
+  })
+  ws.addEventListener('close', () => failPending(new Error('action session ws closed')))
+  ws.addEventListener('error', () => failPending(new Error('action session ws error')))
+
+  const send = async (payload: object, timeoutMs: number, initialTranscript = ''): Promise<ActionResult> => {
+    if (closed) throw new Error('action session already closed')
+    if (pending) throw new Error('action session busy')
+    await openPromise
+    return new Promise<ActionResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending = null
+        reject(new Error('action session timed out'))
+      }, timeoutMs)
+      pending = { transcript: initialTranscript, resolve, reject, timer }
+      ws.send(JSON.stringify(payload))
+    })
+  }
+
+  return {
+    async sendAudio(blob, timeoutMs = 30000) {
+      const base64 = await blobToBase64(blob)
+      return send({ type: 'audio', data: base64, format: 'webm' }, timeoutMs)
+    },
+    async sendText(text, timeoutMs = 30000) {
+      // Server won't emit a 'transcription' frame for text; seed it locally so the
+      // caller sees what they typed as the "transcript" for UI parity with audio.
+      return send({ type: 'chat', content: text }, timeoutMs, text)
+    },
+    close() {
+      closed = true
+      failPending(new Error('action session closed'))
+      try { ws.close() } catch { /* ignore */ }
+    },
+  }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const s = reader.result as string
+      resolve(s.split(',')[1] ?? '')
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('blob read failed'))
+    reader.readAsDataURL(blob)
   })
 }
 
@@ -238,7 +349,7 @@ export function sendTextForAction(text: string, timeoutMs = 30000): Promise<Acti
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
-        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0 })
+        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null })
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('text-to-action ws error')) }
@@ -248,6 +359,32 @@ export function sendTextForAction(text: string, timeoutMs = 30000): Promise<Acti
 // ── Misc ──────────────────────────────────────────────────────────────────────
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+export async function classifyIntent(text: string, followActive: boolean): Promise<string> {
+  const res = await fetch('http://localhost:8000/classify-intent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, follow_active: followActive }),
+  })
+  if (!res.ok) return 'chat'
+  const data = await res.json()
+  return data.intent ?? 'chat'
+}
+
+export async function listPoses(): Promise<string[]> {
+  const res = await fetch('http://localhost:8000/poses')
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.poses ?? []
+}
+
+export async function saveCurrentPose(name: string): Promise<void> {
+  await fetch('http://localhost:8000/poses/save-current', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
 }
 
 // Short camera-shutter blip via WebAudio (no asset needed).

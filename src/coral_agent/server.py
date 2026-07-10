@@ -59,6 +59,7 @@ from coral_agent.validation import (
     validate_motion_sign,
     validate_waypoint,
 )
+from coral_agent.pose_db import clear_all_poses, delete_pose, get_pose, list_pose_names, save_pose
 
 # Setup recordings directory
 RECORDINGS_DIR = Path(__file__).parent.parent.parent / "recordings"
@@ -87,6 +88,94 @@ def _get_robot_state() -> dict[str, float]:
     if simulator is not None:
         return simulator.get_all_joint_states()
     return {}
+
+
+# ---------------------------------------------------------------------------
+# Save-pose dialog state (per WebSocket connection)
+# ---------------------------------------------------------------------------
+
+from enum import Enum
+from dataclasses import dataclass
+
+
+class _SaveStage(Enum):
+    IDLE = "idle"
+    AWAITING_CONFIRM = "awaiting_confirm"
+    AWAITING_NAME = "awaiting_name"
+
+
+@dataclass
+class SavePoseDialog:
+    stage: _SaveStage = _SaveStage.IDLE
+    pending_joints: dict[str, float] | None = None
+
+
+_YES_RE = re.compile(r"\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it)\b", re.IGNORECASE)
+_NO_RE = re.compile(r"\b(no|nope|nah|cancel|never mind|nevermind|stop)\b", re.IGNORECASE)
+
+
+async def handle_save_dialog(
+    text: str, dialog: SavePoseDialog, websocket: WebSocket
+) -> bool:
+    """Handle a turn within the save-pose multi-turn dialog.
+
+    Returns True if the message was consumed by the dialog (caller should skip LLM).
+    """
+    if dialog.stage == _SaveStage.AWAITING_CONFIRM:
+        if _YES_RE.search(text):
+            dialog.stage = _SaveStage.AWAITING_NAME
+            await websocket.send_json({
+                "type": "chat_response",
+                "role": "assistant",
+                "content": "What would you like to name this pose?",
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+            })
+        elif _NO_RE.search(text):
+            dialog.stage = _SaveStage.IDLE
+            dialog.pending_joints = None
+            await websocket.send_json({
+                "type": "chat_response",
+                "role": "assistant",
+                "content": "OK, I won't save the position.",
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+            })
+        else:
+            await websocket.send_json({
+                "type": "chat_response",
+                "role": "assistant",
+                "content": "Should I save this position? Say yes or no.",
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+            })
+        return True
+
+    if dialog.stage == _SaveStage.AWAITING_NAME:
+        name = re.sub(r"[^\w\s\-]", "", text).strip()
+        if not name:
+            await websocket.send_json({
+                "type": "chat_response",
+                "role": "assistant",
+                "content": "I didn't catch a name. What should I call this pose?",
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+            })
+            return True
+        joints = dialog.pending_joints or {}
+        save_pose(name, joints)
+        dialog.stage = _SaveStage.IDLE
+        dialog.pending_joints = None
+        await websocket.send_json({
+            "type": "chat_response",
+            "role": "assistant",
+            "content": f"Saved as {name}.",
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+        })
+        return True
+
+    return False
 
 
 def _sync_sim_to_hardware() -> None:
@@ -123,6 +212,9 @@ async def lifespan(app: FastAPI):
     global simulator, sim_dispatcher, hardware_dispatcher, robot_mode, follow_controller, collision_checker
 
     robot_mode = os.getenv("ROBOT_MODE", "sim")
+
+    clear_all_poses()
+    logger.info("Pose database cleared for new session.")
 
     # Always start the MuJoCo simulator — in robot mode it provides a visualization
     # of what the code wants the robot to do, so we can compare to the physical motion.
@@ -601,6 +693,61 @@ async def demo_watch_for_action(timeout: float = 30.0) -> dict[str, Any]:
         return {"detected": False, "timeout": True}
 
 
+class IntentRequest(BaseModel):
+    text: str
+    follow_active: bool = False
+
+@app.post("/classify-intent")
+async def classify_intent_endpoint(req: IntentRequest) -> dict[str, str]:
+    """Use LLM to classify user's spoken intent for the refined demo."""
+    prompt = f"""You are an intent classifier for a child-friendly voice-controlled robot system.
+
+Classify the following message into exactly one of these intents:
+- follow_start: User wants the robot to follow/mirror/copy their body movements (e.g. "follow me", "mirror my movements", "copy me")
+- follow_stop: User wants to stop the robot from following (e.g. "stop following", "stop mirroring") — only relevant when follow_active is true
+- capture: User wants to capture/freeze/save their current body pose (e.g. "capture my pose", "take a picture", "snap this", "freeze", "capture")
+- library: User wants to see their saved poses (e.g. "show my poses", "my saved poses", "show library", "what poses do I have")
+- exit: User wants to quit or end the session (e.g. "exit", "quit", "I'm done", "stop", "bye")
+- chat: Any other request — motion commands, questions, pose adjustments, general conversation
+
+follow_active: {str(req.follow_active).lower()}
+Message: "{req.text}"
+
+Respond with ONLY the intent name, nothing else."""
+
+    response = openai.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_completion_tokens=20,
+    )
+    intent = response.choices[0].message.content.strip().lower()
+    valid = {"follow_start", "follow_stop", "capture", "library", "exit", "chat"}
+    if intent not in valid:
+        intent = "chat"
+    return {"intent": intent}
+
+
+@app.get("/poses")
+async def list_poses_endpoint() -> dict[str, list[str]]:
+    """List all saved pose names."""
+    names = list_pose_names()
+    return {"poses": names}
+
+
+class SaveCurrentPoseRequest(BaseModel):
+    name: str
+
+@app.post("/poses/save-current")
+async def save_current_pose_endpoint(req: SaveCurrentPoseRequest) -> dict[str, str]:
+    """Save the current robot joint state under the given name."""
+    joints = _get_robot_state()
+    clean_name = req.name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    save_pose(clean_name, joints)
+    return {"name": clean_name, "status": "saved"}
+
+
 class HierarchicalMemory:
     """Hierarchical memory management for chat context.
 
@@ -795,8 +942,11 @@ async def process_chat_message(
             state_description = describe_joint_state(robot_state)
             memory_ctx = memory.get_context_for_llm()
 
+        saved_names = list_pose_names()
+        saved_line = f"SAVED_POSES: {json.dumps(saved_names)}\n" if saved_names else ""
         contextual_message = (
-            f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
+            saved_line
+            + f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
             f"STATE_DESCRIPTION: {state_description}\n\n"
             f"USER_REQUEST: {user_message}"
         )
@@ -824,6 +974,44 @@ async def process_chat_message(
         plan_data = json.loads(planner_response_text)
 
         response = plan_data.get("verbal_response", "")
+        satisfied = plan_data.get("satisfied")
+
+        # Handle execute_saved_pose action: look up stored joints and dispatch directly.
+        if plan_data.get("action") == "execute_saved_pose":
+            pose_name = plan_data.get("pose_name", "")
+            joints = get_pose(pose_name)
+            if joints is not None:
+                if simulator_instance is not None:
+                    state_manager.save_checkpoint(simulator_instance, f"before:saved_pose:{pose_name}")
+                cmds = [
+                    ServoCommand(
+                        servo_id=SERVO_ID_MAP[joint],
+                        position=rad_to_servo_units(rad),
+                        duration_ms=1000,
+                    )
+                    for joint, rad in joints.items()
+                    if joint in SERVO_ID_MAP
+                ]
+                await dispatch_servo_commands(cmds)
+                logger.info(f"Executed saved pose '{pose_name}' ({len(cmds)} joints)")
+            else:
+                logger.warning(f"Saved pose '{pose_name}' not found in database")
+            memory.add_exchange(user_message, response, [])
+            recorder.log_interaction(
+                user_message=user_message,
+                assistant_response=response,
+                waypoints_extracted=[],
+                waypoints_executed=[],
+                router_response=plan_data,
+            )
+            return {
+                "type": "chat_response",
+                "role": "assistant",
+                "content": response,
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+                "satisfied": satisfied,
+            }
 
         # Each step is either a single Waypoint (sequential) or a list of parallel tracks.
         # A parallel track is itself a list[Waypoint] that executes concurrently with siblings.
@@ -927,6 +1115,7 @@ async def process_chat_message(
             "content": response,
             "waypoints": executed_waypoints,
             "joint_states": _get_robot_state() or None,
+            "satisfied": satisfied,
         }
 
         if validation_warnings:
@@ -950,17 +1139,25 @@ _CAPTURE_RE = re.compile(
     r"\b(capture|take|copy)\b.*\b(pose|position)\b",
     re.IGNORECASE,
 )
+_SAVE_POSE_RE = re.compile(
+    r"\b(save|remember|store)\b.*(position|pose|this)\b"
+    r"|\bremember\s+this\b"
+    r"|\bsave\s+this\b",
+    re.IGNORECASE,
+)
 
 
 def classify_system_intent(text: str, follow_active: bool) -> str | None:
-    """Match voice/chat input to a follow/capture system action.
+    """Match voice/chat input to a follow/capture/save system action.
 
-    Returns one of {"follow_start", "follow_stop", "capture_pose"} or None to
-    fall through to the LLM motion planner.
+    Returns one of {"follow_start", "follow_stop", "capture_pose",
+    "save_current_pose"} or None to fall through to the LLM motion planner.
     """
     t = text.strip()
     if not t:
         return None
+    if _SAVE_POSE_RE.search(t):
+        return "save_current_pose"
     if _CAPTURE_RE.search(t):
         return "capture_pose"
     if _FOLLOW_START_RE.search(t):
@@ -977,17 +1174,33 @@ async def _send_status(websocket: WebSocket, payload: dict) -> None:
         logger.debug(f"Status send failed: {e}")
 
 
-async def try_handle_system_intent(text: str, websocket: WebSocket) -> bool:
-    """If the text matches a follow/capture intent, dispatch and reply. Return True if handled."""
-    if follow_controller is None:
-        return False
-
-    intent = classify_system_intent(text, follow_active=follow_controller.is_following)
+async def try_handle_system_intent(
+    text: str, websocket: WebSocket, save_dialog: SavePoseDialog
+) -> bool:
+    """If the text matches a follow/capture/save intent, dispatch and reply. Return True if handled."""
+    follow_active = follow_controller.is_following if follow_controller is not None else False
+    intent = classify_system_intent(text, follow_active=follow_active)
     if intent is None:
         return False
 
     async def status_fn(payload: dict) -> None:
         await _send_status(websocket, payload)
+
+    if intent == "save_current_pose":
+        joints = _get_robot_state()
+        save_dialog.pending_joints = dict(joints)
+        save_dialog.stage = _SaveStage.AWAITING_CONFIRM
+        await websocket.send_json({
+            "type": "chat_response",
+            "role": "assistant",
+            "content": "I can save the current position. Should I go ahead?",
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+        })
+        return True
+
+    if follow_controller is None:
+        return False
 
     if intent == "follow_start":
         await follow_controller.start_follow(status_fn)
@@ -1038,6 +1251,7 @@ async def websocket_endpoint(websocket: WebSocket):
     memory = HierarchicalMemory()
     state_manager = StateManager(max_checkpoints=10)
     recorder = ConversationRecorder()
+    save_dialog = SavePoseDialog()
     session_id = f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     # Save initial state as checkpoint
@@ -1118,7 +1332,10 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing
                 user_message = message_data.get("content", "")
-                if await try_handle_system_intent(user_message, websocket):
+                if save_dialog.stage != _SaveStage.IDLE:
+                    if await handle_save_dialog(user_message, save_dialog, websocket):
+                        continue
+                if await try_handle_system_intent(user_message, websocket, save_dialog):
                     continue
                 response_data = await process_chat_message(
                     user_message=user_message,
@@ -1139,7 +1356,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 await websocket.send_json({"type": "transcription", "text": transcribed_text})
                 if transcribed_text.strip():
-                    if await try_handle_system_intent(transcribed_text, websocket):
+                    if save_dialog.stage != _SaveStage.IDLE:
+                        if await handle_save_dialog(transcribed_text, save_dialog, websocket):
+                            continue
+                    if await try_handle_system_intent(transcribed_text, websocket, save_dialog):
                         continue
                     response_data = await process_chat_message(
                         user_message=transcribed_text,

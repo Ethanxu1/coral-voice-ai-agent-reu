@@ -10,7 +10,7 @@ export const SPEAKER_BASE = env.VITE_SPEAKER_BASE ?? 'http://localhost:5002'
 export const ACTION_WS = env.VITE_ACTION_WS ?? 'ws://localhost:8000/ws'
 
 // How many times the CLASSIFY → RECORD loop repeats before the OUTRO.
-export const LOOP_COUNT = Number(env.VITE_LOOP_COUNT ?? 3)
+export const LOOP_COUNT = Number(env.VITE_LOOP_COUNT ?? 1)
 
 // Gesture watch timeout (seconds) for the intro "hands close" trigger.
 export const WATCH_TIMEOUT_S = 30

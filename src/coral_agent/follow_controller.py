@@ -64,6 +64,13 @@ class FollowController:
     async def start_follow(self, status_fn: StatusFn) -> None:
         if self.is_following:
             return
+        # Reset any frozen stability capture so the vision stream goes live again.
+        # Safe to call even when not frozen — the endpoint is a no-op in that case.
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as http:
+                await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
+        except Exception as e:
+            logger.debug("Vision continue on follow-start failed: %s", e)
         self._task = asyncio.create_task(self._follow_loop(status_fn))
 
     async def stop_follow(self, status_fn: Optional[StatusFn] = None) -> None:
@@ -246,15 +253,16 @@ class FollowController:
 
             targets = compute_joint_targets(frozen_landmarks, frozen_head)
             commands = targets_to_servo_commands(targets, _CAPTURE_DURATION_MS)
-            await self._dispatch(commands)
 
-            # Release vision-side freeze so subsequent captures work
+            # Unfreeze the video feed before dispatching so the camera shows the live
+            # view while the robot transitions to the captured pose.
             async with httpx.AsyncClient(timeout=5.0) as http:
                 try:
                     await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
                 except Exception as e:
                     logger.debug("Vision continue post failed: %s", e)
 
+            await self._dispatch(commands)
             await status_fn({"type": "capture_status", "stage": "done"})
 
         except asyncio.TimeoutError:

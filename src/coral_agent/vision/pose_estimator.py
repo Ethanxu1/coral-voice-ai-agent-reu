@@ -328,14 +328,6 @@ class StabilityCapture:
                     head_pose=head_pose,
                     clean_bgr=clean_frame.copy(),
                 ))
-            pct = min(1.0, elapsed / _COLLECT_SECONDS)
-            self._draw_centered_text(
-                overlay,
-                f"ANALYZING... {int(pct * 100)}%",
-                scale=0.9,
-                color=(0, 255, 255),
-                thickness=2,
-            )
             if elapsed >= _COLLECT_SECONDS:
                 self._finalize(calibration)
 
@@ -725,8 +717,6 @@ class PoseEstimator:
                 self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
             yaw, pitch, roll = self.calibration.apply(raw_yaw, raw_pitch, raw_roll)
             head_pose = HeadPose(yaw, pitch, roll, raw_yaw, raw_pitch, raw_roll)
-            cv2.putText(overlay, f"Y:{yaw:.1f} P:{pitch:.1f} R:{roll:.1f} [torso]",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 200), 2)
 
         if face_result.face_landmarks:
             raw_face_lms = face_result.face_landmarks[0]
@@ -745,8 +735,6 @@ class PoseEstimator:
                         self.calibration.add_frame(raw_yaw_p, raw_pitch_p, raw_roll_p)
                     yaw, pitch, roll = self.calibration.apply(raw_yaw_p, raw_pitch_p, raw_roll_p)
                     head_pose = HeadPose(yaw, pitch, roll, raw_yaw_p, raw_pitch_p, raw_roll_p)
-                    cv2.putText(overlay, f"Y:{yaw:.1f} P:{pitch:.1f} R:{roll:.1f} [pnp]",
-                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
                 # Extract face landmark data and draw (always, for overlay/FE)
                 for idx, name in zip(_FACE_LM_INDICES, _FACE_LM_NAMES):
@@ -780,8 +768,6 @@ class PoseEstimator:
             self._pnp_fail_count += 1
 
         cal = self.calibration.to_dict()
-        cv2.putText(overlay, f"Cal: {cal['state']} {cal['progress']*100:.0f}%",
-                    (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
         self.stability.tick(
             body_landmarks=body_landmarks,
