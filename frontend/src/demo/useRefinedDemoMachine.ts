@@ -46,6 +46,9 @@ export interface RefinedState {
   savedPoses: string[]
   flash: boolean
   error: string | null
+  // Non-null while the intent-approval modal is open. The classified intent
+  // is shown to the user for approve/reject before we run the branch.
+  pendingIntent: string | null
 }
 
 const INIT: RefinedState = {
@@ -60,6 +63,7 @@ const INIT: RefinedState = {
   savedPoses: [],
   flash: false,
   error: null,
+  pendingIntent: null,
 }
 
 function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
@@ -83,14 +87,55 @@ export function useRefinedDemoMachine() {
   const tokenRef = useRef(0)
   // Chip/button injection: when set, the next listenOrInject returns immediately
   const chipResolverRef = useRef<((text: string) => void) | null>(null)
+  // Aborts the in-flight captureUtterance so the mic is released promptly on
+  // chip clicks, restarts, and navigation. Without this, a stale getUserMedia
+  // stream can block the next captureUtterance from acquiring the mic and the
+  // orb sits in "listening" forever until reload.
+  const captureAbortRef = useRef<AbortController | null>(null)
+  // Resolves when the user approves/rejects the intent shown in the modal.
+  // Any escape path (stop, goToLibrary, goToExit, run re-entry) must clear
+  // this ref with `false` so the loop can reach its next active() check.
+  const intentApprovalRef = useRef<((approved: boolean) => void) | null>(null)
+
+  const abortCurrentCapture = useCallback(() => {
+    const ctrl = captureAbortRef.current
+    captureAbortRef.current = null
+    ctrl?.abort()
+  }, [])
+
+  const clearPendingIntent = useCallback(() => {
+    const resolve = intentApprovalRef.current
+    intentApprovalRef.current = null
+    resolve?.(false)
+  }, [])
 
   const injectText = useCallback((text: string) => {
     const resolve = chipResolverRef.current
     chipResolverRef.current = null
+    abortCurrentCapture()
     resolve?.(text)
+  }, [abortCurrentCapture])
+
+  const approveIntent = useCallback(() => {
+    const resolve = intentApprovalRef.current
+    intentApprovalRef.current = null
+    dispatch({ pendingIntent: null })
+    resolve?.(true)
+  }, [])
+
+  const rejectIntent = useCallback(() => {
+    const resolve = intentApprovalRef.current
+    intentApprovalRef.current = null
+    dispatch({ pendingIntent: null })
+    resolve?.(false)
   }, [])
 
   const run = useCallback(async () => {
+    // Kill any capture left over from a prior run() invocation (strict-mode
+    // double-mount, "Start Session" from ERROR/EXIT, etc.) before starting.
+    abortCurrentCapture()
+    clearPendingIntent()
+
     const token = ++tokenRef.current
     const active = () => {
       if (tokenRef.current !== token) throw CANCELLED
@@ -114,23 +159,54 @@ export function useRefinedDemoMachine() {
       dispatch({ messages: msgs })
     }
 
-    // Capture voice OR accept an injected chip/button text
+    // Show the classified intent to the user for approve/reject before
+    // running the branch. If any escape path clears intentApprovalRef with
+    // false (via clearPendingIntent), this resolves false too and the loop
+    // reaches its next active() check to throw CANCELLED cleanly.
+    const awaitApproval = async (intent: string): Promise<boolean> => {
+      return new Promise<boolean>((resolve) => {
+        intentApprovalRef.current = resolve
+        dispatch({ pendingIntent: intent })
+      })
+    }
+
+    // Capture voice OR accept an injected chip/button text.
+    // A per-call `settled` flag guards against late resolutions leaking into
+    // a subsequent turn (e.g. captureUtterance's .then firing after a chip
+    // click already resolved this promise).
     const listenOrInject = async (): Promise<string> => {
       return new Promise<string>((resolve) => {
-        chipResolverRef.current = resolve
-        captureUtterance({ onLevel: (rms) => dispatch({ micLevel: rms }) })
+        const ctrl = new AbortController()
+        let settled = false
+        const settle = (val: string) => {
+          if (settled) return
+          settled = true
+          chipResolverRef.current = null
+          if (captureAbortRef.current === ctrl) captureAbortRef.current = null
+          resolve(val)
+        }
+
+        captureAbortRef.current = ctrl
+        chipResolverRef.current = settle
+
+        captureUtterance({
+          onLevel: (rms) => dispatch({ micLevel: rms }),
+          signal: ctrl.signal,
+        })
           .then((blob) => {
-            // Only resolve if we haven't been resolved by a chip already
-            if (chipResolverRef.current !== null) {
-              chipResolverRef.current = null
-              sendAudioForTranscript(blob).then(resolve).catch(() => resolve(''))
-            }
+            if (settled) return
+            sendAudioForTranscript(blob)
+              .then((t) => settle(t))
+              .catch(() => settle(''))
           })
           .catch(() => {
-            if (chipResolverRef.current !== null) {
-              chipResolverRef.current = null
-              resolve('')
-            }
+            // Always settle with empty on any error (including AbortError).
+            // If a chip already settled, this is a no-op via the settled flag.
+            // If the abort came from stop()/goToLibrary()/goToExit()/run() re-entry,
+            // settling here unsticks this promise so the next active() check throws
+            // CANCELLED and the loop exits cleanly — otherwise we'd hang forever.
+            if (settled) return
+            settle('')
           })
       })
     }
@@ -156,13 +232,30 @@ export function useRefinedDemoMachine() {
           continue
         }
 
+        // Show the child's transcript in the UI immediately — before the
+        // classify-intent LLM roundtrip — so they get instant feedback that
+        // they were heard. Otherwise there's a visible ~1–2s gap between
+        // finishing a sentence and the text appearing.
+        addMsg(childMsg(transcript))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
         const intent = await classifyIntent(transcript, followActive)
         active()
 
+        // Gate every intent behind explicit user approval (placeholder step —
+        // final integration TBD). On reject, ask the user to rephrase and
+        // return to listening.
+        const approved = await awaitApproval(intent)
+        active()
+        if (!approved) {
+          addMsg(agentMsg(
+            "Got it — what would you like to do instead?",
+            ['Follow my movement', 'Capture my pose', 'My Poses'],
+          ))
+          continue
+        }
+
         // ── follow_start ──
         if (intent === 'follow_start') {
-          addMsg(childMsg(transcript))
           const result = await session.sendText(transcript)
           active()
           addMsg(agentMsg(
@@ -176,7 +269,6 @@ export function useRefinedDemoMachine() {
 
         // ── follow_stop ──
         if (intent === 'follow_stop') {
-          addMsg(childMsg(transcript))
           const result = await session.sendText(transcript)
           active()
           addMsg(agentMsg(
@@ -200,7 +292,6 @@ export function useRefinedDemoMachine() {
         if (intent === 'library') {
           savedPoses = await listPoses()
           active()
-          addMsg(childMsg(transcript))
           addMsg(agentMsg(
             savedPoses.length
               ? `You have ${savedPoses.length} saved pose${savedPoses.length !== 1 ? 's' : ''}: ${savedPoses.join(', ')}. Say a pose name to strike it, or say "make another"!`
@@ -216,9 +307,21 @@ export function useRefinedDemoMachine() {
             const lt = await listenOrInject()
             active()
             if (!lt.trim()) continue
+            // Show the child transcript before classify-intent so the user
+            // sees their words appear immediately.
+            addMsg(childMsg(lt))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
             const li = await classifyIntent(lt, false)
             active()
+            const libApproved = await awaitApproval(li)
+            active()
+            if (!libApproved) {
+              addMsg(agentMsg(
+                "Got it — what would you like to do instead?",
+                ['Make another', 'Follow my movement'],
+              ))
+              continue
+            }
             if (li === 'exit') {
               savedPoses = await listPoses()
               active()
@@ -227,7 +330,6 @@ export function useRefinedDemoMachine() {
             }
             if (li === 'capture') {
               dispatch({ stage: 'LISTENING', savedPoses })
-              addMsg(childMsg(lt))
               // Process capture inline here instead of breaking out
               addMsg(sysMsg('Starting countdown…'))
               await setRobotState('DEMO_LOCKED')
@@ -269,14 +371,23 @@ export function useRefinedDemoMachine() {
                 const ft = await listenOrInject()
                 active()
                 if (!ft.trim()) continue
+                // Show child transcript immediately so the user sees their
+                // words appear before the classify-intent + LLM roundtrip.
+                addMsg(childMsg(ft))
                 const ftIntent = await classifyIntent(ft, false)
                 active()
+                const ftApproved = await awaitApproval(ftIntent)
+                active()
+                if (!ftApproved) {
+                  addMsg(agentMsg(
+                    "Got it — how should I tweak the pose instead?",
+                  ))
+                  continue
+                }
                 if (ftIntent === 'follow_start') {
-                  addMsg(childMsg(ft))
                   followEscape = true
                   break
                 }
-                addMsg(childMsg(ft))
                 dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
                 const fr = await session.sendText(ft)
                 active()
@@ -310,8 +421,7 @@ export function useRefinedDemoMachine() {
               // Stay in library loop
               continue
             }
-            // General command from library view
-            addMsg(childMsg(lt))
+            // General command from library view (childMsg already added above)
             const lr = await session.sendText(lt)
             active()
             addMsg(agentMsg(lr.content || ''))
@@ -332,7 +442,6 @@ export function useRefinedDemoMachine() {
           }
           active()
 
-          addMsg(childMsg(transcript))
           addMsg(sysMsg('Starting countdown…'))
 
           await setRobotState('DEMO_LOCKED')
@@ -382,14 +491,23 @@ export function useRefinedDemoMachine() {
             const ft = await listenOrInject()
             active()
             if (!ft.trim()) continue
+            // Show child transcript immediately so the user sees their words
+            // appear before the classify-intent + LLM roundtrip.
+            addMsg(childMsg(ft))
             const ftIntent = await classifyIntent(ft, false)
             active()
+            const ftApproved = await awaitApproval(ftIntent)
+            active()
+            if (!ftApproved) {
+              addMsg(agentMsg(
+                "Got it — how should I tweak the pose instead?",
+              ))
+              continue
+            }
             if (ftIntent === 'follow_start') {
-              addMsg(childMsg(ft))
               followEscape = true
               break
             }
-            addMsg(childMsg(ft))
             dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
             const fr = await session.sendText(ft)
             active()
@@ -429,7 +547,6 @@ export function useRefinedDemoMachine() {
         }
 
         // ── chat (general motion/conversation) ──
-        addMsg(childMsg(transcript))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
         const chatResult = await session.sendText(transcript)
         active()
@@ -441,34 +558,52 @@ export function useRefinedDemoMachine() {
       dispatch({ stage: 'ERROR', error: String(err) })
     } finally {
       chipResolverRef.current = null
+      abortCurrentCapture()
+      clearPendingIntent()
       session.close()
     }
-  }, [])
+  }, [abortCurrentCapture, clearPendingIntent])
 
   const stop = useCallback(() => {
     tokenRef.current++
     chipResolverRef.current = null
+    abortCurrentCapture()
+    clearPendingIntent()
     setRobotState('IDLE')
     dispatch({ ...INIT })
-  }, [])
+  }, [abortCurrentCapture, clearPendingIntent])
 
   const goToLibrary = useCallback(async () => {
     tokenRef.current++
     chipResolverRef.current = null
+    abortCurrentCapture()
+    clearPendingIntent()
     const names = await listPoses()
     dispatch({ stage: 'LIBRARY', savedPoses: names })
-  }, [])
+  }, [abortCurrentCapture, clearPendingIntent])
 
   const goToExit = useCallback(() => {
     tokenRef.current++
     chipResolverRef.current = null
+    abortCurrentCapture()
+    clearPendingIntent()
     setRobotState('IDLE')
     dispatch({ stage: 'EXIT_CONFIRM' })
-  }, [])
+  }, [abortCurrentCapture, clearPendingIntent])
 
   const startAgain = useCallback(() => {
     run()
   }, [run])
 
-  return { state, start: run, stop, injectText, goToLibrary, goToExit, startAgain }
+  return {
+    state,
+    start: run,
+    stop,
+    injectText,
+    goToLibrary,
+    goToExit,
+    startAgain,
+    approveIntent,
+    rejectIntent,
+  }
 }

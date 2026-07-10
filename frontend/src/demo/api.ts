@@ -110,11 +110,36 @@ export async function setRobotState(mode: string): Promise<void> {
 // of trailing silence, or `maxMs` after speech began (whichever comes first).
 // `maxMs` bounds utterance length only — silent waiting time is unbounded so
 // the demo doesn't fire the WebSocket timeout on a user who's still thinking.
+//
+// The caller may pass an `AbortSignal` to release the mic immediately (e.g.
+// when the user clicks a chip mid-listen or restarts the demo). Every exit
+// path — success, error, or abort — settles exactly once and tears down the
+// MediaStream + AudioContext, so a lingering mic acquisition can't wedge the
+// next capture on browsers that block concurrent getUserMedia calls.
 export async function captureUtterance(
-  opts: { silenceMs?: number; maxMs?: number; threshold?: number; onLevel?: (rms: number) => void } = {},
+  opts: {
+    silenceMs?: number
+    maxMs?: number
+    threshold?: number
+    onLevel?: (rms: number) => void
+    signal?: AbortSignal
+  } = {},
 ): Promise<Blob> {
-  const { silenceMs = 1200, maxMs = 12000, threshold = 10, onLevel } = opts
+  const { silenceMs = 1200, maxMs = 12000, threshold = 10, onLevel, signal } = opts
+
+  if (signal?.aborted) {
+    throw new DOMException('captureUtterance aborted', 'AbortError')
+  }
+
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+
+  // Caller may have aborted while getUserMedia was resolving — release the mic
+  // we just acquired rather than start recording into a dead session.
+  if (signal?.aborted) {
+    stream.getTracks().forEach((t) => t.stop())
+    throw new DOMException('captureUtterance aborted', 'AbortError')
+  }
+
   const ctx = new AudioContext()
   const source = ctx.createMediaStreamSource(stream)
   const analyser = ctx.createAnalyser()
@@ -124,38 +149,92 @@ export async function captureUtterance(
   const recorder = new MediaRecorder(stream)
   const chunks: Blob[] = []
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
-  recorder.start()
 
   const buf = new Uint8Array(analyser.fftSize)
   let speechStartedAt: number | null = null
   let silenceSince: number | null = null
 
   const cleanup = () => {
-    stream.getTracks().forEach((t) => t.stop())
-    ctx.close().catch(() => {})
+    try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ }
+    try { ctx.close().catch(() => {}) } catch { /* ignore */ }
   }
 
-  return new Promise<Blob>((resolve) => {
-    recorder.onstop = () => {
+  return new Promise<Blob>((resolve, reject) => {
+    let settled = false
+    let stopFallback: ReturnType<typeof setTimeout> | null = null
+
+    const finalizeSuccess = () => {
+      if (settled) return
+      settled = true
+      if (stopFallback) { clearTimeout(stopFallback); stopFallback = null }
       cleanup()
       resolve(new Blob(chunks, { type: 'audio/webm' }))
     }
+    const finalizeError = (err: Error) => {
+      if (settled) return
+      settled = true
+      if (stopFallback) { clearTimeout(stopFallback); stopFallback = null }
+      try { if (recorder.state === 'recording') recorder.stop() } catch { /* ignore */ }
+      cleanup()
+      reject(err)
+    }
+    // Ask the recorder to flush + emit onstop; if the browser never fires
+    // onstop (rare, but observed), the fallback resolves with what we have so
+    // the caller isn't wedged forever.
+    const requestStop = () => {
+      if (settled) return
+      try { recorder.stop() } catch (e) {
+        finalizeError(new Error(`recorder.stop failed: ${e instanceof Error ? e.message : String(e)}`))
+        return
+      }
+      stopFallback = setTimeout(() => { finalizeSuccess() }, 2000)
+    }
+
+    recorder.onstop = () => finalizeSuccess()
+    recorder.onerror = (e) => {
+      const inner = (e as unknown as { error?: { message?: string } }).error?.message
+      finalizeError(new Error(`MediaRecorder error: ${inner ?? 'unknown'}`))
+    }
+
+    // Track ended = mic revoked, unplugged, or OS took the device away.
+    stream.getTracks().forEach((t) => {
+      t.addEventListener('ended', () => {
+        finalizeError(new Error('microphone track ended unexpectedly'))
+      })
+    })
+
+    const onAbort = () => finalizeError(new DOMException('captureUtterance aborted', 'AbortError'))
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+
+    try {
+      recorder.start()
+    } catch (err) {
+      finalizeError(new Error(`recorder.start failed: ${err instanceof Error ? err.message : String(err)}`))
+      return
+    }
+
     const tick = () => {
-      if (recorder.state !== 'recording') return
-      analyser.getByteTimeDomainData(buf)
+      if (settled) return
+      if (recorder.state !== 'recording') { finalizeSuccess(); return }
+      try {
+        analyser.getByteTimeDomainData(buf)
+      } catch (err) {
+        finalizeError(new Error(`analyser read failed: ${err instanceof Error ? err.message : String(err)}`))
+        return
+      }
       let sum = 0
       for (let i = 0; i < buf.length; i++) { const v = buf[i] - 128; sum += v * v }
       const rms = Math.sqrt(sum / buf.length)
-      onLevel?.(rms)
+      try { onLevel?.(rms) } catch { /* callback errors are the caller's problem, not ours */ }
       const now = performance.now()
       if (rms > threshold) {
         if (speechStartedAt == null) speechStartedAt = now
         silenceSince = null
       } else if (speechStartedAt != null) {
         if (silenceSince == null) silenceSince = now
-        else if (now - silenceSince > silenceMs) { recorder.stop(); return }
+        else if (now - silenceSince > silenceMs) { requestStop(); return }
       }
-      if (speechStartedAt != null && now - speechStartedAt > maxMs) { recorder.stop(); return }
+      if (speechStartedAt != null && now - speechStartedAt > maxMs) { requestStop(); return }
       requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
@@ -285,20 +364,36 @@ export function openActionSession(): ActionSession {
       })
     }
   })
-  ws.addEventListener('close', () => failPending(new Error('action session ws closed')))
-  ws.addEventListener('error', () => failPending(new Error('action session ws error')))
+  // Once the socket goes down, mark the session dead so subsequent send()
+  // calls fail fast instead of writing to a closed WS (which either throws
+  // or silently drops, leaving `pending` set and the next call stuck on 'busy').
+  ws.addEventListener('close', () => {
+    closed = true
+    failPending(new Error('action session ws closed'))
+  })
+  ws.addEventListener('error', () => {
+    closed = true
+    failPending(new Error('action session ws error'))
+  })
 
   const send = async (payload: object, timeoutMs: number, initialTranscript = ''): Promise<ActionResult> => {
     if (closed) throw new Error('action session already closed')
     if (pending) throw new Error('action session busy')
     await openPromise
+    if (closed) throw new Error('action session already closed')
     return new Promise<ActionResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending = null
         reject(new Error('action session timed out'))
       }, timeoutMs)
       pending = { transcript: initialTranscript, resolve, reject, timer }
-      ws.send(JSON.stringify(payload))
+      try {
+        ws.send(JSON.stringify(payload))
+      } catch (err) {
+        clearTimeout(timer)
+        pending = null
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
     })
   }
 
@@ -361,15 +456,37 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+// Placeholder intent classifier — synchronous regex/keyword matcher wrapped
+// in a Promise so call sites don't change. This is intentionally dumb: the
+// final integration hasn't been decided yet, so keep it deterministic, cheap,
+// and easy to rip out. `follow_active` is used to disambiguate a bare "stop"
+// (follow_stop only when the robot is currently following).
 export async function classifyIntent(text: string, followActive: boolean): Promise<string> {
-  const res = await fetch('http://localhost:8000/classify-intent', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, follow_active: followActive }),
-  })
-  if (!res.ok) return 'chat'
-  const data = await res.json()
-  return data.intent ?? 'chat'
+  const t = text.toLowerCase()
+
+  // exit — end the session
+  if (/\b(exit|quit|good\s?bye|bye|leave|(i'?m|we'?re)\s+done|all\s+done|end\s+session)\b/.test(t)) {
+    return 'exit'
+  }
+
+  // follow_stop — either explicit ("stop following") or bare "stop" while following
+  if (/\bstop\s+(following|mirroring|copying|imitating|tracking)\b/.test(t)) return 'follow_stop'
+  if (followActive && /\bstop\b/.test(t)) return 'follow_stop'
+
+  // follow_start — mirror/copy/imitate my movement
+  if (/\b(follow|mirror|copy|imitate|track)\b/.test(t)) return 'follow_start'
+
+  // capture — snapshot / freeze the current pose
+  if (/\b(capture|snap|freeze|take\s+(?:a\s+)?(?:picture|photo|snapshot)|save\s+(?:my|this|the)\s+pose)\b/.test(t)) {
+    return 'capture'
+  }
+
+  // library — see saved poses
+  if (/\b(my\s+poses|library|saved\s+poses|show\s+(?:me\s+)?(?:my\s+)?poses|what\s+poses|see\s+(?:my\s+)?poses)\b/.test(t)) {
+    return 'library'
+  }
+
+  return 'chat'
 }
 
 export async function listPoses(): Promise<string[]> {

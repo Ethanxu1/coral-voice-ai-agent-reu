@@ -7,6 +7,19 @@ import {
 import { LiveStream } from './DummyStream'
 import './RefinedDemo.css'
 
+const INTENT_LABELS: Record<string, string> = {
+  follow_start: 'Follow Movement',
+  follow_stop: 'Stop Following',
+  capture: 'Capture Pose',
+  library: 'Show Poses',
+  exit: 'Exit Session',
+  chat: 'Chat / Motion Command',
+}
+
+function formatIntent(intent: string): string {
+  return INTENT_LABELS[intent] ?? intent
+}
+
 function RobotIllustration() {
   return (
     <div className="rd-robot">
@@ -47,8 +60,17 @@ function RobotIllustration() {
 export default function RefinedDemo() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { state, start, stop, injectText, goToLibrary, goToExit, startAgain } =
-    useRefinedDemoMachine()
+  const {
+    state,
+    start,
+    stop,
+    injectText,
+    goToLibrary,
+    goToExit,
+    startAgain,
+    approveIntent,
+    rejectIntent,
+  } = useRefinedDemoMachine()
 
   const handleExit = useCallback(() => {
     stop()
@@ -166,7 +188,11 @@ export default function RefinedDemo() {
           />
 
           {/* Chat messages */}
-          <ChatArea messages={state.messages} onChip={injectText} />
+          <ChatArea
+            messages={state.messages}
+            onChip={injectText}
+            agentTyping={state.orbState === 'thinking' && !state.pendingIntent}
+          />
 
           {/* Library bar when in LIBRARY stage */}
           {state.stage === 'LIBRARY' && (
@@ -257,6 +283,25 @@ export default function RefinedDemo() {
           </div>
         </div>
       )}
+
+      {/* Intent approval modal — placeholder gate before executing a branch. */}
+      {state.pendingIntent && (
+        <div className="rd-overlay">
+          <div className="rd-overlay-card">
+            <div className="rd-overlay-title">Is this right?</div>
+            <div className="rd-intent-label">Intent</div>
+            <div className="rd-intent-pill">{formatIntent(state.pendingIntent)}</div>
+            <div className="rd-overlay-btns">
+              <button className="rd-overlay-btn primary" onClick={approveIntent}>
+                Approve
+              </button>
+              <button className="rd-overlay-btn secondary" onClick={rejectIntent}>
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -298,22 +343,37 @@ function OrbSection({
 function ChatArea({
   messages,
   onChip,
+  agentTyping,
 }: {
   messages: RefinedChatMsg[]
   onChip: (text: string) => void
+  agentTyping: boolean
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, agentTyping])
 
   return (
     <div className="rd-chat-area">
       {messages.map((msg, i) => (
         <ChatMsg key={i} msg={msg} onChip={onChip} />
       ))}
+      {agentTyping && <TypingIndicator />}
       <div ref={bottomRef} />
+    </div>
+  )
+}
+
+function TypingIndicator() {
+  return (
+    <div className="rd-msg agent">
+      <div className="rd-bubble rd-typing" aria-label="Agent is typing">
+        <span className="rd-typing-dot" />
+        <span className="rd-typing-dot" />
+        <span className="rd-typing-dot" />
+      </div>
     </div>
   )
 }
