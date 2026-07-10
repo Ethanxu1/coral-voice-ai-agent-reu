@@ -2,7 +2,8 @@
 
 /* ── Root ───────────────────────────────────────────────────────────────────── */
 .rd-root {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: #EFE8DA;
   font-family: 'Nunito', sans-serif;
   display: flex;
@@ -496,6 +497,7 @@
 /* ── Chat area ──────────────────────────────────────────────────────────────── */
 .rd-chat-area {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px 20px;
   display: flex;
@@ -712,6 +714,28 @@
 
 .rd-overlay-btn.secondary:hover {
   background: rgba(45, 41, 38, 0.14);
+}
+
+/* Intent approval modal */
+.rd-intent-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6B6560;
+  margin-bottom: 10px;
+}
+
+.rd-intent-pill {
+  display: inline-block;
+  padding: 10px 22px;
+  border-radius: 999px;
+  background: rgba(255, 107, 74, 0.12);
+  color: #FF6B4A;
+  font-family: 'Baloo 2', cursive;
+  font-size: 20px;
+  font-weight: 800;
+  margin-bottom: 26px;
 }
 
 /* Poses gallery in exit overlay */

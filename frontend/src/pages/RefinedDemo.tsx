@@ -7,6 +7,19 @@ import {
 import { LiveStream } from './DummyStream'
 import './RefinedDemo.css'
 
+const INTENT_LABELS: Record<string, string> = {
+  follow_start: 'Follow Movement',
+  follow_stop: 'Stop Following',
+  capture: 'Capture Pose',
+  library: 'Show Poses',
+  exit: 'Exit Session',
+  chat: 'Chat / Motion Command',
+}
+
+function formatIntent(intent: string): string {
+  return INTENT_LABELS[intent] ?? intent
+}
+
 function RobotIllustration() {
   return (
     <div className="rd-robot">
@@ -47,8 +60,17 @@ function RobotIllustration() {
 export default function RefinedDemo() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { state, start, stop, injectText, goToLibrary, goToExit, startAgain } =
-    useRefinedDemoMachine()
+  const {
+    state,
+    start,
+    stop,
+    injectText,
+    goToLibrary,
+    goToExit,
+    startAgain,
+    approveIntent,
+    rejectIntent,
+  } = useRefinedDemoMachine()
 
   const handleExit = useCallback(() => {
     stop()
@@ -252,6 +274,25 @@ export default function RefinedDemo() {
               </button>
               <button className="rd-overlay-btn secondary" onClick={handleExit}>
                 Exit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Intent approval modal — placeholder gate before executing a branch. */}
+      {state.pendingIntent && (
+        <div className="rd-overlay">
+          <div className="rd-overlay-card">
+            <div className="rd-overlay-title">Is this right?</div>
+            <div className="rd-intent-label">Intent</div>
+            <div className="rd-intent-pill">{formatIntent(state.pendingIntent)}</div>
+            <div className="rd-overlay-btns">
+              <button className="rd-overlay-btn primary" onClick={approveIntent}>
+                Approve
+              </button>
+              <button className="rd-overlay-btn secondary" onClick={rejectIntent}>
+                Reject
               </button>
             </div>
           </div>
