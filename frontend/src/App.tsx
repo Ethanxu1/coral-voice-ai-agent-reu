@@ -6,6 +6,8 @@ import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
 import ProDemo from './pages/ProDemo'
 import RefinedDemo from './pages/RefinedDemo'
+import Tutorial from './pages/Tutorial'
+import MoveMate from './pages/MoveMate'
 import RobotModeToggle from './components/RobotModeToggle'
 
 interface WaypointInfo {
@@ -181,6 +183,9 @@ function App() {
           jointStates={jointStates}
         />
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <Link to="/tutorial" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">📚 Tutorial</button>
+          </Link>
           <Link to="/pose" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">Pose Tracking</button>
           </Link>
@@ -202,6 +207,8 @@ function App() {
       <Route path="/pose" element={<PoseVisualization />} />
       <Route path="/prodemo" element={<ProDemo />} />
       <Route path="/refineddemo" element={<RefinedDemo />} />
+      <Route path="/tutorial" element={<Tutorial />} />
+      <Route path="/movemate" element={<MoveMate />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

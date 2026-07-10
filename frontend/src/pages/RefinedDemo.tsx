@@ -7,6 +7,43 @@ import {
 import { LiveStream } from './DummyStream'
 import './RefinedDemo.css'
 
+function RobotIllustration() {
+  return (
+    <div className="rd-robot">
+      <div className="rd-robot-neck-wrap">
+        <div className="rd-robot-antenna" />
+        <div className="rd-robot-neck" />
+      </div>
+      <div className="rd-robot-head">
+        <div className="rd-robot-eye" />
+        <div className="rd-robot-eye" />
+      </div>
+      <div className="rd-robot-torso-wrap">
+        <div className="rd-robot-torso">
+          <div className="rd-robot-chest">
+            <div className="rd-robot-bar" style={{ width: 6, height: 14 }} />
+            <div className="rd-robot-bar" style={{ width: 6, height: 26 }} />
+            <div className="rd-robot-bar" style={{ width: 6, height: 18 }} />
+            <div className="rd-robot-bar" style={{ width: 6, height: 10 }} />
+          </div>
+        </div>
+        <div className="rd-robot-arm rd-robot-arm-left">
+          <div className="rd-robot-joint" />
+          <div className="rd-robot-limb" />
+        </div>
+        <div className="rd-robot-arm rd-robot-arm-right">
+          <div className="rd-robot-joint" />
+          <div className="rd-robot-limb" />
+        </div>
+      </div>
+      <div className="rd-robot-legs">
+        <div className="rd-robot-leg" />
+        <div className="rd-robot-leg" />
+      </div>
+    </div>
+  )
+}
+
 export default function RefinedDemo() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -61,15 +98,19 @@ export default function RefinedDemo() {
       <main className="rd-main">
         {/* Camera panel */}
         <div className="rd-camera-panel">
-          <LiveStream badge={false} />
-
-          {/* Dynamic live/freeze badge */}
-          {(() => {
-            const isFrozen = !!state.capturedFrame && state.stage !== 'LISTENING' && state.stage !== 'FOLLOWING'
-            return isFrozen
-              ? <span className="tui-live-badge rd-freeze-badge">■ FREEZE</span>
-              : <span className="tui-live-badge">● LIVE</span>
-          })()}
+          <div className="rd-sim-grid" />
+          <div className="rd-sim-vignette" />
+          <div className="rd-sim-badge"><span className="rd-sim-badge-dot" />SIM</div>
+          <div className="rd-sim-safety"><span className="rd-sim-safety-dot" />Safe zone</div>
+          <RobotIllustration />
+          <div className="rd-sim-label">[ MuJoCo joint simulation ]</div>
+          <div className="rd-pip">
+            <LiveStream badge={false} />
+            <div className="rd-pip-live">
+              <span className="rd-pip-live-dot" />
+              <span className="rd-pip-live-text">LIVE</span>
+            </div>
+          </div>
 
           {state.followActive && (
             <div className="rd-follow-badge">
