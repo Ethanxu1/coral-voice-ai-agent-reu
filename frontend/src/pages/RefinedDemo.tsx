@@ -188,7 +188,11 @@ export default function RefinedDemo() {
           />
 
           {/* Chat messages */}
-          <ChatArea messages={state.messages} onChip={injectText} />
+          <ChatArea
+            messages={state.messages}
+            onChip={injectText}
+            agentTyping={state.orbState === 'thinking' && !state.pendingIntent}
+          />
 
           {/* Library bar when in LIBRARY stage */}
           {state.stage === 'LIBRARY' && (
@@ -339,22 +343,37 @@ function OrbSection({
 function ChatArea({
   messages,
   onChip,
+  agentTyping,
 }: {
   messages: RefinedChatMsg[]
   onChip: (text: string) => void
+  agentTyping: boolean
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, agentTyping])
 
   return (
     <div className="rd-chat-area">
       {messages.map((msg, i) => (
         <ChatMsg key={i} msg={msg} onChip={onChip} />
       ))}
+      {agentTyping && <TypingIndicator />}
       <div ref={bottomRef} />
+    </div>
+  )
+}
+
+function TypingIndicator() {
+  return (
+    <div className="rd-msg agent">
+      <div className="rd-bubble rd-typing" aria-label="Agent is typing">
+        <span className="rd-typing-dot" />
+        <span className="rd-typing-dot" />
+        <span className="rd-typing-dot" />
+      </div>
     </div>
   )
 }

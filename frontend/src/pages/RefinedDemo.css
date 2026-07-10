@@ -568,6 +568,43 @@
   padding: 5px 14px;
 }
 
+/* Typing indicator — three-dot bubble shown while the agent is "thinking" */
+.rd-bubble.rd-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 16px;
+  min-height: 20px;
+}
+
+.rd-typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #17BEBB;
+  opacity: 0.4;
+  animation: rd-typing-bounce 1.2s infinite ease-in-out;
+}
+
+.rd-typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.rd-typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes rd-typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
 /* Chips */
 .rd-chips {
   display: flex;
