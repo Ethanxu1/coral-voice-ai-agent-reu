@@ -100,6 +100,12 @@ export default function RefinedDemo() {
           </div>
         </div>
         <div className="rd-topbar-right">
+          <button
+            className="rd-topbar-btn ghost"
+            onClick={() => window.open('/tutorial', '_blank', 'noopener,noreferrer')}
+          >
+            Tutorial
+          </button>
           {isActive && (
             <button
               className="rd-topbar-btn ghost"

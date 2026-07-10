@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useRef } from 'react'
+import { useReducer, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getRobotStream } from '../demo/robotConfig'
 import './Tutorial.css'
@@ -130,6 +130,11 @@ function RobotIllustration({ wave = false, happy = false, highlight = '' }: { wa
 function SimPanel({ badge = 'SIM', safetyColor = '#3FA76B', safetyLabel = 'Safe zone', caption = '', highlight = '', cameraUrl }: {
   badge?: string; safetyColor?: string; safetyLabel?: string; caption?: string; highlight?: string; cameraUrl?: string
 }) {
+  // Track whether the camera feed is actually rendering. The placeholder
+  // icon/label should only show when the feed is unavailable.
+  const [feedReady, setFeedReady] = useState(false)
+  useEffect(() => { setFeedReady(false) }, [cameraUrl])
+
   return (
     <div className="tut-sim">
       <div className="tut-sim-grid" />
@@ -151,18 +156,25 @@ function SimPanel({ badge = 'SIM', safetyColor = '#3FA76B', safetyLabel = 'Safe 
       )}
       {!caption && <div className="tut-sim-label">[ MuJoCo joint simulation ]</div>}
       <div className="tut-pip">
-        <img
-          src={cameraUrl}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', borderRadius: 14 }}
-          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-          alt="camera"
-        />
+        {cameraUrl && (
+          <img
+            src={cameraUrl}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', borderRadius: 14 }}
+            onLoad={() => setFeedReady(true)}
+            onError={() => setFeedReady(false)}
+            alt="camera"
+          />
+        )}
         <div className="tut-pip-live">
           <span className="tut-pip-live-dot" />
           <span className="tut-pip-live-text">LIVE</span>
         </div>
-        <div className="tut-pip-icon" />
-        <div className="tut-pip-label">[ live camera feed ]</div>
+        {!feedReady && (
+          <>
+            <div className="tut-pip-icon" />
+            <div className="tut-pip-label">[ live camera feed ]</div>
+          </>
+        )}
       </div>
     </div>
   )
