@@ -7,6 +7,7 @@ from typing import Callable
 
 import mujoco
 import mujoco.viewer
+import numpy as np
 from loguru import logger
 
 from coral_agent.validation import JOINT_LIMITS
@@ -63,6 +64,11 @@ class AiNexSimulator:
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
 
+        # Guards every mjData access (step, forward, sync, keyframe reset). The
+        # MuJoCo solver stack is not thread-safe, so the physics thread, the
+        # viewer sync, and command/reset paths must be mutually exclusive.
+        self._lock = threading.Lock()
+
         self._apply_stand_keyframe()
 
         self._actuator_ids: dict[str, int] = {}
@@ -77,11 +83,42 @@ class AiNexSimulator:
             if name:
                 self._joint_ids[name] = i
 
+        # Precompute the mesh geoms we stream to the browser viewer (/ws/sim →
+        # RobotViewer.tsx). Each visual link is a single mesh geom, so we render
+        # every geom independently in world space and let MuJoCo own all the
+        # forward kinematics — the client just moves pre-loaded meshes to match.
+        self._render_geom_ids: list[int] = []
+        self._render_geoms: list[dict] = []
+        for gid in range(self.model.ngeom):
+            if self.model.geom_type[gid] != mujoco.mjtGeom.mjGEOM_MESH:
+                continue
+            mesh_id = int(self.model.geom_dataid[gid])
+            if mesh_id < 0:
+                continue
+            mesh_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_MESH, mesh_id)
+            # Effective color: material overrides the geom's own rgba when set.
+            mat_id = int(self.model.geom_matid[gid])
+            rgba = self.model.mat_rgba[mat_id] if mat_id >= 0 else self.model.geom_rgba[gid]
+            # MuJoCo recenters mesh vertices at compile time and stores the
+            # original offset in mesh_pos/mesh_quat. The streamed geom pose is
+            # for that recentered frame, so the client must bake this offset into
+            # the raw STL (v_proc = R(mesh_quat)^T @ (v_raw - mesh_pos)) or every
+            # link renders displaced by its own centroid ("exploded" robot).
+            self._render_geom_ids.append(gid)
+            self._render_geoms.append({
+                "mesh": mesh_name,
+                "rgba": [float(c) for c in rgba],
+                "mesh_pos": [float(c) for c in self.model.mesh_pos[mesh_id]],
+                "mesh_quat": [float(c) for c in self.model.mesh_quat[mesh_id]],  # wxyz
+            })
+
         self._viewer_thread: threading.Thread | None = None
         self._running = False
-        self._lock = threading.Lock()
 
-        logger.info(f"AiNex simulator initialized with {self.model.nu} actuators")
+        logger.info(
+            f"AiNex simulator initialized with {self.model.nu} actuators, "
+            f"{len(self._render_geom_ids)} render geoms"
+        )
 
     def get_stand_joint_positions(self) -> dict[str, float]:
         """Return stand-keyframe joint positions (radians) without touching the live sim."""
@@ -103,13 +140,16 @@ class AiNexSimulator:
     def _apply_stand_keyframe(self) -> None:
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         if key_id >= 0:
-            mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
-            # Sync ctrl targets to the keyframe joint positions so PD controllers
-            # hold the pose rather than pulling toward zero.
-            for i in range(self.model.nu):
-                joint_id = self.model.actuator_trnid[i, 0]
-                qpos_addr = self.model.jnt_qposadr[joint_id]
-                self.data.ctrl[i] = self.data.qpos[qpos_addr]
+            # Lock so a runtime reset (reset_pose command) can't rewrite qpos/ctrl
+            # while the physics thread is mid-step. Uncontended during __init__.
+            with self._lock:
+                mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
+                # Sync ctrl targets to the keyframe joint positions so PD
+                # controllers hold the pose rather than pulling toward zero.
+                for i in range(self.model.nu):
+                    joint_id = self.model.actuator_trnid[i, 0]
+                    qpos_addr = self.model.jnt_qposadr[joint_id]
+                    self.data.ctrl[i] = self.data.qpos[qpos_addr]
             logger.info("Applied 'stand' keyframe")
         else:
             logger.warning("'stand' keyframe not found, using default pose")
@@ -362,37 +402,102 @@ class AiNexSimulator:
                 limits[short_name] = (float(ctrlrange[0]), float(ctrlrange[1]))
         return limits
 
+    # === BROWSER VIEWER STREAMING ===
+    def get_render_geom_info(self) -> list[dict]:
+        """Static per-geom metadata (mesh file name + color) for the browser viewer.
+
+        The list order defines the index order of the float buffer returned by
+        get_geom_poses(), so the client pairs each pose with its mesh once at
+        setup time and thereafter only needs the streamed numbers.
+        """
+        return self._render_geoms
+
+    def get_geom_poses(self) -> bytes:
+        """World-space pose of every render geom as a packed float32 buffer.
+
+        Layout: for each geom (in get_render_geom_info() order) 7 little-endian
+        float32s — [x, y, z, qw, qx, qy, qz]. MuJoCo has already resolved forward
+        kinematics into geom_xpos/geom_xmat, so the browser only applies these
+        transforms to pre-loaded meshes. Coordinates are MuJoCo world frame (Z-up).
+        """
+        n = len(self._render_geom_ids)
+        buf = np.empty((n, 7), dtype=np.float32)
+        quat = np.empty(4, dtype=np.float64)
+        with self._lock:
+            # Refresh forward kinematics so geom_xpos/geom_xmat reflect the
+            # current qpos even when the physics loop isn't stepping (e.g. the
+            # native viewer thread never started / failed to launch on macOS).
+            # It recomputes from state without integrating, so it's safe to
+            # interleave with the stepping loop under the same lock.
+            mujoco.mj_forward(self.model, self.data)
+            for row, gid in enumerate(self._render_geom_ids):
+                buf[row, 0:3] = self.data.geom_xpos[gid]
+                mujoco.mju_mat2Quat(quat, self.data.geom_xmat[gid])
+                buf[row, 3:7] = quat
+        return buf.tobytes()
+
     def start_viewer(self, on_close: Callable[[], None] | None = None) -> None:
+        """Start the simulation loop (physics + native viewer) in one thread.
+
+        Stepping and rendering run in the SAME thread so they never touch mjData
+        concurrently — MuJoCo's solver stack is not thread-safe, and splitting
+        them races even during launch_passive's own setup (→ NaN QACC / stack
+        corruption / hard exit). Physics keeps stepping even if the native window
+        is closed or never opens (headless), so command handling and the browser
+        pose stream (/ws/sim) stay live regardless.
+        """
         if self._running:
-            logger.warning("Viewer already running")
+            logger.warning("Simulator already running")
             return
 
         self._running = True
-
-        def run_viewer():
-            logger.info("Starting MuJoCo viewer")
-            # Run 5 physics steps per render frame so simulation runs at ~1x real-time.
-            # timestep=0.002s × 5 = 0.01s simulation per 0.01s sleep = real-time.
-            _steps_per_frame = 5
-            with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
-                while viewer.is_running() and self._running:
-                    with self._lock:
-                        for _ in range(_steps_per_frame):
-                            mujoco.mj_step(self.model, self.data)
-                    viewer.sync()
-                    time.sleep(0.01)
-
-            self._running = False
-            logger.info("MuJoCo viewer closed")
-            if on_close:
-                on_close()
-
-        self._viewer_thread = threading.Thread(target=run_viewer, daemon=True)
+        self._viewer_thread = threading.Thread(
+            target=self._run, args=(on_close,), daemon=True
+        )
         self._viewer_thread.start()
+
+    def _run(self, on_close: Callable[[], None] | None = None) -> None:
+        # timestep 0.002s × 5 steps = 0.01s sim per 0.01s sleep ≈ real-time.
+        steps_per_frame = 5
+
+        # Open the native window before the stepping loop, unlocked and on this
+        # same thread — matching the original working code and coordinating with
+        # mjpython's main thread without holding self._lock across it (avoids any
+        # startup deadlock). No browser client exists yet, so nothing races the
+        # mjData reads in its setup. Failure (e.g. no mjpython) is non-fatal — we
+        # still run physics headlessly for the browser stream.
+        viewer = None
+        try:
+            viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            logger.info("MuJoCo viewer window opened")
+        except Exception as e:
+            logger.warning(f"Native viewer unavailable ({e}); running headless")
+
+        logger.info("Starting MuJoCo physics loop")
+        try:
+            while self._running:
+                with self._lock:
+                    for _ in range(steps_per_frame):
+                        mujoco.mj_step(self.model, self.data)
+                    if viewer is not None:
+                        if viewer.is_running():
+                            viewer.sync()
+                        else:  # window closed — keep stepping without rendering
+                            viewer.close()
+                            viewer = None
+                            logger.info("Viewer window closed (physics continues)")
+                time.sleep(0.01)
+        finally:
+            if viewer is not None:
+                viewer.close()
+            logger.info("MuJoCo physics loop stopped")
+
+        if on_close:
+            on_close()
 
     def stop_viewer(self) -> None:
         self._running = False
-        if self._viewer_thread:
+        if self._viewer_thread is not None:
             self._viewer_thread.join(timeout=2.0)
             self._viewer_thread = None
 

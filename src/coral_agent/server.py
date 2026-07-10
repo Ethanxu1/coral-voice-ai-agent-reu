@@ -11,7 +11,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from dotenv import load_dotenv
 
@@ -24,6 +24,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
 
@@ -158,14 +159,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Coral AI Agent", lifespan=lifespan)
 
-# CORS middleware for frontend
+# CORS middleware for frontend. Match any localhost/127.0.0.1 port via regex so a
+# Vite dev-server port bump (5173 → 5174 → …) never breaks cross-origin fetches
+# such as the browser viewer's STL loads.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve robot mesh assets (STL) so the browser viewer can load geometry.
+# Meshes resolve to /assets/ainex/meshes/<link>.STL (see /ws/sim + RobotViewer.tsx).
+ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
 class CommandRequest(BaseModel):
@@ -791,8 +799,15 @@ async def process_chat_message(
     simulator_instance: "AiNexSimulator | None",
     session_id: str,
     pre_context: tuple[dict, str, list] | None = None,
+    on_action_started: Callable[[], Awaitable[None]] | None = None,
 ) -> dict:
-    """Process a user message: single LLM call → primitive resolution → joint execution."""
+    """Process a user message: single LLM call → primitive resolution → joint execution.
+
+    ``on_action_started`` (if given) is awaited once, right before motion execution
+    begins, but only when the plan actually contains a motion to run. It lets the
+    caller tell the client "the robot is now moving" so a slow round-trip can be
+    distinguished from a stall (the demo moves on instead of re-asking).
+    """
     langfuse = get_client()
 
     with propagate_attributes(
@@ -888,6 +903,12 @@ async def process_chat_message(
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
+
+            # Signal that a real motion is about to run, before the (potentially
+            # slow) execution blocks. The client uses this to tell "already
+            # executing" apart from "still thinking" if its own wait times out.
+            if on_action_started is not None:
+                await on_action_started()
 
             # Execute motion steps: batch consecutive Waypoints together so
             # sequential movements run in one tight interpolation loop (matching
@@ -1141,6 +1162,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     recorder=recorder,
                     simulator_instance=simulator,
                     session_id=session_id,
+                    on_action_started=lambda: websocket.send_json({"type": "action_started"}),
                 )
                 await websocket.send_json(response_data)
 
@@ -1163,6 +1185,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         simulator_instance=simulator,
                         session_id=session_id,
                         pre_context=pre_context,
+                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
                     )
                     await websocket.send_json(response_data)
 
@@ -1200,6 +1223,39 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(
             f"WebSocket client removed. Total clients: {len(connected_clients)}"
         )
+
+
+@app.websocket("/ws/sim")
+async def sim_stream_endpoint(websocket: WebSocket):
+    """Stream MuJoCo geom world poses to the browser viewer (RobotViewer.tsx).
+
+    The server owns physics; the browser owns rendering. On connect we send one
+    JSON 'init' frame naming each render geom's mesh + color (this defines the
+    index order), then push binary float32 pose buffers at a fixed rate. No
+    simulation runs client-side, so the view can never drift from the sim/robot.
+    """
+    await websocket.accept()
+    if simulator is None:
+        await websocket.send_json({"type": "error", "detail": "simulator not initialized"})
+        await websocket.close()
+        return
+
+    await websocket.send_json({
+        "type": "init",
+        "mesh_url": "/assets/ainex/meshes/",
+        "geoms": simulator.get_render_geom_info(),
+    })
+    logger.info("Sim viewer client connected")
+
+    fps = 30
+    try:
+        while True:
+            await websocket.send_bytes(simulator.get_geom_poses())
+            await asyncio.sleep(1 / fps)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        logger.info("Sim viewer client disconnected")
 
 
 def _reexec_under_mjpython_if_needed() -> None:

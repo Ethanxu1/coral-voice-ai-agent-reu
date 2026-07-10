@@ -15007,3 +15007,27 @@ WARNING: Linesearch objective is not convex
 Thu Jul  9 11:49:58 2026
 WARNING: Nan, Inf or huge value in QACC at DOF 8. The simulation is unstable. Time = 0.0000.
 
+Fri Jul 10 16:12:25 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
+Fri Jul 10 16:20:19 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
+Fri Jul 10 16:29:36 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
+Fri Jul 10 16:31:02 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
+Fri Jul 10 16:32:04 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
+Fri Jul 10 16:42:36 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
+Fri Jul 10 16:46:46 2026
+WARNING: Nan, Inf or huge value in QACC at DOF 0. The simulation is unstable. Time = 0.0000.
+
+Fri Jul 10 16:46:47 2026
+ERROR: mj_copyDataVisual: attempting to copy mjData while stack is in use
+
