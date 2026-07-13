@@ -1,6 +1,7 @@
 import { useReducer, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getRobotStream } from '../demo/robotConfig'
+import RobotViewer from './RobotViewer'
 import './Tutorial.css'
 
 const ROBOT_NAME = 'CORAL'
@@ -148,13 +149,12 @@ function SimPanel({ badge = 'SIM', safetyColor = '#3FA76B', safetyLabel = 'Safe 
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: safetyColor, boxShadow: `0 0 10px ${safetyColor}`, display: 'inline-block' }} />
         {safetyLabel}
       </div>
-      <RobotIllustration highlight={highlight} />
+      <RobotViewer embedded />
       {caption && (
         <div className="tut-sim-caption">
           <div className="tut-sim-caption-pill">{caption}</div>
         </div>
       )}
-      {!caption && <div className="tut-sim-label">[ MuJoCo joint simulation ]</div>}
       <div className="tut-pip">
         {cameraUrl && (
           <img

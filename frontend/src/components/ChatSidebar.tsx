@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useAudioVAD } from '../utils/useAudioVAD'
 
-interface WaypointInfo {
+export interface WaypointInfo {
   waypoint_index: number
   primitive_name: string | null
   angle: number | null
@@ -9,7 +9,7 @@ interface WaypointInfo {
   speed: number
 }
 
-interface Message {
+export interface Message {
   role: 'user' | 'assistant'
   content: string
   waypoints?: WaypointInfo[]

@@ -1,6 +1,7 @@
 import { useReducer, useEffect, useRef, useCallback } from 'react'
 import { getRobotStream } from '../demo/robotConfig'
 import { captureUtterance, sendAudioForTranscript, listPoses } from '../demo/api'
+import RobotViewer from './RobotViewer'
 import './MoveMate.css'
 
 const ASSISTANT_NAME = 'CORAL'
@@ -109,43 +110,6 @@ const STATUS_MAP: Record<Screen, string> = {
   naming: 'Say a name…',
   library: 'Pick a pose to strike',
   exit: 'See you next time!',
-}
-
-function RobotIllustration() {
-  return (
-    <div className="mm-robot">
-      <div className="mm-robot-neck-wrap">
-        <div className="mm-robot-antenna" />
-        <div className="mm-robot-neck" />
-      </div>
-      <div className="mm-robot-head">
-        <div className="mm-robot-eye" />
-        <div className="mm-robot-eye" />
-      </div>
-      <div className="mm-robot-torso-wrap">
-        <div className="mm-robot-torso">
-          <div className="mm-robot-chest">
-            <div className="mm-robot-bar" style={{ width: 6, height: 14 }} />
-            <div className="mm-robot-bar" style={{ width: 6, height: 26 }} />
-            <div className="mm-robot-bar" style={{ width: 6, height: 18 }} />
-            <div className="mm-robot-bar" style={{ width: 6, height: 10 }} />
-          </div>
-        </div>
-        <div className="mm-robot-arm mm-robot-arm-left">
-          <div className="mm-robot-joint" />
-          <div className="mm-robot-limb" />
-        </div>
-        <div className="mm-robot-arm mm-robot-arm-right">
-          <div className="mm-robot-joint" />
-          <div className="mm-robot-limb" />
-        </div>
-      </div>
-      <div className="mm-robot-legs">
-        <div className="mm-robot-leg" />
-        <div className="mm-robot-leg" />
-      </div>
-    </div>
-  )
 }
 
 export default function MoveMate() {
@@ -257,11 +221,8 @@ export default function MoveMate() {
             Safe zone
           </div>
 
-          {/* Robot illustration centered */}
-          <RobotIllustration />
-
-          {/* MuJoCo label */}
-          <div className="mm-sim-label">[ MuJoCo joint simulation ]</div>
+          {/* Live 3D MuJoCo viewer */}
+          <RobotViewer embedded />
 
           {/* Camera PiP top-right */}
           <div className="mm-pip">

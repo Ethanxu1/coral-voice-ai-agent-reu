@@ -85,7 +85,7 @@ function RobotMeshes({
   )
 }
 
-export default function RobotViewer() {
+export default function RobotViewer({ embedded = false }: { embedded?: boolean } = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
@@ -146,25 +146,33 @@ export default function RobotViewer() {
   }, [])
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', background: '#15151a' }}>
-      <div
-        style={{
-          position: 'absolute',
-          zIndex: 1,
-          top: 12,
-          left: 12,
-          display: 'flex',
-          gap: 12,
-          alignItems: 'center',
-          color: '#cbd5e1',
-          font: '13px system-ui, sans-serif',
-        }}
-      >
-        <Link to="/" style={{ color: '#93c5fd', textDecoration: 'none' }}>
-          ← Back
-        </Link>
-        <span style={{ opacity: 0.7 }}>MuJoCo viewer · {status}</span>
-      </div>
+    <div
+      style={
+        embedded
+          ? { position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 1 }
+          : { position: 'relative', width: '100vw', height: '100vh', background: '#15151a' }
+      }
+    >
+      {!embedded && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1,
+            top: 12,
+            left: 12,
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+            color: '#cbd5e1',
+            font: '13px system-ui, sans-serif',
+          }}
+        >
+          <Link to="/" style={{ color: '#93c5fd', textDecoration: 'none' }}>
+            ← Back
+          </Link>
+          <span style={{ opacity: 0.7 }}>MuJoCo viewer · {status}</span>
+        </div>
+      )}
 
       <Canvas camera={{ position: [0.5, 0.35, 0.6], fov: 45, near: 0.01, far: 50 }}>
         <ambientLight intensity={0.7} />

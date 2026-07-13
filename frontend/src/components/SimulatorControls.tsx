@@ -407,6 +407,13 @@ function SimulatorControls({
         <div className="button-row" style={{ marginTop: '0.5rem' }}>
           <button
             className="control-btn preset"
+            onClick={() => onCommand('stand')}
+            disabled={!isConnected}
+          >
+            Stand
+          </button>
+          <button
+            className="control-btn preset"
             onClick={() => onCommand('reset')}
             disabled={!isConnected}
           >

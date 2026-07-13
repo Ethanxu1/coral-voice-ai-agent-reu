@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
-import ChatSidebar from './components/ChatSidebar'
+import ChatSidebar, { type Message } from './components/ChatSidebar'
 import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
 import ProDemo from './pages/ProDemo'
@@ -11,19 +11,6 @@ import MoveMate from './pages/MoveMate'
 import PoseTester from './pages/PoseTester'
 import RobotViewer from './pages/RobotViewer'
 import RobotModeToggle from './components/RobotModeToggle'
-
-interface WaypointInfo {
-  waypoint_index: number
-  joints: { [key: string]: number }
-  speed: number
-}
-
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  waypoints?: WaypointInfo[]
-  audioUrl?: string
-}
 
 interface JointStates {
   [key: string]: number
