@@ -128,8 +128,8 @@ function RobotIllustration({ wave = false, happy = false, highlight = '' }: { wa
 }
 
 // ---- Sim Placeholder ----
-function SimPanel({ badge = 'SIM', safetyColor = '#3FA76B', safetyLabel = 'Safe zone', caption = '', highlight = '', cameraUrl }: {
-  badge?: string; safetyColor?: string; safetyLabel?: string; caption?: string; highlight?: string; cameraUrl?: string
+function SimPanel({ badge = 'SIM', safetyColor = '#3FA76B', safetyLabel = 'Safe zone', caption = '', cameraUrl }: {
+  badge?: string; safetyColor?: string; safetyLabel?: string; caption?: string; cameraUrl?: string
 }) {
   // Track whether the camera feed is actually rendering. The placeholder
   // icon/label should only show when the feed is unavailable.
@@ -296,10 +296,6 @@ export default function Tutorial() {
     i === s.conceptIdx ? 'tut-dot-active' : i < s.conceptIdx ? 'tut-dot-done' : 'tut-dot-upcoming'
   )
 
-  const simHighlight = isBlocks
-    ? (s.blockPart ? (s.blockPart === 'Hip' ? 'core' : 'rightArm') : '')
-    : isConcept ? cc.highlight
-    : ''
   const simCaption = isBlocks && s.blockPart && s.blockDir ? `Simulating: ${s.blockDir} ${s.blockPart}` : ''
 
   return (
@@ -383,7 +379,6 @@ export default function Tutorial() {
               safetyColor={safetyColor}
               safetyLabel={safetyLabel}
               caption={simCaption}
-              highlight={simHighlight}
               cameraUrl={cameraUrl}
             />
             <div className="tut-right">

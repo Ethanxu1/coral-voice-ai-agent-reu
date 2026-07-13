@@ -1,22 +1,27 @@
-// Simplified "pro" demo machine. Flow:
-//   Start → ADJUST (conversational — user speaks freely, captures when ready)
-//   → COUNTDOWN → LOADING → ADJUST (post-capture refinement) → NAME → repeat → DONE
+// Simplified "pro" demo machine — a stripped-down sibling of useDemoMachine
+// meant for demonstrating functionality (not the kids experience). No speaker,
+// no intro/outro, no coaching pages. Flow, repeated 3×:
+//   WATCH (live stream, wait for arms-crossed) → COUNTDOWN → LOADING (map-features)
+//   → ADJUST (voice/text) → NAME → next loop; then DONE shows the named moves.
 
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import {
   captureUtterance,
   mapFeatures,
   move,
-  openActionSession,
   playShutter,
+  sendAudioForAction,
   sendAudioForTranscript,
+  sendTextForAction,
   setRobotState,
   sleep,
+  watchForAction,
 } from './api'
-import { LOOP_COUNT } from './config'
+import { LOOP_COUNT, WATCH_TIMEOUT_S } from './config'
 
 export type ProStage =
   | 'IDLE'
+  | 'WATCH'
   | 'COUNTDOWN'
   | 'LOADING'
   | 'ADJUST'
@@ -27,6 +32,7 @@ export type ProStage =
 export type ProStatus = 'idle' | 'recording' | 'thinking' | 'action' | 'clarify'
 export type InputMode = 'voice' | 'text'
 
+/** A captured + named move: the label plus the frame it was read from. */
 export interface ProMove {
   name: string
   frame: string | null
@@ -40,15 +46,14 @@ export interface ProState {
   flash: boolean
   status: ProStatus
   caption: string
+  /** Retake hint shown when the pose couldn't be mapped (hips out of frame). */
   detail: string | null
+  /** Most recent captured frame (base64 JPEG, no data: prefix). */
   frame: string | null
   awaitingText: boolean
   inputMode: InputMode
   moves: ProMove[]
   error: string | null
-  micLevel: number
-  lastTranscript: string | null
-  lastResponse: string | null
 }
 
 const initialState: ProState = {
@@ -65,9 +70,6 @@ const initialState: ProState = {
   inputMode: 'voice',
   moves: [],
   error: null,
-  micLevel: 0,
-  lastTranscript: null,
-  lastResponse: null,
 }
 
 function reducer(state: ProState, patch: Partial<ProState>): ProState {
@@ -75,22 +77,18 @@ function reducer(state: ProState, patch: Partial<ProState>): ProState {
 }
 
 const CANCELLED = Symbol('cancelled')
-// Resolves a post-capture ADJUST input race so the user can skip refinement.
 const SKIP = Symbol('skip')
 const MAX_RETAKES = 3
-
-// Detect when the user wants to trigger a pose capture.
-const CAPTURE_RE = /\b(capture|take a (photo|picture|snapshot)|photograph|snap this|(capture|take|snap) (my |this )?(pose|position))\b/i
 
 export function useProDemoMachine() {
   const [state, dispatch] = useReducer(reducer, initialState)
   const tokenRef = useRef(0)
   const inputModeRef = useRef<InputMode>('voice')
   const textResolverRef = useRef<((value: string) => void) | null>(null)
-  // Resolves the post-capture ADJUST input race with SKIP so the loop jumps to NAME.
+  // Resolves the ADJUST-stage input race with SKIP so the loop jumps to NAME.
   const skipResolverRef = useRef<(() => void) | null>(null)
 
-  useEffect(() => () => { tokenRef.current++ }, [])
+  useEffect(() => () => { tokenRef.current++ }, []) // abort on unmount
 
   const awaitText = useCallback(
     () => new Promise<string>((resolve) => { textResolverRef.current = resolve }),
@@ -109,8 +107,7 @@ export function useProDemoMachine() {
     dispatch({ inputMode: inputModeRef.current })
   }, [])
 
-  // Skip the current post-capture ADJUST prompt and go straight to naming,
-  // leaving the captured pose as-is (no further refinement).
+  // Skip the current ADJUST prompt and go straight to naming the captured pose.
   const skip = useCallback(() => {
     const resolve = skipResolverRef.current
     skipResolverRef.current = null
@@ -121,198 +118,114 @@ export function useProDemoMachine() {
     const token = ++tokenRef.current
     const active = () => { if (tokenRef.current !== token) throw CANCELLED }
 
-    dispatch({
-      ...initialState,
-      inputMode: inputModeRef.current,
-      stage: 'ADJUST',
-      lastResponse: "Hi! What would you like me to do?",
-    })
+    dispatch({ ...initialState, inputMode: inputModeRef.current, stage: 'WATCH' })
 
     try {
       const moves: ProMove[] = []
 
       for (let i = 0; i < state.totalLoops; i++) {
-        dispatch({ loop: i, frame: null, detail: null })
-
-        // ── Open one session per loop so memory spans pre- and post-capture ──
-        const session = openActionSession()
-
-        try {
-          // ── PRE-CAPTURE: listen freely until user says "capture [my] pose" ──
-          let captureRequested = false
-          while (!captureRequested) {
-            active()
-            let transcript: string
-
-            if (inputModeRef.current === 'text') {
-              dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: '' })
-              transcript = await awaitText(); active()
-              dispatch({ awaitingText: false, lastTranscript: transcript })
-            } else {
-              dispatch({ stage: 'ADJUST', status: 'recording', caption: 'Listening…', micLevel: 0 })
-              const blob = await captureUtterance({ onLevel: (rms) => dispatch({ micLevel: rms }) }); active()
-              dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
-              transcript = await sendAudioForTranscript(blob); active()
-              dispatch({ lastTranscript: transcript || '(no speech detected)', micLevel: 0 })
-            }
-
-            if (CAPTURE_RE.test(transcript)) {
-              captureRequested = true
-            } else if (transcript.trim()) {
-              dispatch({ status: 'thinking', caption: 'Thinking…' })
-              const result = await session.sendText(transcript); active()
-              dispatch({ lastResponse: result.content || null, caption: '' })
-              if (result.hasAction) {
-                dispatch({ status: 'action' })
-                await sleep(1200); active()
-              }
-              dispatch({ status: 'idle' })
-            } else {
-              dispatch({ status: 'idle', caption: '' })
-            }
-          }
-
-          // ── COUNTDOWN + LOADING ─────────────────────────────────────────────
-          let mapped = null
-          for (let take = 0; take < MAX_RETAKES && mapped === null; take++) {
-            await setRobotState('DEMO_LOCKED'); active()
-            dispatch({ stage: 'COUNTDOWN', caption: 'Hold your pose', detail: null })
-            for (const n of [3, 2, 1]) {
-              dispatch({ countdown: n })
-              await sleep(1000); active()
-            }
-            dispatch({ countdown: null, flash: true, stage: 'LOADING', caption: 'Analyzing pose…' })
-            playShutter()
-            const result = await mapFeatures(); active()
-            dispatch({ flash: false })
-            if (result.poseDetected) {
-              mapped = result
-              dispatch({ stage: 'ADJUST', frame: result.imageB64 })
-              await move(result.commands).catch(() => {}); active()
-            } else {
-              dispatch({
-                stage: 'ADJUST', detail: result.detail,
-                lastResponse: result.detail || "Couldn't capture clearly — try again!",
-              })
-              await sleep(2000); active()
-              dispatch({ detail: null })
-            }
-          }
-          await setRobotState('IDLE'); active()
-
-          if (mapped === null) {
-            dispatch({ stage: 'ERROR', error: "Couldn't read a full-body pose after several tries." })
-            return
-          }
-
-          dispatch({ lastTranscript: null, lastResponse: "Got it! How would you like to adjust this pose?" })
-
-          // ── POST-CAPTURE ADJUST: refine until satisfied ─────────────────────
-          let satisfied = false
-          let firstTurn = true
-          while (!satisfied) {
-            active()
-            let transcript: string
-
-            if (inputModeRef.current === 'text') {
-              const caption = firstTurn
-                ? 'Describe an adjustment'
-                : 'Any more adjustments? Say "looks good" when done'
-              dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption })
-              const skipSignal = new Promise<typeof SKIP>((resolve) => {
-                skipResolverRef.current = () => resolve(SKIP)
-              })
-              const input = await Promise.race<string | typeof SKIP>([awaitText(), skipSignal]); active()
-              skipResolverRef.current = null
-              if (input === SKIP) {
-                textResolverRef.current = null
-                dispatch({ awaitingText: false, status: 'idle', caption: '' })
-                break
-              }
-              transcript = input
-              dispatch({ awaitingText: false, status: 'thinking', caption: 'Thinking…', lastTranscript: transcript })
-              const result = await session.sendText(transcript); active()
-              dispatch({ lastResponse: result.content || null })
-              firstTurn = false
-
-              if (result.satisfied === true) {
-                if (result.hasAction) { dispatch({ status: 'action' }); await sleep(1200); active() }
-                satisfied = true
-                dispatch({ status: 'idle', caption: '' })
-                await sleep(600); active()
-              } else if (result.hasAction) {
-                dispatch({ status: 'action' })
-                await sleep(1400); active()
-              } else {
-                dispatch({ status: 'clarify' })
-                await sleep(1600); active()
-              }
-            } else {
-              const caption = firstTurn
-                ? 'Listening — describe an adjustment'
-                : 'Listening — more tweaks, or say "looks good"'
-              dispatch({ stage: 'ADJUST', status: 'recording', caption, micLevel: 0 })
-              const skipSignal = new Promise<typeof SKIP>((resolve) => {
-                skipResolverRef.current = () => resolve(SKIP)
-              })
-              const captured = await Promise.race<Blob | typeof SKIP>([
-                captureUtterance({ onLevel: (rms) => dispatch({ micLevel: rms }) }),
-                skipSignal,
-              ]); active()
-              skipResolverRef.current = null
-              if (captured === SKIP) {
-                dispatch({ status: 'idle', caption: '', micLevel: 0 })
-                break
-              }
-              const blob = captured
-              dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
-              transcript = await sendAudioForTranscript(blob); active()
-              dispatch({ lastTranscript: transcript || '(no speech detected)', micLevel: 0 })
-              const result = await session.sendText(transcript); active()
-              dispatch({ lastResponse: result.content || null })
-              firstTurn = false
-
-              if (result.satisfied === true) {
-                if (result.hasAction) { dispatch({ status: 'action' }); await sleep(1200); active() }
-                satisfied = true
-                dispatch({ status: 'idle', caption: '' })
-                await sleep(600); active()
-              } else if (result.hasAction) {
-                dispatch({ status: 'action' })
-                await sleep(1400); active()
-              } else {
-                dispatch({ status: 'clarify' })
-                await sleep(1600); active()
-              }
-            }
-          }
-
-          // ── NAME ────────────────────────────────────────────────────────────
-          let label: string
-          if (inputModeRef.current === 'text') {
-            dispatch({ stage: 'NAME', status: 'idle', awaitingText: true, caption: 'Name this move', lastTranscript: null, lastResponse: null })
-            label = await awaitText(); active()
-            dispatch({ awaitingText: false, lastTranscript: label })
-          } else {
-            dispatch({ stage: 'NAME', status: 'recording', caption: 'Say a name for this move', lastTranscript: null, lastResponse: null, micLevel: 0 })
-            const nameBlob = await captureUtterance({ onLevel: (rms) => dispatch({ micLevel: rms }) }); active()
-            dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
-            label = await sendAudioForTranscript(nameBlob); active()
-            dispatch({ lastTranscript: label || '(no speech detected)' })
-          }
-          const name = label.trim() || `Move ${i + 1}`
-          moves.push({ name, frame: mapped.imageB64 })
-          dispatch({
-            moves: [...moves], status: 'idle', stage: 'ADJUST', frame: null,
-            lastTranscript: null,
-            lastResponse: i + 1 < state.totalLoops
-              ? `Saved "${name}"! Say what you'd like, or say "capture my pose" for the next one.`
-              : null,
-          })
-
-        } finally {
-          session.close()
+        // ── WATCH: live stream, wait for the arms-crossed go-ahead ────────────
+        dispatch({
+          stage: 'WATCH',
+          loop: i,
+          countdown: null,
+          flash: false,
+          status: 'idle',
+          frame: null,
+          detail: null,
+          caption: 'Cross your arms to capture a pose',
+        })
+        let detected = false
+        while (!detected) {
+          active()
+          detected = (await watchSafely()).detected
         }
+
+        // ── COUNTDOWN + LOADING: snap, then map-features (retake if no hips) ──
+        let mapped = null
+        for (let take = 0; take < MAX_RETAKES && mapped === null; take++) {
+          await setRobotState('DEMO_LOCKED'); active()
+          dispatch({ stage: 'COUNTDOWN', caption: 'Hold your pose', detail: null })
+          for (const n of [3, 2, 1]) {
+            dispatch({ countdown: n })
+            await sleep(1000); active()
+          }
+          dispatch({ countdown: null, flash: true, stage: 'LOADING', caption: 'Analyzing pose…' })
+          playShutter()
+          const result = await mapFeatures(); active()
+          dispatch({ flash: false })
+          if (result.poseDetected) {
+            mapped = result
+            dispatch({ frame: result.imageB64 })
+            await move(result.commands).catch(() => {}); active()
+          } else {
+            dispatch({ stage: 'WATCH', detail: result.detail, caption: 'Let\'s try that again' })
+            await sleep(2200); active()
+          }
+        }
+        await setRobotState('IDLE'); active()
+
+        if (mapped === null) {
+          dispatch({ stage: 'ERROR', error: 'Couldn\'t read a full-body pose after several tries.' })
+          return
+        }
+
+        // ── ADJUST: voice or text instruction, looped until an action lands ──
+        // The user can skip: each input await races a skip signal that breaks
+        // straight to NAME, leaving the captured pose as-is (no refinement).
+        let gotAction = false
+        let skipped = false
+        while (!gotAction && !skipped) {
+          active()
+          const skipSignal = new Promise<typeof SKIP>((resolve) => {
+            skipResolverRef.current = () => resolve(SKIP)
+          })
+          let result
+          if (inputModeRef.current === 'text') {
+            dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: 'Describe an adjustment' })
+            const input = await Promise.race<string | typeof SKIP>([awaitText(), skipSignal]); active()
+            if (input === SKIP) { skipped = true; break }
+            dispatch({ awaitingText: false, status: 'thinking', caption: 'Applying adjustment…' })
+            result = await sendTextForAction(input); active()
+          } else {
+            dispatch({ stage: 'ADJUST', status: 'recording', caption: 'Listening — describe an adjustment' })
+            const captured = await Promise.race<Blob | typeof SKIP>([captureUtterance(), skipSignal]); active()
+            if (captured === SKIP) { skipped = true; break }
+            dispatch({ status: 'thinking', caption: 'Applying adjustment…' })
+            result = await sendAudioForAction(captured); active()
+          }
+          skipResolverRef.current = null
+          if (result.hasAction) {
+            gotAction = true
+            dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
+            await sleep(1400); active()
+          } else {
+            dispatch({ status: 'clarify', caption: result.content || 'Didn\'t catch that — try rephrasing' })
+            await sleep(1600); active()
+          }
+        }
+        // Clean up a pending text prompt if the loop exited via skip.
+        skipResolverRef.current = null
+        if (skipped) {
+          textResolverRef.current = null
+          dispatch({ awaitingText: false, status: 'idle', caption: 'Skipped adjustment' })
+        }
+
+        // ── NAME: label this move ────────────────────────────────────────────
+        let label: string
+        if (inputModeRef.current === 'text') {
+          dispatch({ stage: 'NAME', status: 'idle', awaitingText: true, caption: 'Name this move' })
+          label = (await awaitText()); active()
+          dispatch({ awaitingText: false, status: 'thinking' })
+        } else {
+          dispatch({ stage: 'NAME', status: 'recording', caption: 'Say a name for this move' })
+          const nameBlob = await captureUtterance(); active()
+          dispatch({ status: 'thinking', caption: 'Saving…' })
+          label = await sendAudioForTranscript(nameBlob); active()
+        }
+        const name = label.trim() || `Move ${i + 1}`
+        moves.push({ name, frame: mapped.imageB64 })
+        dispatch({ moves: [...moves], status: 'idle' })
       }
 
       dispatch({ stage: 'DONE', moves: [...moves], caption: 'Session complete' })
@@ -332,4 +245,12 @@ export function useProDemoMachine() {
   }, [])
 
   return { state, start: run, retry: run, exit, toggleInputMode, submitText, skip }
+}
+
+async function watchSafely(): Promise<{ detected: boolean }> {
+  try {
+    return await watchForAction(WATCH_TIMEOUT_S)
+  } catch {
+    return { detected: false }
+  }
 }
