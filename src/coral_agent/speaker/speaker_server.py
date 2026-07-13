@@ -57,6 +57,12 @@ _SCRATCH_WAV = os.path.join(tempfile.gettempdir(), f"coral_speak_{os.getpid()}.w
 
 _speak_lock = threading.Lock()
 
+# Handle to the in-progress macOS `say` process so /kill can terminate it mid
+# utterance. Guarded by its own lock (NOT _speak_lock) so /kill never blocks
+# waiting for the current utterance to finish.
+_current_proc: subprocess.Popen | None = None
+_proc_lock = threading.Lock()
+
 # macOS `say` speaking rate in words/minute (default is ~175). Bumped up so the
 # demo feels snappier; override with the SAY_RATE env var.
 _SAY_RATE_WPM = int(os.getenv("SAY_RATE", "220"))
@@ -68,14 +74,24 @@ def _speak_blocking(text: str) -> None:
     Must only ever be called with ``_speak_lock`` held — pyttsx3 engines and
     the shared scratch file are not safe for concurrent use.
     """
+    global _current_proc
     if sys.platform == "darwin":
         # macOS: pyttsx3 drives NSSpeechSynthesizer through the Cocoa run loop,
         # which only pumps on the process main thread. This server speaks from a
         # worker thread (asyncio.to_thread), where BOTH runAndWait() and
         # save_to_file() return immediately without producing audio/a file. The
         # `say` CLI runs in its own process — no run-loop/thread dependency — and
-        # blocks until playback actually finishes.
-        subprocess.run(["say", "-r", str(_SAY_RATE_WPM), text], check=True)
+        # blocks until playback actually finishes. Popen (not run) so /kill can
+        # terminate it; a terminated `say` returns non-zero, which is expected.
+        proc = subprocess.Popen(["say", "-r", str(_SAY_RATE_WPM), text])
+        with _proc_lock:
+            _current_proc = proc
+        try:
+            proc.wait()
+        finally:
+            with _proc_lock:
+                if _current_proc is proc:
+                    _current_proc = None
         return
 
     # Windows/Linux: pyttsx3 renders to a file off-thread just fine. Split synth
@@ -89,6 +105,28 @@ def _speak_blocking(text: str) -> None:
     data, samplerate = sf.read(_SCRATCH_WAV, dtype="int16")
     sd.play(data, samplerate)  # sounddevice (PortAudio) — blocks on sd.wait()
     sd.wait()
+
+
+def _stop_current_speech() -> bool:
+    """Terminate any in-progress utterance. Safe to call when nothing is speaking.
+
+    Returns True if it actually stopped a running utterance. Does NOT take
+    _speak_lock — it must interrupt the speaking thread, not queue behind it.
+    """
+    global _current_proc
+    stopped = False
+    with _proc_lock:
+        proc, _current_proc = _current_proc, None
+    if proc is not None and proc.poll() is None:
+        proc.terminate()  # SIGTERM stops `say` playback immediately
+        stopped = True
+    # Windows/Linux playback goes through sounddevice; cut any active buffer,
+    # which unblocks the speaking thread's sd.wait().
+    try:
+        sd.stop()
+    except Exception:  # noqa: BLE001 — best-effort; nothing may be playing
+        pass
+    return stopped
 
 
 def speak_sync(text: str, timeout: float = 60.0) -> None:
@@ -163,6 +201,17 @@ async def speak(req: SpeakRequest):
     except TimeoutError:
         raise HTTPException(status_code=504, detail="speech timed out")
     return {"status": "done", "spoke": text}
+
+
+@app.post("/kill")
+async def kill():
+    """Immediately stop any in-progress speech.
+
+    Called by the demo when the tab is closed or the demo is restarted, so a
+    long line (e.g. the INTRO/OUTRO) doesn't keep playing over the next run.
+    """
+    stopped = await asyncio.to_thread(_stop_current_speech)
+    return {"status": "done", "stopped": stopped}
 
 
 def main():

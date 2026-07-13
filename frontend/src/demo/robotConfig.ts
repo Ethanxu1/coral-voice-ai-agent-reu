@@ -12,10 +12,18 @@ import { useSyncExternalStore } from 'react'
 
 export type RobotMode = 'sim' | 'hardware'
 
+/** How /map-features drives the legs. Arms always use live retargeting.
+ *  - retarget: live pelvis-frame hip pitch/roll + knee bend (default)
+ *  - legacy:   old atan2 mapping (hip_yaw ← forward/back swing)
+ *  - classify: MobileNetV3 → snap legs to the matching canned pose */
+export type LegMode = 'retarget' | 'legacy' | 'classify'
+
 export interface RobotConfig {
   mode: RobotMode
   /** Pi hostname/IP used to build robot + stream URLs in hardware mode. */
   piHost: string
+  /** Leg-retargeting strategy passed to /map-features. */
+  legMode: LegMode
 }
 
 const STORAGE_KEY = 'coral.robotConfig'
@@ -24,6 +32,7 @@ const env = import.meta.env as Record<string, string | undefined>
 const DEFAULT_CONFIG: RobotConfig = {
   mode: 'sim',
   piHost: env.VITE_ROBOT_HOST ?? '192.168.8.219',
+  legMode: 'retarget',
 }
 
 function loadConfig(): RobotConfig {

@@ -75,6 +75,8 @@ function reducer(state: ProState, patch: Partial<ProState>): ProState {
 }
 
 const CANCELLED = Symbol('cancelled')
+// Resolves a post-capture ADJUST input race so the user can skip refinement.
+const SKIP = Symbol('skip')
 const MAX_RETAKES = 3
 
 // Detect when the user wants to trigger a pose capture.
@@ -85,6 +87,8 @@ export function useProDemoMachine() {
   const tokenRef = useRef(0)
   const inputModeRef = useRef<InputMode>('voice')
   const textResolverRef = useRef<((value: string) => void) | null>(null)
+  // Resolves the post-capture ADJUST input race with SKIP so the loop jumps to NAME.
+  const skipResolverRef = useRef<(() => void) | null>(null)
 
   useEffect(() => () => { tokenRef.current++ }, [])
 
@@ -103,6 +107,14 @@ export function useProDemoMachine() {
   const toggleInputMode = useCallback(() => {
     inputModeRef.current = inputModeRef.current === 'voice' ? 'text' : 'voice'
     dispatch({ inputMode: inputModeRef.current })
+  }, [])
+
+  // Skip the current post-capture ADJUST prompt and go straight to naming,
+  // leaving the captured pose as-is (no further refinement).
+  const skip = useCallback(() => {
+    const resolve = skipResolverRef.current
+    skipResolverRef.current = null
+    resolve?.()
   }, [])
 
   const run = useCallback(async () => {
@@ -207,7 +219,17 @@ export function useProDemoMachine() {
                 ? 'Describe an adjustment'
                 : 'Any more adjustments? Say "looks good" when done'
               dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption })
-              transcript = await awaitText(); active()
+              const skipSignal = new Promise<typeof SKIP>((resolve) => {
+                skipResolverRef.current = () => resolve(SKIP)
+              })
+              const input = await Promise.race<string | typeof SKIP>([awaitText(), skipSignal]); active()
+              skipResolverRef.current = null
+              if (input === SKIP) {
+                textResolverRef.current = null
+                dispatch({ awaitingText: false, status: 'idle', caption: '' })
+                break
+              }
+              transcript = input
               dispatch({ awaitingText: false, status: 'thinking', caption: 'Thinking…', lastTranscript: transcript })
               const result = await session.sendText(transcript); active()
               dispatch({ lastResponse: result.content || null })
@@ -230,7 +252,19 @@ export function useProDemoMachine() {
                 ? 'Listening — describe an adjustment'
                 : 'Listening — more tweaks, or say "looks good"'
               dispatch({ stage: 'ADJUST', status: 'recording', caption, micLevel: 0 })
-              const blob = await captureUtterance({ onLevel: (rms) => dispatch({ micLevel: rms }) }); active()
+              const skipSignal = new Promise<typeof SKIP>((resolve) => {
+                skipResolverRef.current = () => resolve(SKIP)
+              })
+              const captured = await Promise.race<Blob | typeof SKIP>([
+                captureUtterance({ onLevel: (rms) => dispatch({ micLevel: rms }) }),
+                skipSignal,
+              ]); active()
+              skipResolverRef.current = null
+              if (captured === SKIP) {
+                dispatch({ status: 'idle', caption: '', micLevel: 0 })
+                break
+              }
+              const blob = captured
               dispatch({ status: 'thinking', caption: 'Transcribing…', micLevel: 0 })
               transcript = await sendAudioForTranscript(blob); active()
               dispatch({ lastTranscript: transcript || '(no speech detected)', micLevel: 0 })
@@ -292,9 +326,10 @@ export function useProDemoMachine() {
     tokenRef.current++
     textResolverRef.current?.('')
     textResolverRef.current = null
+    skipResolverRef.current = null
     setRobotState('IDLE')
     dispatch({ ...initialState, inputMode: inputModeRef.current })
   }, [])
 
-  return { state, start: run, retry: run, exit, toggleInputMode, submitText }
+  return { state, start: run, retry: run, exit, toggleInputMode, submitText, skip }
 }

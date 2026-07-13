@@ -8,6 +8,8 @@ import ProDemo from './pages/ProDemo'
 import RefinedDemo from './pages/RefinedDemo'
 import Tutorial from './pages/Tutorial'
 import MoveMate from './pages/MoveMate'
+import PoseTester from './pages/PoseTester'
+import RobotViewer from './pages/RobotViewer'
 import RobotModeToggle from './components/RobotModeToggle'
 
 interface WaypointInfo {
@@ -195,6 +197,12 @@ function App() {
           <Link to="/refineddemo" state={{ fromApp: true }} style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">✨ Refined Demo</button>
           </Link>
+          <Link to="/pose-tester" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🦿 Pose Tester</button>
+          </Link>
+          <Link to="/viewer" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🕹️ 3D Viewer</button>
+          </Link>
         </div>
         <RobotModeToggle />
       </div>
@@ -209,6 +217,8 @@ function App() {
       <Route path="/refineddemo" element={<RefinedDemo />} />
       <Route path="/tutorial" element={<Tutorial />} />
       <Route path="/movemate" element={<MoveMate />} />
+      <Route path="/pose-tester" element={<PoseTester />} />
+      <Route path="/viewer" element={<RobotViewer />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

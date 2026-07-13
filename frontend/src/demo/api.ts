@@ -6,7 +6,8 @@
 // /classify returns.
 
 import { ACTION_WS, SPEAKER_BASE } from './config'
-import { getFeaturesBase, getRobotBase } from './robotConfig'
+import { getFeaturesBase, getRobotBase, getRobotConfig } from './robotConfig'
+import type { LegMode } from './robotConfig'
 
 /** One servo target: Hiwonder id + pulse (0–1000) + move time. */
 export interface ServoCommand {
@@ -24,6 +25,10 @@ export interface MapFeaturesResult {
   detail: string | null
   commands: ServoCommand[]
   imageB64: string | null
+  /** Which leg strategy the server used for this call. */
+  legMode: LegMode
+  /** In 'classify' leg mode, the recognized pose class; null otherwise. */
+  poseClass: string | null
 }
 
 export interface ActionResult {
@@ -43,6 +48,17 @@ export async function speak(opts: { script?: string; text?: string }): Promise<v
   if (!res.ok) throw new Error(`speak failed: ${res.status}`)
 }
 
+// Stop any in-progress speech immediately (tab closed / demo restarted).
+// Best-effort: a failure here must never block teardown. `keepalive` lets the
+// request survive a page unload so a closing tab still silences Coral.
+export async function killSpeech(): Promise<void> {
+  try {
+    await fetch(`${SPEAKER_BASE}/kill`, { method: 'POST', keepalive: true })
+  } catch {
+    /* ignore */
+  }
+}
+
 // ── Robot server (Pi :9000) ───────────────────────────────────────────────────
 export async function motion(name: string, globalDuration?: number): Promise<void> {
   const res = await fetch(`${getRobotBase()}/motion`, {
@@ -56,8 +72,11 @@ export async function motion(name: string, globalDuration?: number): Promise<voi
 // Retarget the user's current pose to robot servo commands. Hits the vision
 // server directly (it owns the live landmarks); the caller executes the returned
 // commands via move(). Also returns the frame the pose was read from, for the UI.
-export async function mapFeatures(): Promise<MapFeaturesResult> {
-  const res = await fetch(`${getFeaturesBase()}/map-features`, { method: 'POST' })
+export async function mapFeatures(legMode?: LegMode): Promise<MapFeaturesResult> {
+  // Default to the live-toggled leg mode from the shared robot config.
+  const mode = legMode ?? getRobotConfig().legMode
+  const url = `${getFeaturesBase()}/map-features?leg_mode=${encodeURIComponent(mode)}`
+  const res = await fetch(url, { method: 'POST' })
   if (!res.ok) {
     // Surface the server's actual failure reason (e.g. a Python exception
     // message) instead of just the status code — FastAPI puts it in `detail`.
@@ -70,6 +89,8 @@ export async function mapFeatures(): Promise<MapFeaturesResult> {
     detail: data.detail ?? null,
     commands: Array.isArray(data.commands) ? data.commands : [],
     imageB64: data.image_b64 ?? null,
+    legMode: (data.leg_mode ?? mode) as LegMode,
+    poseClass: data.pose_class ?? null,
   }
 }
 
@@ -83,6 +104,25 @@ export async function move(commands: ServoCommand[]): Promise<void> {
     body: JSON.stringify(commands),
   })
   if (!res.ok) throw new Error(`move failed: ${res.status}`)
+}
+
+// Apply a raw {joint: hardware_pulse} pose to the sim (testing tool). Pulses are
+// the same hardware units authored in motions.py; the server converts them to sim
+// radians. Sim only — always hits the main Mac server, not the Pi.
+export async function setPose(
+  pulses: Record<string, number>,
+): Promise<{ applied: string[]; skipped: string[] }> {
+  const res = await fetch(`${getRobotBase()}/set-pose`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pulses }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(`set-pose failed: ${res.status} ${body?.detail ?? ''}`.trim())
+  }
+  const data = await res.json()
+  return { applied: data.applied ?? [], skipped: data.skipped ?? [] }
 }
 
 export async function watchForAction(timeoutS: number): Promise<{ detected: boolean }> {
@@ -274,7 +314,11 @@ export function sendAudioForTranscript(blob: Blob, timeoutMs = 30000): Promise<s
 // Sends the recorded utterance to the Whisper + LLM motion planner and waits for
 // the chat_response. Non-empty `waypoints` means the model produced an action;
 // empty means it asked for clarification (or nothing was understood).
-export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<ActionResult> {
+export function sendAudioForAction(
+  blob: Blob,
+  timeoutMs = 30000,
+  onActionStarted?: () => void,
+): Promise<ActionResult> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(ACTION_WS)
     let transcript = ''
@@ -292,6 +336,8 @@ export function sendAudioForAction(blob: Blob, timeoutMs = 30000): Promise<Actio
       const data = JSON.parse(event.data)
       if (data.type === 'transcription') {
         transcript = data.text ?? ''
+      } else if (data.type === 'action_started') {
+        onActionStarted?.() // robot execution has begun server-side
       } else if (data.type === 'chat_response') {
         clearTimeout(timer)
         ws.close()
@@ -430,7 +476,11 @@ function blobToBase64(blob: Blob): Promise<string> {
 // ── Text → action over the existing server.py /ws pipeline ────────────────────
 // Text-input equivalent of sendAudioForAction: sends a typed instruction straight
 // to the LLM motion planner (skipping Whisper) and waits for the chat_response.
-export function sendTextForAction(text: string, timeoutMs = 30000): Promise<ActionResult> {
+export function sendTextForAction(
+  text: string,
+  timeoutMs = 30000,
+  onActionStarted?: () => void,
+): Promise<ActionResult> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(ACTION_WS)
     const timer = setTimeout(() => { ws.close(); reject(new Error('text-to-action timed out')) }, timeoutMs)
@@ -440,7 +490,9 @@ export function sendTextForAction(text: string, timeoutMs = 30000): Promise<Acti
     }
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      if (data.type === 'chat_response') {
+      if (data.type === 'action_started') {
+        onActionStarted?.() // robot execution has begun server-side
+      } else if (data.type === 'chat_response') {
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []

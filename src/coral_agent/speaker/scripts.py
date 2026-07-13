@@ -13,26 +13,17 @@ advancing the on-screen number, keeping audio and visuals in lockstep.
 INTRO = (
     "Hi there! My name is Coral, and I am a robot who loves to learn. "
     "Today, I want you to help me learn some cool poses. "
-    " When you are all ready, cross your hands "
-    "in front of you, and we will begin!"
 )
 
 # CLASSIFY — read up until the "3... 2... 1" countdown.
 # The first time differs from the repeated times (REPEAT_CLASSIFY).
-CLASSIFY_FIRST = (
-    "Awesome! Now hold that pose nice and still. I am going to take a "
-    "picture and try to guess what pose you are doing. Get ready!"
-)
-
-CLASSIFY_REPEAT = (
-    "Great job! Let's try another one. Strike a new pose and hold it still. "
-    "I'll take another picture. Ready? On three!"
+INSTRUCTIONS = (
+    "First, I want you to strike your favorite pose. If you need some suggestions, here are some below. I’m going to take a picture of you doing that pose, and I’ll try to replicate it. Then, you can tell me how to fix it. Cross your arms, and I’ll count down and take a picture."
 )
 
 # RECORD — spoken before the child gives spoken feedback.
-RECORD = (
-    "How did I do? After the beep, tell me how I can fix my pose, and I "
-    "will try my best to copy you!"
+CORRECTIONS = (
+    "Now I need your help to make my moves even better. Please tell me how I can fix my pose"
 )
 
 # NAME — spoken after RECORD, asks the child to name the pose.
@@ -43,11 +34,7 @@ NAME = (
 
 # OUTRO — a short, kid-friendly explanation of how the robot "sees".
 OUTRO = (
-    "That was so much fun! Here is my little secret: I learned to recognize "
-    "poses by looking at thousands of pictures of people striking them. "
-    "Each time, my computer brain noticed the shapes your arms and legs make, "
-    "and slowly it got better and better at guessing. That is what we call "
-    "machine learning. The more examples I see, the smarter I get!"
+    "You might be wondering how I knew which move to do. I have a special machine that tells me where your arms and legs are in the picture, and then I use that to make my arms and legs match that pose"
 )
 
 THANK_YOU = "Thank you so much for playing with me today! Goodbye!"
@@ -60,9 +47,8 @@ ONE = "One"
 # Identifier → text. Keys are the values accepted by ``POST /speak {"script": ...}``.
 SCRIPTS: dict[str, str] = {
     "INTRO": INTRO,
-    "CLASSIFY_FIRST": CLASSIFY_FIRST,
-    "CLASSIFY_REPEAT": CLASSIFY_REPEAT,
-    "RECORD": RECORD,
+    "INSTRUCTIONS": INSTRUCTIONS,
+    "CORRECTIONS": CORRECTIONS,
     "NAME": NAME,
     "OUTRO": OUTRO,
     "THANK_YOU": THANK_YOU,

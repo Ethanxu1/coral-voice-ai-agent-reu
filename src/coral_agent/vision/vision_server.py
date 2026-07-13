@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import pose_classifier
+from . import leg_modes, pose_classifier
 from .frame_broadcaster import FrameBroadcaster
 from .pose_estimator import PoseEstimator
 from .pose_to_robot import compute_joint_targets, hips_detected, targets_to_servo_commands
@@ -34,6 +34,9 @@ _last_pose_time = 0.0
 # Latest frame + landmarks, kept for the demo's /features and /watch-for-action.
 # Updated every vision-loop iteration so they never need to touch the camera.
 _latest_jpeg: Optional[bytes] = None
+# Un-annotated BGR frame (no skeleton overlay). Fed to the pose classifier so it
+# sees clean images like it was trained on — matches the Pi's /clean_frame.
+_latest_clean_frame = None
 _latest_landmarks: list = []
 # Latest head pose (dict with yaw/pitch/roll), consumed by /features so the
 # pose→robot retargeting can drive head_pan/head_tilt. None when no face solve.
@@ -56,7 +59,7 @@ def _vision_loop():
     logger.info("Vision thread started — loading models and opening camera...")
     _estimator.open()
     logger.info("Vision thread ready — publishing frames")
-    global _last_pose_time, _latest_jpeg, _latest_landmarks, _latest_head_pose
+    global _last_pose_time, _latest_jpeg, _latest_clean_frame, _latest_landmarks, _latest_head_pose
     while _estimator.is_running:
         result = _estimator.process_frame()
         if result is None:
@@ -66,6 +69,7 @@ def _vision_loop():
         _broadcaster.publish_video(result.jpeg_bytes)
         # Keep the freshest frame + landmarks for /features and /watch-for-action.
         _latest_jpeg = result.jpeg_bytes
+        _latest_clean_frame = result.clean_frame
         _latest_landmarks = result.body_landmarks
         _latest_head_pose = result.head_pose.to_dict() if result.head_pose else None
 
@@ -172,43 +176,58 @@ def _ensure_classifier() -> None:
 @app.post("/classify")
 async def classify():
     """Classify the current camera frame (MobileNetV3) → class + probabilities + image."""
-    import cv2
-    import numpy as np
-
-    _ensure_classifier()
-    jpeg = _latest_jpeg
-    if jpeg is None:
+    if _latest_jpeg is None:
         raise HTTPException(status_code=503, detail="no camera frame available yet")
 
-    frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-    if frame is None:
-        raise HTTPException(status_code=503, detail="could not decode camera frame")
-
-    top_class, probabilities = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: pose_classifier.classify_frame(frame, _classifier, _classes, _device)
-    )
+    # Classify the CLEAN frame (no skeleton overlay) — the model was trained on
+    # clean photos. The returned preview stays the annotated frame for the UI.
+    top_class, probabilities = await _classify_clean_frame()
     return {
         "class": top_class,
         "probabilities": probabilities,
-        "image_b64": base64.b64encode(jpeg).decode("ascii"),
+        "image_b64": base64.b64encode(_latest_jpeg).decode("ascii"),
         "image_format": "jpeg",
     }
 
 
+async def _classify_clean_frame() -> tuple[str, dict]:
+    """Run the pose classifier on the latest clean (un-annotated) frame."""
+    _ensure_classifier()
+    frame = _latest_clean_frame
+    if frame is None:
+        raise HTTPException(status_code=503, detail="no clean camera frame available yet")
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: pose_classifier.classify_frame(frame, _classifier, _classes, _device)
+    )
+
+
 # Move duration (ms) for pose-mimicry commands. Slow enough to look deliberate,
 # fast enough that the child sees Coral react promptly to their pose.
-_FOLLOW_DURATION_MS = 600
+_FOLLOW_DURATION_MS = 1000
 
 
 @app.post("/map-features")
-async def map_features():
+async def map_features(leg_mode: str = "retarget"):
     """Retarget the latest MediaPipe landmarks to robot servo commands.
 
-    Replaces the MobileNetV3 /classify path: instead of picking a canned pose
-    class, we map the person's actual body geometry to joint angles and hand back
-    the servo commands for the caller to execute. Returns the landmarks and the
-    frame they were computed from so the UI can show what Coral saw.
+    Instead of picking a canned pose class, we map the person's actual body
+    geometry to joint angles and hand back the servo commands for the caller to
+    execute. Returns the landmarks and the frame they were computed from so the
+    UI can show what Coral saw.
+
+    The arms always use the live pelvis/torso-frame retargeting. The `leg_mode`
+    query param (default "retarget") selects how the *legs* are driven — see
+    leg_modes.py:
+      "retarget"  live pelvis-frame hip pitch/roll + knee bend (default).
+      "legacy"    the old anatomically-wrong atan2 mapping (hip_yaw ← swing).
+      "classify"  MobileNetV3 → snap legs to the matching canned pose's stance.
     """
+    if leg_mode not in leg_modes.LEG_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown leg_mode '{leg_mode}'; expected one of {leg_modes.LEG_MODES}",
+        )
+
     if _latest_jpeg is None:
         raise HTTPException(status_code=503, detail="no camera frame available yet")
 
@@ -223,6 +242,7 @@ async def map_features():
             "detail": "Make sure your wrists, shoulders, and hips are visible in the frame!",
             "commands": [],
             "targets": {},
+            "leg_mode": leg_mode,
             "body_landmarks": body,
             "image_b64": image_b64,
             "image_format": "jpeg",
@@ -230,6 +250,25 @@ async def map_features():
 
     head = _latest_head_pose
     targets = compute_joint_targets(body, head)
+    pose_class = None
+
+    if leg_mode != "retarget":
+        # Arms keep the live retargeting; replace the pelvis-frame legs with the
+        # selected mode's leg pulses (authored in hardware units → sim radians).
+        targets = leg_modes.strip_legs(targets)
+        if leg_mode == "legacy":
+            leg_pulses = leg_modes.legacy_leg_pulses(body)
+        else:  # "classify"
+            pose_class, probs = await _classify_clean_frame()
+            conf = probs.get(pose_class) if isinstance(probs, dict) else None
+            logger.info(
+                "classify: pose=%s%s",
+                pose_class,
+                f" ({conf:.1f}%)" if isinstance(conf, (int, float)) else "",
+            )
+            leg_pulses = leg_modes.classify_leg_pulses(pose_class)
+        targets.update(leg_modes.leg_pulses_to_targets(leg_pulses))
+
     commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
     return {
         "pose_detected": True,
@@ -238,6 +277,8 @@ async def map_features():
             for c in commands
         ],
         "targets": targets,
+        "leg_mode": leg_mode,
+        "pose_class": pose_class,
         "body_landmarks": body,
         "image_b64": image_b64,
         "image_format": "jpeg",

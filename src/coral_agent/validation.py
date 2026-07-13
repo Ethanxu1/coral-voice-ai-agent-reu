@@ -26,8 +26,14 @@ class JointLimit:
         return self.min <= value <= self.max
 
 
-# Joint limits from ainex.xml — default range ±2.09 rad (±120°) for all joints,
-# with tighter physical limits on ankles matching ainex_primitives.xml.
+# Joint limits — arms/head use ainex.xml's default ±2.09 rad (±120°); legs are
+# tightened well below the model range because the robot has to keep standing:
+#   hip_roll  — from the user-tested servo sweep (outward 30°, inward 20°).
+#   hip_pitch/knee — conservative caps (flexion 45° / bend 60°), not
+#     hardware-swept; a leg lift near these caps can still tip the robot.
+#   ankles — tighter physical limits matching ainex_primitives.xml.
+# Sign conventions (sim frame): l_hip_pitch flexion = −, l_hip_roll abduction
+# = −, l_knee flexion = +; right side mirrored. See pose_to_robot.py.
 JOINT_LIMITS: dict[str, JointLimit] = {
     # Head
     "head_pan": JointLimit(-2.09, 2.09),
@@ -44,18 +50,27 @@ JOINT_LIMITS: dict[str, JointLimit] = {
     "r_el_pitch": JointLimit(-2.09, 2.09),
     "r_el_yaw": JointLimit(-2.09, 2.09),
     "r_gripper": JointLimit(-2.09, 2.09),
-    # Left leg
+    # Legs: tightened per-joint "safe" caps to keep a free-standing robot from
+    # tipping during LIVE retargeting. These are enforced in compute_joint_targets
+    # (retarget/legacy) — NOT at the sim, which clamps only to the mechanical
+    # jnt_range. So classify mode's canned poses (dab/warrior2 crouches) bypass
+    # these caps and render in full; only the live person-driven leg mapping is
+    # capped here.
+    #   hip_roll  — user-tested servo sweep (outward 30°, inward 20°).
+    #   hip_pitch/knee — conservative caps (flexion 45° / bend 60°).
+    #   ankles — tighter physical limits matching ainex_primitives.xml.
+    # Sign conventions (sim frame): l_hip_pitch flexion = −, l_hip_roll abduction
+    # = −, l_knee flexion = +; right side mirrored. See pose_to_robot.py.
     "l_hip_yaw": JointLimit(-2.09, 2.09),
-    "l_hip_roll": JointLimit(-2.09, 2.09),
-    "l_hip_pitch": JointLimit(-2.09, 2.09),
-    "l_knee": JointLimit(-2.09, 2.09),
+    "l_hip_roll": JointLimit(-0.52, 0.35),
+    "l_hip_pitch": JointLimit(-0.79, 0.35),
+    "l_knee": JointLimit(0.0, 1.05),
     "l_ank_pitch": JointLimit(-1.0, 1.0),
     "l_ank_roll": JointLimit(-0.4, 0.4),
-    # Right leg
     "r_hip_yaw": JointLimit(-2.09, 2.09),
-    "r_hip_roll": JointLimit(-2.09, 2.09),
-    "r_hip_pitch": JointLimit(-2.09, 2.09),
-    "r_knee": JointLimit(-2.09, 2.09),
+    "r_hip_roll": JointLimit(-0.35, 0.52),
+    "r_hip_pitch": JointLimit(-0.35, 0.79),
+    "r_knee": JointLimit(-1.05, 0.0),
     "r_ank_pitch": JointLimit(-1.0, 1.0),
     "r_ank_roll": JointLimit(-0.4, 0.4),
 }

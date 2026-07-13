@@ -247,6 +247,8 @@
 }
 .pro-btn:hover { border-color: var(--text-dim); }
 .pro-btn.ghost { background: transparent; }
+.pro-skip { align-self: flex-start; margin-top: auto; opacity: 0.8; }
+.pro-skip:hover { opacity: 1; }
 .pro-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 11px 26px; font-size: 15px; }
 .pro-btn.primary:hover { filter: brightness(1.08); }
 

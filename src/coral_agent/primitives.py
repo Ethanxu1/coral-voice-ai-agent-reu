@@ -28,11 +28,12 @@ ELBOW_MAX_ANGLE = 119
 HEAD_TURN_MAX_ANGLE = 119
 HEAD_TILT_MAX_ANGLE = 119
 
-# Stand-pose defaults (arms hanging at sides, elbows in natural resting bend).
-STAND_L_SHO_ROLL = -1.403
-STAND_R_SHO_ROLL = 1.403
-STAND_L_EL_YAW = -1.226
-STAND_R_EL_YAW = 1.226
+# Stand-pose arm defaults — must match the `stand` keyframe (ainex.xml) and
+# HW_STAND_RAD. Calibrated to the physical robot via tools/author_stand.py.
+STAND_L_SHO_ROLL = -1.3614
+STAND_R_SHO_ROLL = 1.3614
+STAND_L_EL_YAW = -1.5708
+STAND_R_EL_YAW = 1.5708
 
 
 # Helper: degrees to radians

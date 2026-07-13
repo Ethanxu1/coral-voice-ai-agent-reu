@@ -1,10 +1,11 @@
 // State machine for the Refined Demo.
 // Continuous voice loop: listen → classify intent → act → repeat until exit.
 
-import { useCallback, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
 import {
   captureUtterance,
   classifyIntent,
+  killSpeech,
   listPoses,
   mapFeatures,
   move,
@@ -102,6 +103,19 @@ export function useRefinedDemoMachine() {
     captureAbortRef.current = null
     ctrl?.abort()
   }, [])
+
+  // Silence Coral if the tab/page is hidden mid-speech, and on unmount (e.g.
+  // navigating away via "← Back"). Ported from the retired useDemoMachine.
+  useEffect(() => {
+    const onHide = () => { killSpeech() }
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      tokenRef.current++ // abort any in-flight run
+      killSpeech()
+      abortCurrentCapture()
+    }
+  }, [abortCurrentCapture])
 
   const clearPendingIntent = useCallback(() => {
     const resolve = intentApprovalRef.current

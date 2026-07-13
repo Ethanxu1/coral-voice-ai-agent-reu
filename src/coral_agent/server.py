@@ -11,7 +11,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from dotenv import load_dotenv
 
@@ -24,6 +24,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
 
@@ -258,14 +259,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Coral AI Agent", lifespan=lifespan)
 
-# CORS middleware for frontend
+# CORS middleware for frontend. Match any localhost/127.0.0.1 port via regex so a
+# Vite dev-server port bump (5173 → 5174 → …) never breaks cross-origin fetches
+# such as the browser viewer's STL loads.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve robot mesh assets (STL) so the browser viewer can load geometry.
+# Meshes resolve to /assets/ainex/meshes/<link>.STL (see /ws/sim + RobotViewer.tsx).
+ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
 class CommandRequest(BaseModel):
@@ -580,6 +588,11 @@ class ServoMove(BaseModel):
     duration_ms: int
 
 
+class SetPoseRequest(BaseModel):
+    """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
+    pulses: dict[str, int]
+
+
 class StateRequest(BaseModel):
     mode: str
 
@@ -659,6 +672,36 @@ async def demo_classify() -> dict[str, Any]:
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"vision server unreachable at {VISION_BASE}: {e}")
+
+
+@app.post("/set-pose")
+async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
+    """Apply a raw {joint: hardware_pulse} pose to the sim (testing tool).
+
+    Accepts the exact pulse dicts authored in motions.py. Each pulse is a
+    *hardware* servo unit, so it's converted to sim radians with
+    hardware_units_to_rad (the same path /motion uses for named poses) — this
+    is what makes joints whose hardware neutral isn't 500 (hip_pitch, ankles,
+    sho_pitch, el_yaw) land at the right MuJoCo angle. set_joint_position then
+    clamps each to its JOINT_LIMITS. Sim only; unknown joints are reported back.
+    """
+    if simulator is None:
+        return {"status": "error", "detail": "simulator not initialized"}
+
+    applied: list[str] = []
+    skipped: list[str] = []
+    for joint, pulse in req.pulses.items():
+        if joint not in SERVO_ID_MAP:
+            skipped.append(joint)
+            continue
+        try:
+            simulator.set_joint_position(joint, hardware_units_to_rad(int(pulse), joint))
+            applied.append(joint)
+        except Exception as e:  # unknown sim joint / bad value — skip, keep going
+            logger.debug(f"/set-pose: skip joint {joint}: {e}")
+            skipped.append(joint)
+
+    return {"status": "done", "applied": applied, "skipped": skipped}
 
 
 @app.post("/move")
@@ -924,8 +967,15 @@ async def process_chat_message(
     simulator_instance: "AiNexSimulator | None",
     session_id: str,
     pre_context: tuple[dict, str, list] | None = None,
+    on_action_started: Callable[[], Awaitable[None]] | None = None,
 ) -> dict:
-    """Process a user message: single LLM call → primitive resolution → joint execution."""
+    """Process a user message: single LLM call → primitive resolution → joint execution.
+
+    ``on_action_started`` (if given) is awaited once, right before motion execution
+    begins, but only when the plan actually contains a motion to run. It lets the
+    caller tell the client "the robot is now moving" so a slow round-trip can be
+    distinguished from a stall (the demo moves on instead of re-asking).
+    """
     langfuse = get_client()
 
     with propagate_attributes(
@@ -1062,6 +1112,12 @@ async def process_chat_message(
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
+
+            # Signal that a real motion is about to run, before the (potentially
+            # slow) execution blocks. The client uses this to tell "already
+            # executing" apart from "still thinking" if its own wait times out.
+            if on_action_started is not None:
+                await on_action_started()
 
             # Execute motion steps: batch consecutive Waypoints together so
             # sequential movements run in one tight interpolation loop (matching
@@ -1344,6 +1400,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     recorder=recorder,
                     simulator_instance=simulator,
                     session_id=session_id,
+                    on_action_started=lambda: websocket.send_json({"type": "action_started"}),
                 )
                 await websocket.send_json(response_data)
 
@@ -1369,6 +1426,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         simulator_instance=simulator,
                         session_id=session_id,
                         pre_context=pre_context,
+                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
                     )
                     await websocket.send_json(response_data)
 
@@ -1406,6 +1464,39 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(
             f"WebSocket client removed. Total clients: {len(connected_clients)}"
         )
+
+
+@app.websocket("/ws/sim")
+async def sim_stream_endpoint(websocket: WebSocket):
+    """Stream MuJoCo geom world poses to the browser viewer (RobotViewer.tsx).
+
+    The server owns physics; the browser owns rendering. On connect we send one
+    JSON 'init' frame naming each render geom's mesh + color (this defines the
+    index order), then push binary float32 pose buffers at a fixed rate. No
+    simulation runs client-side, so the view can never drift from the sim/robot.
+    """
+    await websocket.accept()
+    if simulator is None:
+        await websocket.send_json({"type": "error", "detail": "simulator not initialized"})
+        await websocket.close()
+        return
+
+    await websocket.send_json({
+        "type": "init",
+        "mesh_url": "/assets/ainex/meshes/",
+        "geoms": simulator.get_render_geom_info(),
+    })
+    logger.info("Sim viewer client connected")
+
+    fps = 30
+    try:
+        while True:
+            await websocket.send_bytes(simulator.get_geom_poses())
+            await asyncio.sleep(1 / fps)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        logger.info("Sim viewer client disconnected")
 
 
 def _reexec_under_mjpython_if_needed() -> None:
@@ -1475,6 +1566,81 @@ def main_robot():
         reload=False,
         log_level="info",
     )
+
+
+def main_sim_test():
+    """Entry point for sim test mode — cycle the sim robot through every pose in motions.py.
+
+    Launches only the MuJoCo simulator (no server, no LLM, no hardware) and walks
+    the robot through each motion in ``motions.MOTIONS`` sequentially, resetting to
+    stand between motions, looping until the viewer window is closed or Ctrl+C.
+
+    Usage:
+        uv run sim-test              # cycle through all motions
+        uv run sim-test dab wave     # only these motions
+    """
+    import time
+
+    from coral_agent.robot.motions import MOTIONS
+
+    _reexec_under_mjpython_if_needed()
+
+    hold_seconds = float(os.getenv("SIM_TEST_HOLD_SECONDS", "2.0"))
+
+    requested = [a for a in sys.argv[1:] if not a.startswith("-")]
+    names = requested or list(MOTIONS.keys())
+    unknown = [n for n in names if n not in MOTIONS]
+    if unknown:
+        logger.error(f"Unknown motion(s): {unknown}. Available: {list(MOTIONS.keys())}")
+        return
+
+    logger.info("Starting AiNex MuJoCo simulator (sim test mode)...")
+    sim = AiNexSimulator()
+    sim.start_viewer()
+    time.sleep(1.0)  # let the viewer window come up
+
+    logger.info(f"Cycling through {len(names)} motion(s): {names}")
+    try:
+        while sim.is_running():
+            for name in names:
+                if not sim.is_running():
+                    break
+                motion = MOTIONS[name]
+                logger.info(f"=== Motion: {name} ({len(motion)} frame(s)) ===")
+                for pulse, duration_ms in motion:
+                    # Motion frames are hardware servo pulses (STAND_PULSE = per-joint
+                    # neutral). Convert with hardware_units_to_rad — anchored to the sim's
+                    # stand keyframe — so joints held at their stand pulse stay put. The
+                    # naive servo_units_to_rad (500 = 0 rad for every joint) would move the
+                    # bent-knee legs and tip the robot even on stand-identical poses.
+                    #
+                    # Ramp each joint from its current target to the frame target across
+                    # duration_ms in ~20ms steps, so duration_ms sets the actual move
+                    # speed. Setting the target instantly makes the PD controller snap
+                    # the legs and topple the robot.
+                    ramps = []
+                    for joint, units in pulse.items():
+                        try:
+                            start = sim.get_joint_position(joint)
+                            target = hardware_units_to_rad(int(units), joint)
+                        except Exception as e:  # unknown joint — skip, keep going
+                            logger.debug(f"sim-test: skip joint {joint}: {e}")
+                            continue
+                        ramps.append((joint, start, target))
+                    steps = max(1, int(duration_ms) // 20)
+                    for i in range(1, steps + 1):
+                        frac = i / steps
+                        for joint, start, target in ramps:
+                            sim.set_joint_position(joint, start + frac * (target - start))
+                        time.sleep(0.02)
+                time.sleep(hold_seconds)
+                logger.info("  resetting to stand")
+                sim.reset_pose()
+                time.sleep(hold_seconds)
+    except KeyboardInterrupt:
+        logger.info("Interrupted — stopping sim test.")
+    finally:
+        sim.stop_viewer()
 
 
 if __name__ == "__main__":

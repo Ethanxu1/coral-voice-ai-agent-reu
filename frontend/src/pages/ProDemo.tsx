@@ -7,7 +7,7 @@ import './ProDemo.css'
 export default function ProDemo() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { state, start, retry, exit: exitMachine, toggleInputMode, submitText } = useProDemoMachine()
+  const { state, start, retry, exit: exitMachine, toggleInputMode, submitText, skip } = useProDemoMachine()
   const running = !['IDLE', 'DONE', 'ERROR'].includes(state.stage)
 
   const exit = useCallback(() => {
@@ -54,7 +54,7 @@ export default function ProDemo() {
       </header>
 
       <main className="pro-stage">
-        <Stage state={state} onSubmitText={submitText} />
+        <Stage state={state} onSubmitText={submitText} onSkip={skip} />
         {state.flash && <div className="pro-flash" />}
       </main>
 
@@ -71,7 +71,7 @@ export default function ProDemo() {
   )
 }
 
-function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: string) => void }) {
+function Stage({ state, onSubmitText, onSkip }: { state: ProState; onSubmitText: (t: string) => void; onSkip: () => void }) {
   switch (state.stage) {
     case 'DONE':
       return <Results state={state} />
@@ -98,6 +98,11 @@ function Stage({ state, onSubmitText }: { state: ProState; onSubmitText: (t: str
               />
             ) : (
               <StatusPill status={state.status} />
+            )}
+            {state.stage === 'ADJUST' && state.frame && (
+              <button className="pro-btn ghost pro-skip" onClick={onSkip}>
+                Skip adjustment → name it
+              </button>
             )}
             {state.inputMode === 'voice' && state.status === 'recording' && (
               <Waveform level={state.micLevel} />
