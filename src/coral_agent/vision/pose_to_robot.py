@@ -25,6 +25,7 @@ from typing import Optional
 import numpy as np
 
 from coral_agent.robot.angle_utils import rad_to_servo_units
+from coral_agent.robot.hardware_angle_utils import HW_STAND_RAD
 from coral_agent.robot.interface import ServoCommand
 from coral_agent.robot.servo_config import SERVO_ID_MAP
 from coral_agent.validation import JOINT_LIMITS
@@ -56,6 +57,25 @@ _LM_L_ANKLE = geometry.LEFT_ANKLE
 _LM_R_ANKLE = geometry.RIGHT_ANKLE
 
 _VISIBILITY_THRESHOLD = 0.5
+
+# Knees use a stricter gate than the default landmark threshold. Leg retargeting
+# is only trustworthy when both knees are clearly in frame, so we require 0.6
+# before emitting any leg joint targets.
+_KNEE_VISIBILITY_THRESHOLD = 0.6
+
+# Sim stand-pose leg angles (radians) for the joints the leg retargeting drives
+# (hip pitch/roll, knee). Sourced from HW_STAND_RAD so they match the ainex.xml
+# stand keyframe exactly; hip_roll is absent there, so it stands at 0.0. When the
+# knees aren't confidently visible we emit these to straighten the legs back to
+# stand instead of holding whatever (possibly bent) pose the last capture left.
+_STAND_LEG_TARGETS: dict[str, float] = {
+    "l_hip_pitch": HW_STAND_RAD["l_hip_pitch"],
+    "r_hip_pitch": HW_STAND_RAD["r_hip_pitch"],
+    "l_hip_roll": 0.0,
+    "r_hip_roll": 0.0,
+    "l_knee": HW_STAND_RAD["l_knee"],
+    "r_knee": HW_STAND_RAD["r_knee"],
+}
 
 # World-up for the pelvis frame. MediaPipe pose_world_landmarks use Y-down
 # (empirically established — Google doesn't document the axis directions),
@@ -113,8 +133,8 @@ class JointAngleSmoother:
         return out
 
 
-def _visible(lm: dict) -> bool:
-    return lm.get("visibility", 1.0) >= _VISIBILITY_THRESHOLD
+def _visible(lm: dict, threshold: float = _VISIBILITY_THRESHOLD) -> bool:
+    return lm.get("visibility", 1.0) >= threshold
 
 
 def _has_world(lm: dict) -> bool:
@@ -139,6 +159,21 @@ def hips_detected(body_landmarks: list[dict]) -> bool:
         _has_world(body_landmarks[i]) and _visible(body_landmarks[i])
         for i in (_LM_L_HIP, _LM_R_HIP)
     )
+
+
+def knees_confidently_visible(body_landmarks: list[dict]) -> bool:
+    """True when BOTH knees clear the stricter knee visibility gate (0.6).
+
+    Leg positioning is only trustworthy when both knees are clearly in frame; below
+    this the legs should be stood rather than driven. Callers that bypass the
+    pelvis-frame retargeting (leg_modes legacy/classify) use this to apply the same
+    gate the retarget path gets inside compute_joint_targets.
+    """
+    if len(body_landmarks) <= max(_LM_L_KNEE, _LM_R_KNEE):
+        return False
+    return _visible(
+        body_landmarks[_LM_L_KNEE], _KNEE_VISIBILITY_THRESHOLD
+    ) and _visible(body_landmarks[_LM_R_KNEE], _KNEE_VISIBILITY_THRESHOLD)
 
 
 def _torso_frame_from(body: list[dict]):
@@ -300,7 +335,14 @@ def compute_joint_targets(
     if len(body_landmarks) > _LM_R_ANKLE:
         R_pelvis = _pelvis_frame_from(body_landmarks)
 
-        if R_pelvis is not None:
+        # Only retarget the legs when BOTH knees clear the stricter knee gate.
+        # A partially-seen lower body produces unreliable leg angles, so instead
+        # of driving the legs off bad data we snap them back to the stand pose.
+        if R_pelvis is None or not knees_confidently_visible(body_landmarks):
+            # Knees not confidently visible (or degenerate pelvis frame) → return
+            # the legs to stand rather than holding a stale/bent pose.
+            targets.update(_STAND_LEG_TARGETS)
+        else:
             # Person's RIGHT leg → robot's LEFT leg
             if all(
                 _visible(body_landmarks[i]) and _has_world(body_landmarks[i])

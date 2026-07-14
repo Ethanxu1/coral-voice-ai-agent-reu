@@ -21,6 +21,7 @@ import math
 
 import pytest
 
+from coral_agent.robot.hardware_angle_utils import HW_STAND_RAD
 from coral_agent.vision.pose_to_robot import (
     _STAND_L_SHO_ROLL,
     _STAND_R_SHO_ROLL,
@@ -314,15 +315,30 @@ def test_leg_depth_gate_suppresses_leg():
     assert "r_hip_pitch" in targets  # person's left leg still tracked
 
 
-def test_hidden_knee_suppresses_leg():
-    """Right knee invisible → robot left leg omitted (mirror), robot right
-    still emitted."""
+def test_hidden_knee_snaps_both_legs_to_stand():
+    """Either knee below the 0.6 knee gate → BOTH legs snap to the stand pose.
+    Leg retargeting requires both knees clearly visible; a single hidden knee
+    straightens the whole lower body rather than holding a stale/bent pose."""
     body = _build_body()
     body[26]["visibility"] = 0.1  # person's right knee hidden
     targets = compute_joint_targets(body, head_pose=None)
-    assert "l_hip_pitch" not in targets
-    assert "l_knee" not in targets
-    assert "r_hip_pitch" in targets
+    # Legs present, and set to the stand-keyframe values (not retargeted).
+    assert targets["l_hip_pitch"] == pytest.approx(HW_STAND_RAD["l_hip_pitch"])
+    assert targets["r_hip_pitch"] == pytest.approx(HW_STAND_RAD["r_hip_pitch"])
+    assert targets["l_knee"] == pytest.approx(HW_STAND_RAD["l_knee"])
+    assert targets["r_knee"] == pytest.approx(HW_STAND_RAD["r_knee"])
+    assert targets["l_hip_roll"] == pytest.approx(0.0)
+    assert targets["r_hip_roll"] == pytest.approx(0.0)
+
+
+def test_knee_below_knee_gate_but_above_default_stands_legs():
+    """A knee at 0.55 clears the old 0.5 default but not the stricter 0.6 knee
+    gate → legs snap to stand. Guards the knee-specific threshold specifically."""
+    body = _build_body()
+    body[26]["visibility"] = 0.55
+    targets = compute_joint_targets(body, head_pose=None)
+    assert targets["l_hip_pitch"] == pytest.approx(HW_STAND_RAD["l_hip_pitch"])
+    assert targets["r_knee"] == pytest.approx(HW_STAND_RAD["r_knee"])
 
 
 def test_hidden_ankle_skips_knee_only():
@@ -336,11 +352,16 @@ def test_hidden_ankle_skips_knee_only():
     assert "l_knee" not in targets
 
 
-def test_hidden_hips_suppress_legs():
-    """A hip below the visibility gate → no pelvis frame → no leg targets."""
+def test_hidden_hips_stand_legs():
+    """A hip below the visibility gate → no pelvis frame → legs snap to stand.
+
+    (In the live flow vision_server's hips_detected gate returns pose_detected
+    False before this is reached; calling compute_joint_targets directly here
+    exercises the degenerate-pelvis branch, which stands the legs.)"""
     body = _build_body()
     body[24]["visibility"] = 0.1
     targets = compute_joint_targets(body, head_pose=None)
-    for joint in ("l_hip_pitch", "r_hip_pitch", "l_hip_roll", "r_hip_roll",
-                  "l_knee", "r_knee"):
-        assert joint not in targets
+    assert targets["l_hip_pitch"] == pytest.approx(HW_STAND_RAD["l_hip_pitch"])
+    assert targets["r_hip_pitch"] == pytest.approx(HW_STAND_RAD["r_hip_pitch"])
+    assert targets["l_knee"] == pytest.approx(HW_STAND_RAD["l_knee"])
+    assert targets["r_knee"] == pytest.approx(HW_STAND_RAD["r_knee"])

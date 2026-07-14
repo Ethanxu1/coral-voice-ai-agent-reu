@@ -6,6 +6,7 @@ import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
 import ProDemo from './pages/ProDemo'
 import RefinedDemo from './pages/RefinedDemo'
+import Welcome from './pages/Welcome'
 import Tutorial from './pages/Tutorial'
 import MoveMate from './pages/MoveMate'
 import PoseTester from './pages/PoseTester'
@@ -181,7 +182,7 @@ function App() {
           <Link to="/prodemo" state={{ fromApp: true }} style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🧪 Pro Demo</button>
           </Link>
-          <Link to="/refineddemo" state={{ fromApp: true }} style={{ textDecoration: 'none' }}>
+          <Link to="/welcome" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">✨ Refined Demo</button>
           </Link>
           <Link to="/pose-tester" style={{ textDecoration: 'none' }}>
@@ -201,7 +202,8 @@ function App() {
       <Route path="/" element={mainView} />
       <Route path="/pose" element={<PoseVisualization />} />
       <Route path="/prodemo" element={<ProDemo />} />
-      <Route path="/refineddemo" element={<RefinedDemo />} />
+      <Route path="/welcome" element={<Welcome />} />
+      <Route path="/home" element={<RefinedDemo />} />
       <Route path="/tutorial" element={<Tutorial />} />
       <Route path="/movemate" element={<MoveMate />} />
       <Route path="/pose-tester" element={<PoseTester />} />

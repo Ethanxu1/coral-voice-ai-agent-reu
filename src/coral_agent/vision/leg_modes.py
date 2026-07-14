@@ -71,6 +71,18 @@ def strip_legs(targets: Dict[str, float]) -> Dict[str, float]:
     return {k: v for k, v in targets.items() if k not in LEG_JOINTS}
 
 
+def stand_leg_targets() -> Dict[str, float]:
+    """Sim-radian targets that put ALL 12 leg joints in the stand pose.
+
+    Built from each joint's STAND_PULSE via the same hardware→sim conversion the
+    other modes use, so the legs land exactly at the ainex.xml stand keyframe.
+    Used to straighten the legs mode-independently (retarget/legacy/classify all
+    share it) when the knees aren't confidently visible, instead of driving them
+    off unreliable landmarks or holding a stale pose.
+    """
+    return leg_pulses_to_targets({j: STAND_PULSE[j] for j in LEG_JOINTS})
+
+
 def leg_pulses_to_targets(leg_pulses: Dict[str, int]) -> Dict[str, float]:
     """Convert a {leg_joint: hardware_pulse} dict to {leg_joint: sim_radians}.
 

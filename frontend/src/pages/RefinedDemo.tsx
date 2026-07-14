@@ -4,22 +4,10 @@ import {
   useRefinedDemoMachine,
   type RefinedChatMsg,
 } from '../demo/useRefinedDemoMachine'
+import { resetPose } from '../demo/api'
 import { LiveStream } from './DummyStream'
 import RobotViewer from './RobotViewer'
 import './RefinedDemo.css'
-
-const INTENT_LABELS: Record<string, string> = {
-  follow_start: 'Follow Movement',
-  follow_stop: 'Stop Following',
-  capture: 'Capture Pose',
-  library: 'Show Poses',
-  exit: 'Exit Session',
-  chat: 'Chat / Motion Command',
-}
-
-function formatIntent(intent: string): string {
-  return INTENT_LABELS[intent] ?? intent
-}
 
 export default function RefinedDemo() {
   const location = useLocation()
@@ -32,8 +20,6 @@ export default function RefinedDemo() {
     goToLibrary,
     goToExit,
     startAgain,
-    approveIntent,
-    rejectIntent,
   } = useRefinedDemoMachine()
 
   const handleExit = useCallback(() => {
@@ -43,7 +29,7 @@ export default function RefinedDemo() {
 
   useEffect(() => {
     if (!(location.state as { fromApp?: boolean } | null)?.fromApp) {
-      navigate('/', { replace: true })
+      navigate('/welcome', { replace: true })
       return
     }
     start()
@@ -66,7 +52,13 @@ export default function RefinedDemo() {
         <div className="rd-topbar-right">
           <button
             className="rd-topbar-btn ghost"
-            onClick={() => window.open('/tutorial', '_blank', 'noopener,noreferrer')}
+            onClick={() => { resetPose().catch(() => {}) }}
+          >
+            Return to stand
+          </button>
+          <button
+            className="rd-topbar-btn ghost"
+            onClick={() => navigate('/tutorial')}
           >
             Tutorial
           </button>
@@ -80,7 +72,7 @@ export default function RefinedDemo() {
           )}
           {isActive && (
             <button className="rd-topbar-btn danger" onClick={goToExit}>
-              Exit
+              End Session
             </button>
           )}
         </div>
@@ -108,14 +100,6 @@ export default function RefinedDemo() {
               <span className="rd-follow-dot" />
               Following
             </div>
-          )}
-
-          {state.capturedFrame && state.stage !== 'LISTENING' && state.stage !== 'FOLLOWING' && (
-            <img
-              className="rd-captured-img"
-              src={`data:image/jpeg;base64,${state.capturedFrame}`}
-              alt="Captured pose"
-            />
           )}
 
           {state.stage === 'CAPTURED' && (
@@ -156,11 +140,22 @@ export default function RefinedDemo() {
             micLevel={state.micLevel}
           />
 
+          {/* Captured pose thumbnail */}
+          {state.capturedFrame && state.stage !== 'LISTENING' && state.stage !== 'FOLLOWING' && (
+            <div className="rd-capture-stage">
+              <img
+                className="rd-capture-frame"
+                src={`data:image/jpeg;base64,${state.capturedFrame}`}
+                alt="Captured pose"
+              />
+            </div>
+          )}
+
           {/* Chat messages */}
           <ChatArea
             messages={state.messages}
             onChip={injectText}
-            agentTyping={state.orbState === 'thinking' && !state.pendingIntent}
+            agentTyping={state.orbState === 'thinking'}
           />
 
           {/* Library bar when in LIBRARY stage */}
@@ -203,7 +198,12 @@ export default function RefinedDemo() {
       {state.stage === 'EXIT_CONFIRM' && (
         <div className="rd-overlay">
           <div className="rd-overlay-card">
-            <div className="rd-overlay-title">Great session!</div>
+            <div className="rd-overlay-title">End Session</div>
+            <div className="rd-overlay-blurb">
+              You might be wondering how I knew which move to do. I have a special
+              machine that tells me where your arms and legs are in the picture,
+              and then I use that to make my arms and legs match that pose!
+            </div>
             <div className="rd-overlay-subtitle">
               {state.savedPoses.length > 0
                 ? `You saved ${state.savedPoses.length} pose${state.savedPoses.length !== 1 ? 's' : ''} today.`
@@ -253,24 +253,6 @@ export default function RefinedDemo() {
         </div>
       )}
 
-      {/* Intent approval modal — placeholder gate before executing a branch. */}
-      {state.pendingIntent && (
-        <div className="rd-overlay">
-          <div className="rd-overlay-card">
-            <div className="rd-overlay-title">Is this right?</div>
-            <div className="rd-intent-label">Intent</div>
-            <div className="rd-intent-pill">{formatIntent(state.pendingIntent)}</div>
-            <div className="rd-overlay-btns">
-              <button className="rd-overlay-btn primary" onClick={approveIntent}>
-                Approve
-              </button>
-              <button className="rd-overlay-btn secondary" onClick={rejectIntent}>
-                Reject
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

@@ -314,16 +314,6 @@
   100% { transform: scale(1); opacity: 1; }
 }
 
-/* Captured frame */
-.rd-captured-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 28px;
-}
-
 /* Flash */
 .rd-flash {
   position: absolute;
@@ -492,6 +482,19 @@
   background: #17BEBB;
   border-radius: 2px;
   transition: width 0.05s linear;
+}
+
+/* Captured pose thumbnail — matches the tutorial's inline capture-stage box */
+.rd-capture-stage {
+  position: relative; width: auto; aspect-ratio: 4 / 3;
+  border-radius: 20px; overflow: hidden;
+  margin: 16px 24px 0;
+  background: #26232F;
+  flex-shrink: 0;
+}
+.rd-capture-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
 }
 
 /* ── Chat area ──────────────────────────────────────────────────────────────── */
@@ -707,6 +710,14 @@
   font-weight: 800;
   color: #2D2926;
   margin-bottom: 10px;
+}
+
+.rd-overlay-blurb {
+  font-size: 17px;
+  color: #2D2926;
+  font-weight: 600;
+  line-height: 1.55;
+  margin-bottom: 20px;
 }
 
 .rd-overlay-subtitle {

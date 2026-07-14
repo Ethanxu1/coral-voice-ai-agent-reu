@@ -47,9 +47,6 @@ export interface RefinedState {
   savedPoses: string[]
   flash: boolean
   error: string | null
-  // Non-null while the intent-approval modal is open. The classified intent
-  // is shown to the user for approve/reject before we run the branch.
-  pendingIntent: string | null
 }
 
 const INIT: RefinedState = {
@@ -64,7 +61,6 @@ const INIT: RefinedState = {
   savedPoses: [],
   flash: false,
   error: null,
-  pendingIntent: null,
 }
 
 function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
@@ -93,10 +89,6 @@ export function useRefinedDemoMachine() {
   // stream can block the next captureUtterance from acquiring the mic and the
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
-  // Resolves when the user approves/rejects the intent shown in the modal.
-  // Any escape path (stop, goToLibrary, goToExit, run re-entry) must clear
-  // this ref with `false` so the loop can reach its next active() check.
-  const intentApprovalRef = useRef<((approved: boolean) => void) | null>(null)
 
   const abortCurrentCapture = useCallback(() => {
     const ctrl = captureAbortRef.current
@@ -117,12 +109,6 @@ export function useRefinedDemoMachine() {
     }
   }, [abortCurrentCapture])
 
-  const clearPendingIntent = useCallback(() => {
-    const resolve = intentApprovalRef.current
-    intentApprovalRef.current = null
-    resolve?.(false)
-  }, [])
-
   const injectText = useCallback((text: string) => {
     const resolve = chipResolverRef.current
     chipResolverRef.current = null
@@ -130,25 +116,10 @@ export function useRefinedDemoMachine() {
     resolve?.(text)
   }, [abortCurrentCapture])
 
-  const approveIntent = useCallback(() => {
-    const resolve = intentApprovalRef.current
-    intentApprovalRef.current = null
-    dispatch({ pendingIntent: null })
-    resolve?.(true)
-  }, [])
-
-  const rejectIntent = useCallback(() => {
-    const resolve = intentApprovalRef.current
-    intentApprovalRef.current = null
-    dispatch({ pendingIntent: null })
-    resolve?.(false)
-  }, [])
-
   const run = useCallback(async () => {
     // Kill any capture left over from a prior run() invocation (strict-mode
     // double-mount, "Start Session" from ERROR/EXIT, etc.) before starting.
     abortCurrentCapture()
-    clearPendingIntent()
 
     const token = ++tokenRef.current
     const active = () => {
@@ -171,17 +142,6 @@ export function useRefinedDemoMachine() {
     const addMsg = (msg: RefinedChatMsg) => {
       msgs = [...msgs, msg]
       dispatch({ messages: msgs })
-    }
-
-    // Show the classified intent to the user for approve/reject before
-    // running the branch. If any escape path clears intentApprovalRef with
-    // false (via clearPendingIntent), this resolves false too and the loop
-    // reaches its next active() check to throw CANCELLED cleanly.
-    const awaitApproval = async (intent: string): Promise<boolean> => {
-      return new Promise<boolean>((resolve) => {
-        intentApprovalRef.current = resolve
-        dispatch({ pendingIntent: intent })
-      })
     }
 
     // Capture voice OR accept an injected chip/button text.
@@ -255,19 +215,6 @@ export function useRefinedDemoMachine() {
         const intent = await classifyIntent(transcript, followActive)
         active()
 
-        // Gate every intent behind explicit user approval (placeholder step —
-        // final integration TBD). On reject, ask the user to rephrase and
-        // return to listening.
-        const approved = await awaitApproval(intent)
-        active()
-        if (!approved) {
-          addMsg(agentMsg(
-            "Got it — what would you like to do instead?",
-            ['Follow my movement', 'Capture my pose', 'My Poses'],
-          ))
-          continue
-        }
-
         // ── follow_start ──
         if (intent === 'follow_start') {
           const result = await session.sendText(transcript)
@@ -327,15 +274,6 @@ export function useRefinedDemoMachine() {
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
             const li = await classifyIntent(lt, false)
             active()
-            const libApproved = await awaitApproval(li)
-            active()
-            if (!libApproved) {
-              addMsg(agentMsg(
-                "Got it — what would you like to do instead?",
-                ['Make another', 'Follow my movement'],
-              ))
-              continue
-            }
             if (li === 'exit') {
               savedPoses = await listPoses()
               active()
@@ -390,14 +328,6 @@ export function useRefinedDemoMachine() {
                 addMsg(childMsg(ft))
                 const ftIntent = await classifyIntent(ft, false)
                 active()
-                const ftApproved = await awaitApproval(ftIntent)
-                active()
-                if (!ftApproved) {
-                  addMsg(agentMsg(
-                    "Got it — how should I tweak the pose instead?",
-                  ))
-                  continue
-                }
                 if (ftIntent === 'follow_start') {
                   followEscape = true
                   break
@@ -510,14 +440,6 @@ export function useRefinedDemoMachine() {
             addMsg(childMsg(ft))
             const ftIntent = await classifyIntent(ft, false)
             active()
-            const ftApproved = await awaitApproval(ftIntent)
-            active()
-            if (!ftApproved) {
-              addMsg(agentMsg(
-                "Got it — how should I tweak the pose instead?",
-              ))
-              continue
-            }
             if (ftIntent === 'follow_start') {
               followEscape = true
               break
@@ -573,37 +495,33 @@ export function useRefinedDemoMachine() {
     } finally {
       chipResolverRef.current = null
       abortCurrentCapture()
-      clearPendingIntent()
       session.close()
     }
-  }, [abortCurrentCapture, clearPendingIntent])
+  }, [abortCurrentCapture])
 
   const stop = useCallback(() => {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
-    clearPendingIntent()
     setRobotState('IDLE')
     dispatch({ ...INIT })
-  }, [abortCurrentCapture, clearPendingIntent])
+  }, [abortCurrentCapture])
 
   const goToLibrary = useCallback(async () => {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
-    clearPendingIntent()
     const names = await listPoses()
     dispatch({ stage: 'LIBRARY', savedPoses: names })
-  }, [abortCurrentCapture, clearPendingIntent])
+  }, [abortCurrentCapture])
 
   const goToExit = useCallback(() => {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
-    clearPendingIntent()
     setRobotState('IDLE')
     dispatch({ stage: 'EXIT_CONFIRM' })
-  }, [abortCurrentCapture, clearPendingIntent])
+  }, [abortCurrentCapture])
 
   const startAgain = useCallback(() => {
     run()
@@ -617,7 +535,5 @@ export function useRefinedDemoMachine() {
     goToLibrary,
     goToExit,
     startAgain,
-    approveIntent,
-    rejectIntent,
   }
 }

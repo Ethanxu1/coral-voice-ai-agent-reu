@@ -55,6 +55,10 @@ class AiNexSimulator:
 
     STEP_SIZE = 0.2
 
+    # How far above its settled height to lift the floating base on reset, so the
+    # robot drops and settles into a stable stand (re-stands after a fall).
+    DROP_HEIGHT = 0.05
+
     def __init__(self, model_path: str | None = None):
         if model_path is None:
             project_root = Path(__file__).parent.parent.parent.parent
@@ -137,20 +141,28 @@ class AiNexSimulator:
                 positions[short_name] = float(temp.ctrl[actuator_id])
         return positions
 
-    def _apply_stand_keyframe(self) -> None:
+    def _apply_stand_keyframe(self, lift: float = 0.0) -> None:
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         if key_id >= 0:
             # Lock so a runtime reset (reset_pose command) can't rewrite qpos/ctrl
             # while the physics thread is mid-step. Uncontended during __init__.
             with self._lock:
                 mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
+                if lift:
+                    # Raise the floating base (qpos[0:3] = free-joint xyz; the
+                    # keyframe already sets an upright quat in qpos[3:7]) above its
+                    # settled height and zero velocity, so physics drops it into a
+                    # stable stand. Recovers from a fallen pose, which animating
+                    # joints alone cannot.
+                    self.data.qpos[2] += lift
+                    self.data.qvel[:] = 0.0
                 # Sync ctrl targets to the keyframe joint positions so PD
                 # controllers hold the pose rather than pulling toward zero.
                 for i in range(self.model.nu):
                     joint_id = self.model.actuator_trnid[i, 0]
                     qpos_addr = self.model.jnt_qposadr[joint_id]
                     self.data.ctrl[i] = self.data.qpos[qpos_addr]
-            logger.info("Applied 'stand' keyframe")
+            logger.info(f"Applied 'stand' keyframe (lift={lift:.3f})")
         else:
             logger.warning("'stand' keyframe not found, using default pose")
 
@@ -381,8 +393,11 @@ class AiNexSimulator:
         logger.info("Executing shake no pose")
 
     def reset_pose(self) -> None:
-        self._apply_stand_keyframe()
-        logger.info("Reset to standing pose")
+        """Re-stand the robot: place it upright slightly above the floor in the
+        stand pose and let physics drop it into a settled stand. Recovers from a
+        fallen state, which animating the joints alone cannot."""
+        self._apply_stand_keyframe(lift=self.DROP_HEIGHT)
+        logger.info("Reset: dropped into standing pose")
 
     def get_all_joint_states(self) -> dict[str, float]:
         states = {}

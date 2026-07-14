@@ -16,10 +16,15 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import leg_modes, pose_classifier
+from . import geometry, leg_modes, pose_classifier
 from .frame_broadcaster import FrameBroadcaster
 from .pose_estimator import PoseEstimator
-from .pose_to_robot import compute_joint_targets, hips_detected, targets_to_servo_commands
+from .pose_to_robot import (
+    compute_joint_targets,
+    hips_detected,
+    knees_confidently_visible,
+    targets_to_servo_commands,
+)
 
 logger = logging.getLogger("vision")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -234,6 +239,17 @@ async def map_features(leg_mode: str = "retarget"):
     body = _latest_landmarks or []
     image_b64 = base64.b64encode(_latest_jpeg).decode("ascii")
 
+    # Debug: log the raw knee visibilities so we can see why legs did/didn't
+    # clear the 0.6 knee gate in pose_to_robot for this capture.
+    def _knee_vis(idx: int) -> str:
+        return f"{body[idx]['visibility']:.3f}" if idx < len(body) else "n/a"
+
+    logger.info(
+        "map-features knee visibility — left=%s right=%s",
+        _knee_vis(geometry.LEFT_KNEE),
+        _knee_vis(geometry.RIGHT_KNEE),
+    )
+
     # The arm retargeting is anchored on the hips; without them we'd only be able
     # to move the head, so ask the caller to reframe and retake instead.
     if not hips_detected(body):
@@ -268,6 +284,14 @@ async def map_features(leg_mode: str = "retarget"):
             )
             leg_pulses = leg_modes.classify_leg_pulses(pose_class)
         targets.update(leg_modes.leg_pulses_to_targets(leg_pulses))
+
+    # Mode-independent knee gate: if the knees aren't confidently visible, stand
+    # the legs regardless of leg_mode. compute_joint_targets already does this for
+    # "retarget", but legacy/classify compute their own leg pulses above and would
+    # otherwise drive the legs off an unseen lower body.
+    if not knees_confidently_visible(body):
+        targets = leg_modes.strip_legs(targets)
+        targets.update(leg_modes.stand_leg_targets())
 
     commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
     return {

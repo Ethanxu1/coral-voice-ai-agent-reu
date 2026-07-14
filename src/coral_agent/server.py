@@ -1326,29 +1326,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 command = message_data.get("command", "")
                 success = False
 
-                if command == "reset" and simulator is not None:
-                    # Animate to stand pose through both sim and hardware instead of
-                    # instantly teleporting the MuJoCo viewer.
-                    stand = simulator.get_stand_joint_positions()
-                    if stand:
-                        state_manager.save_checkpoint(simulator, "before_command:reset")
-                        cmds = []
-                        for joint, rad in stand.items():
-                            sid = SERVO_ID_MAP.get(joint)
-                            if sid is not None:
-                                cmds.append(ServoCommand(
-                                    servo_id=sid,
-                                    position=rad_to_servo_units(rad),
-                                    duration_ms=1500,
-                                ))
-                        dispatches = []
-                        if sim_dispatcher is not None:
-                            dispatches.append(asyncio.to_thread(sim_dispatcher.send_commands, cmds))
-                        if hardware_dispatcher is not None:
-                            dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, cmds))
-                        if dispatches:
-                            await asyncio.gather(*dispatches)
-                        success = True
+                if command in ("reset", "stand") and simulator is not None:
+                    state_manager.save_checkpoint(simulator, "before_command:reset")
+                    # Sim: place the robot upright slightly above the floor and let
+                    # physics drop it into a stable stand — re-stands a fallen robot,
+                    # which animating the joints alone cannot.
+                    await asyncio.to_thread(simulator.reset_pose)
+                    # Hardware: can't teleport a physical robot, so animate its
+                    # joints to the stand pose over a smooth interval.
+                    if hardware_dispatcher is not None:
+                        stand = simulator.get_stand_joint_positions()
+                        cmds = [
+                            ServoCommand(
+                                servo_id=sid,
+                                position=rad_to_servo_units(rad),
+                                duration_ms=1500,
+                            )
+                            for joint, rad in stand.items()
+                            if (sid := SERVO_ID_MAP.get(joint)) is not None
+                        ]
+                        if cmds:
+                            await asyncio.to_thread(hardware_dispatcher.send_commands, cmds)
+                    success = True
 
                 elif command == "sync_sim":
                     # Instantly snap the sim viewer to the robot's current pose without

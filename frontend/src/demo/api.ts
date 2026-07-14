@@ -145,6 +145,17 @@ export async function setRobotState(mode: string): Promise<void> {
   }
 }
 
+// Snap the sim (and, in robot mode, animate the hardware) back to the stand
+// pose via the "reset" primitive in mujoco_sim.COMMAND_MAP.
+export async function resetPose(): Promise<void> {
+  const res = await fetch(`${getRobotBase()}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: 'reset' }),
+  })
+  if (!res.ok) throw new Error(`reset failed: ${res.status}`)
+}
+
 // ── Audio capture (one utterance, auto-stop on silence) ───────────────────────
 // Compact VAD: wait indefinitely for speech to start, then record until ~1.2s
 // of trailing silence, or `maxMs` after speech began (whichever comes first).
