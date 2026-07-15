@@ -268,7 +268,7 @@ export function useRefinedDemoMachine() {
           dispatch({ orbState: 'thinking', statusText: 'Applying…' })
           const chatResult = await session.sendText(intentResult.description)
           active()
-          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose']))
+          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'Save current pose']))
           dispatch({ orbState: 'listening' })
           continue
         }
@@ -298,6 +298,27 @@ export function useRefinedDemoMachine() {
           ))
           followActive = false
           dispatch({ followActive: false })
+          continue
+        }
+
+        // ── save_robot_pose: save current robot state directly (no camera) ──
+        if (intent === 'save_robot_pose') {
+          addMsg(agentMsg("What would you like to name this pose?"))
+          dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+          const nameText = await listenOrInject()
+          active()
+          dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+          const poseName = nameText.trim() || `Pose ${Date.now()}`
+          await saveCurrentPose(poseName)
+          active()
+          savedPoses = await listPoses()
+          active()
+          addMsg(sysMsg(`Saved as "${poseName}"!`))
+          addMsg(agentMsg(
+            `"${poseName}" is saved! Say a pose name to have me strike it, or let's keep going!`,
+            ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ savedPoses, stage: 'LISTENING', capturedFrame: null })
           continue
         }
 
@@ -415,6 +436,10 @@ export function useRefinedDemoMachine() {
                   followEscape = true
                   break
                 }
+                if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+                  satisfied = true
+                  break
+                }
                 const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
                 const ftApproved = await awaitApproval(ftDesc)
                 active()
@@ -467,54 +492,59 @@ export function useRefinedDemoMachine() {
           continue
         }
 
-        // ── capture ──
-        if (intent === 'capture') {
+        // ── capture (also handles save_robot_pose while following as a safety net) ──
+        if (intent === 'capture' || (intent === 'save_robot_pose' && followActive)) {
+          let capturedFrame: string | null = null
+
           if (followActive) {
+            // Robot already mirrors the user — freeze it in place, skip countdown/camera.
             await session.sendText('stop following').catch(() => {})
             followActive = false
             dispatch({ followActive: false })
-          }
-          active()
-
-          addMsg(sysMsg('Starting countdown…'))
-
-          await setRobotState('DEMO_LOCKED')
-          active()
-
-          dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
-          for (const n of [3, 2, 1]) {
-            dispatch({ countdown: n })
-            await sleep(1000)
             active()
+            addMsg(sysMsg('Pose frozen!'))
+          } else {
+            addMsg(sysMsg('Starting countdown…'))
+
+            await setRobotState('DEMO_LOCKED')
+            active()
+
+            dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
+            for (const n of [3, 2, 1]) {
+              dispatch({ countdown: n })
+              await sleep(1000)
+              active()
+            }
+            dispatch({ countdown: null })
+
+            dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
+            playShutter()
+            const mapResult = await mapFeatures()
+            active()
+            await sleep(800)
+            active()
+            dispatch({ flash: false })
+
+            await setRobotState('IDLE')
+            active()
+
+            if (!mapResult.poseDetected) {
+              addMsg(agentMsg(
+                mapResult.detail || "I couldn't see your full body. Try stepping back!",
+                ['Try again', 'Follow my movement'],
+              ))
+              dispatch({ stage: currentStage })
+              continue
+            }
+
+            await move(mapResult.commands).catch(() => {})
+            active()
+            capturedFrame = mapResult.imageB64
+            addMsg(sysMsg('Pose captured!'))
           }
-          dispatch({ countdown: null })
 
-          dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
-          playShutter()
-          const mapResult = await mapFeatures()
-          active()
-          await sleep(800)
-          active()
-          dispatch({ flash: false })
-
-          await setRobotState('IDLE')
-          active()
-
-          if (!mapResult.poseDetected) {
-            addMsg(agentMsg(
-              mapResult.detail || "I couldn't see your full body. Try stepping back!",
-              ['Try again', 'Follow my movement'],
-            ))
-            dispatch({ stage: currentStage })
-            continue
-          }
-
-          await move(mapResult.commands).catch(() => {})
-          active()
-
-          addMsg(sysMsg('Pose captured!'))
           addMsg(agentMsg('Awesome pose! Want to fine-tune it, or save it as is?', ['Fine-tune it', 'Save it']))
-          dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: 'listening', statusText: 'Listening for tweaks…' })
+          dispatch({ stage: 'FINETUNE', capturedFrame, orbState: 'listening', statusText: 'Listening for tweaks…' })
 
           // FINETUNE loop
           let satisfied = false
@@ -534,6 +564,10 @@ export function useRefinedDemoMachine() {
             }
             if (ftResult.type === 'immediate' && ftResult.intent === 'follow_start') {
               followEscape = true
+              break
+            }
+            if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+              satisfied = true
               break
             }
             const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft

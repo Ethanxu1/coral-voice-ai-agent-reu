@@ -791,7 +791,7 @@ async def classify_intent_endpoint(req: IntentRequest) -> dict:
     try:
         result = json.loads(response.choices[0].message.content)
         if result.get("type") == "immediate" and result.get("intent") in {
-            "follow_start", "follow_stop", "capture", "library", "exit"
+            "follow_start", "follow_stop", "capture", "library", "exit", "save_robot_pose"
         }:
             return result
         if result.get("type") == "clarification" and result.get("question"):

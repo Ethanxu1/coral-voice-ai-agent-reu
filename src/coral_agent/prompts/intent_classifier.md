@@ -22,7 +22,10 @@ CURRENT_STATE gives joint positions in degrees. Key mappings:
 Clear system-level commands needing no motion planning:
 - follow_start: follow/mirror/copy the user's movements
 - follow_stop: stop following (only valid when follow_active=true)
-- capture: capture/freeze/snap/photograph the current pose
+- capture: freeze/capture the current pose. Behavior depends on follow_active:
+  - follow_active=false: countdown + camera photo → robot mimics the user's pose.
+  - follow_active=true: the robot already mirrors the user — freeze it in place (no camera, no countdown). **When follow_active=true, use `capture` for ALL freeze/snapshot/save-type phrases** ("capture this", "save this pose", "freeze", "lock it in", "save it", etc.) because the user always wants to inspect and fine-tune before naming.
+- save_robot_pose: immediately name and save the current robot state — **no fine-tune step, no camera**. Only use this when follow_active=false and the user clearly just wants to store what's already there. Phrases: "save this pose", "save the current pose", "save it", "save as is", "I like this pose, save it". In a fine-tune context (after capture or adjustments), "save it" / "looks good, save it" → save_robot_pose.
 - library: show saved poses ("my poses", "what poses do I have")
 - exit: done/quit/bye
 
@@ -40,15 +43,24 @@ A question, comment, or chat that doesn't require movement — e.g. "What can yo
 Response: {"type": "conversation", "text": "<the user's message>"}
 
 ### CATEGORY 4: motion
-A specific motion or pose command. Generate a precise, self-contained description:
-- Always name left or right (infer from history and CURRENT_STATE if unspecified — e.g. the arm most recently moved, or the one currently raised)
-- Say "forward/up" vs "sideways" to distinguish arm motion types
-- Resolve ALL relative adjustments to absolute angles using CURRENT_STATE:
-  - "a bit" ≈ 15–20°, "a lot" ≈ 30–45°, explicit deltas: add/subtract from current angle
-  - Example: l_sho_pitch = 30°, user says "raise it a bit more" → "Raise left arm forward to 50 degrees"
-  - Example: r_sho_pitch = 60°, user says "lower by 15 degrees" → "Lower right arm forward to 45 degrees"
-- Include a specific angle whenever you can resolve one; omit only when a default angle is clearly appropriate
-- Keep the description natural and kid-friendly — it will be shown to the user in an approval dialog
+A specific motion or pose command. Generate a precise, self-contained description that includes:
+1. **Which joint(s) move** — use the human-readable primitive name (e.g. "left shoulder forward", "right elbow bend", "head turn")
+2. **The target angle in degrees** — always resolve to an absolute angle from CURRENT_STATE:
+   - "a bit" ≈ 15–20°, "a lot" ≈ 30–45°, explicit deltas: add/subtract from current
+   - Example: l_sho_pitch = 30°, "raise it a bit more" → target 50°
+   - Example: r_sho_pitch = 60°, "lower by 15 degrees" → target 45°
+3. **Direction if relevant** — "forward/up" vs "sideways" for arms; "left/right" for head turn; "up/down" for head tilt; "in/out" for elbow rotate
+4. Always name left or right (infer from history and CURRENT_STATE if unspecified)
+5. Include a specific angle whenever you can resolve one; omit only when a default angle is clearly appropriate
+
+Format the description as a natural sentence, e.g.:
+- "Raise the left shoulder forward to 60 degrees"
+- "Extend the right arm sideways to 45 degrees"
+- "Bend the right elbow to 30 degrees"
+- "Turn the head left to 40 degrees"
+- "Raise both arms forward to 90 degrees"
+
+Keep the description kid-friendly — it will be shown to the user in an approval dialog.
 
 Response: {"type": "motion", "description": "<precise natural-language instruction>"}
 
