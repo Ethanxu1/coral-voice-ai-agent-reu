@@ -7,6 +7,12 @@ from coral_agent.robot.servo_config import JOINT_NAME_MAP, SERVO_ID_MAP
 
 
 class SimController(RobotController):
+    """RobotController backend that drives the MuJoCo simulator instead of hardware.
+
+    Each servo command is executed in its own thread to simulate the parallel
+    motion the physical bus achieves when moving multiple servos simultaneously.
+    """
+
     def __init__(self, simulator):
         self._sim = simulator
 

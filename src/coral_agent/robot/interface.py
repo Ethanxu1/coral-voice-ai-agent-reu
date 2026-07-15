@@ -18,6 +18,11 @@ class ServoFeedback:
 
 
 class RobotController(ABC):
+    """Abstract interface for robot backends (simulator and physical hardware).
+
+    Implementations: SimController (MuJoCo), AiNexHardwareController (HTTP → robot_server).
+    """
+
     @abstractmethod
     def send_commands(self, commands: list[ServoCommand]) -> None: ...
 

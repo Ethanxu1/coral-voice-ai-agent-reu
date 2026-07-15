@@ -9,7 +9,7 @@ UI speaks them one at a time and waits for each `/speak` call to return before
 advancing the on-screen number, keeping audio and visuals in lockstep.
 """
 
-# INTRO — spoken once at the start. (Seeded from lines.py.)
+# INTRO — spoken once at the start.
 INTRO = (
     "Hi there! My name is Coral, and I am a robot who loves to learn. "
     "Today, I want you to help me learn some cool poses. "

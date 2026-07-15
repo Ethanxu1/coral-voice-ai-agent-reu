@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:
-    from coral_agent.simulator import ApolloSimulator
+    from coral_agent.simulator import AiNexSimulator
 
 
 @dataclass
@@ -36,7 +36,7 @@ class StateManager:
         self.checkpoints = deque(maxlen=self.max_checkpoints)
 
     def save_checkpoint(
-        self, simulator: "ApolloSimulator", description: str = "manual"
+        self, simulator: "AiNexSimulator", description: str = "manual"
     ) -> None:
         """Save the current robot state as a checkpoint.
 
@@ -159,7 +159,7 @@ def detect_rollback_intent(message: str) -> RollbackIntent | None:
 
 
 async def execute_rollback(
-    simulator: "ApolloSimulator",
+    simulator: "AiNexSimulator",
     state_manager: StateManager,
     intent: RollbackIntent,
     interpolation_steps: int = 30,
