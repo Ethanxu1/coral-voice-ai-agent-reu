@@ -235,12 +235,22 @@ export function useRefinedDemoMachine() {
         // finishing a sentence and the text appearing.
         addMsg(childMsg(transcript))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-        const intentResult = await classifyIntent(transcript, followActive)
+        const intentResult = await classifyIntent(transcript, followActive, msgs)
         active()
 
         // ── clarification: ask a follow-up, loop back ──
         if (intentResult.type === 'clarification') {
           addMsg(agentMsg(intentResult.question, ['Follow my movement', 'Capture my pose', 'My Poses']))
+          continue
+        }
+
+        // ── conversation: chat/question — send to router, no approval modal ──
+        if (intentResult.type === 'conversation') {
+          dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
+          const chatResult = await session.sendText(intentResult.text)
+          active()
+          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
+          dispatch({ orbState: 'listening' })
           continue
         }
 
@@ -256,9 +266,9 @@ export function useRefinedDemoMachine() {
             continue
           }
           dispatch({ orbState: 'thinking', statusText: 'Applying…' })
-          const chatResult = await session.sendText(transcript)
+          const chatResult = await session.sendText(intentResult.description)
           active()
-          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose']))
+          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'Save current pose']))
           dispatch({ orbState: 'listening' })
           continue
         }
@@ -288,6 +298,27 @@ export function useRefinedDemoMachine() {
           ))
           followActive = false
           dispatch({ followActive: false })
+          continue
+        }
+
+        // ── save_robot_pose: save current robot state directly (no camera) ──
+        if (intent === 'save_robot_pose') {
+          addMsg(agentMsg("What would you like to name this pose?"))
+          dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+          const nameText = await listenOrInject()
+          active()
+          dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+          const poseName = nameText.trim() || `Pose ${Date.now()}`
+          await saveCurrentPose(poseName)
+          active()
+          savedPoses = await listPoses()
+          active()
+          addMsg(sysMsg(`Saved as "${poseName}"!`))
+          addMsg(agentMsg(
+            `"${poseName}" is saved! Say a pose name to have me strike it, or let's keep going!`,
+            ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ savedPoses, stage: 'LISTENING', capturedFrame: null })
           continue
         }
 
@@ -322,7 +353,7 @@ export function useRefinedDemoMachine() {
             // sees their words appear immediately.
             addMsg(childMsg(lt))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-            const liResult = await classifyIntent(lt, false)
+            const liResult = await classifyIntent(lt, false, msgs)
             active()
 
             if (liResult.type === 'clarification') {
@@ -337,7 +368,7 @@ export function useRefinedDemoMachine() {
                 addMsg(agentMsg("Got it — what would you like to do instead?", ['Make another', 'Follow my movement']))
                 continue
               }
-              const lr = await session.sendText(lt)
+              const lr = await session.sendText(liResult.description)
               active()
               addMsg(agentMsg(lr.content || ''))
               dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
@@ -395,7 +426,7 @@ export function useRefinedDemoMachine() {
                 active()
                 if (!ft.trim()) continue
                 addMsg(childMsg(ft))
-                const ftResult = await classifyIntent(ft, false)
+                const ftResult = await classifyIntent(ft, false, msgs)
                 active()
                 if (ftResult.type === 'clarification') {
                   addMsg(agentMsg(ftResult.question))
@@ -403,6 +434,10 @@ export function useRefinedDemoMachine() {
                 }
                 if (ftResult.type === 'immediate' && ftResult.intent === 'follow_start') {
                   followEscape = true
+                  break
+                }
+                if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+                  satisfied = true
                   break
                 }
                 const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
@@ -413,7 +448,7 @@ export function useRefinedDemoMachine() {
                   continue
                 }
                 dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-                const fr = await session.sendText(ft)
+                const fr = await session.sendText(ftDesc)
                 active()
                 addMsg(agentMsg(fr.content || ''))
                 if (fr.satisfied === true) satisfied = true
@@ -457,54 +492,59 @@ export function useRefinedDemoMachine() {
           continue
         }
 
-        // ── capture ──
-        if (intent === 'capture') {
+        // ── capture (also handles save_robot_pose while following as a safety net) ──
+        if (intent === 'capture' || (intent === 'save_robot_pose' && followActive)) {
+          let capturedFrame: string | null = null
+
           if (followActive) {
+            // Robot already mirrors the user — freeze it in place, skip countdown/camera.
             await session.sendText('stop following').catch(() => {})
             followActive = false
             dispatch({ followActive: false })
-          }
-          active()
-
-          addMsg(sysMsg('Starting countdown…'))
-
-          await setRobotState('DEMO_LOCKED')
-          active()
-
-          dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
-          for (const n of [3, 2, 1]) {
-            dispatch({ countdown: n })
-            await sleep(1000)
             active()
+            addMsg(sysMsg('Pose frozen!'))
+          } else {
+            addMsg(sysMsg('Starting countdown…'))
+
+            await setRobotState('DEMO_LOCKED')
+            active()
+
+            dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
+            for (const n of [3, 2, 1]) {
+              dispatch({ countdown: n })
+              await sleep(1000)
+              active()
+            }
+            dispatch({ countdown: null })
+
+            dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
+            playShutter()
+            const mapResult = await mapFeatures()
+            active()
+            await sleep(800)
+            active()
+            dispatch({ flash: false })
+
+            await setRobotState('IDLE')
+            active()
+
+            if (!mapResult.poseDetected) {
+              addMsg(agentMsg(
+                mapResult.detail || "I couldn't see your full body. Try stepping back!",
+                ['Try again', 'Follow my movement'],
+              ))
+              dispatch({ stage: currentStage })
+              continue
+            }
+
+            await move(mapResult.commands).catch(() => {})
+            active()
+            capturedFrame = mapResult.imageB64
+            addMsg(sysMsg('Pose captured!'))
           }
-          dispatch({ countdown: null })
 
-          dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
-          playShutter()
-          const mapResult = await mapFeatures()
-          active()
-          await sleep(800)
-          active()
-          dispatch({ flash: false })
-
-          await setRobotState('IDLE')
-          active()
-
-          if (!mapResult.poseDetected) {
-            addMsg(agentMsg(
-              mapResult.detail || "I couldn't see your full body. Try stepping back!",
-              ['Try again', 'Follow my movement'],
-            ))
-            dispatch({ stage: currentStage })
-            continue
-          }
-
-          await move(mapResult.commands).catch(() => {})
-          active()
-
-          addMsg(sysMsg('Pose captured!'))
           addMsg(agentMsg('Awesome pose! Want to fine-tune it, or save it as is?', ['Fine-tune it', 'Save it']))
-          dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: 'listening', statusText: 'Listening for tweaks…' })
+          dispatch({ stage: 'FINETUNE', capturedFrame, orbState: 'listening', statusText: 'Listening for tweaks…' })
 
           // FINETUNE loop
           let satisfied = false
@@ -516,7 +556,7 @@ export function useRefinedDemoMachine() {
             active()
             if (!ft.trim()) continue
             addMsg(childMsg(ft))
-            const ftResult = await classifyIntent(ft, false)
+            const ftResult = await classifyIntent(ft, false, msgs)
             active()
             if (ftResult.type === 'clarification') {
               addMsg(agentMsg(ftResult.question))
@@ -524,6 +564,10 @@ export function useRefinedDemoMachine() {
             }
             if (ftResult.type === 'immediate' && ftResult.intent === 'follow_start') {
               followEscape = true
+              break
+            }
+            if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+              satisfied = true
               break
             }
             const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
@@ -534,7 +578,7 @@ export function useRefinedDemoMachine() {
               continue
             }
             dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-            const fr = await session.sendText(ft)
+            const fr = await session.sendText(ftDesc)
             active()
             addMsg(agentMsg(fr.content || ''))
             if (fr.satisfied === true) satisfied = true

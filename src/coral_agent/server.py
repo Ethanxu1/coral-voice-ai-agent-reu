@@ -747,6 +747,7 @@ async def demo_watch_for_action(timeout: float = 30.0) -> dict[str, Any]:
 class IntentRequest(BaseModel):
     text: str
     follow_active: bool = False
+    history: list[dict] | None = None  # [{"role": "user"|"assistant", "content": str}, ...]
 
 @app.post("/classify-intent")
 async def classify_intent_endpoint(req: IntentRequest) -> dict:
@@ -757,27 +758,45 @@ async def classify_intent_endpoint(req: IntentRequest) -> dict:
       {"type": "clarification", "question": "<follow-up question>"}
       {"type": "motion", "description": "<human-readable description of what the robot will do>"}
     """
-    base_prompt = get_intent_classifier_prompt()
-    prompt = (
-        base_prompt.rstrip()
-        + f"\nfollow_active: {str(req.follow_active).lower()}\nMessage: \"{req.text}\""
-    )
+    robot_state = await asyncio.to_thread(_get_robot_state)
+    state_degrees = convert_state_to_degrees(robot_state)
+    state_description = describe_joint_state(robot_state)
+    saved_names = list_pose_names()
+
+    system_prompt = get_intent_classifier_prompt()
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    if req.history:
+        messages.extend(req.history)
+
+    saved_line = f"SAVED_POSES: {json.dumps(saved_names)}\n" if saved_names else ""
+    messages.append({
+        "role": "user",
+        "content": (
+            saved_line
+            + f"CURRENT_STATE: {json.dumps(state_degrees)}\n"
+            f"STATE_DESCRIPTION: {state_description}\n"
+            f"follow_active: {str(req.follow_active).lower()}\n"
+            f"Message: \"{req.text}\""
+        ),
+    })
 
     response = await asyncio.to_thread(
         lambda: openai.chat.completions.create(
             model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             response_format={"type": "json_object"},
-            max_completion_tokens=100,
+            max_completion_tokens=200,
         )
     )
     try:
         result = json.loads(response.choices[0].message.content)
         if result.get("type") == "immediate" and result.get("intent") in {
-            "follow_start", "follow_stop", "capture", "library", "exit"
+            "follow_start", "follow_stop", "capture", "library", "exit", "save_robot_pose"
         }:
             return result
         if result.get("type") == "clarification" and result.get("question"):
+            return result
+        if result.get("type") == "conversation" and result.get("text"):
             return result
         if result.get("type") == "motion" and result.get("description"):
             return result

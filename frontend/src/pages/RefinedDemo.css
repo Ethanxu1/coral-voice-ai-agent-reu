@@ -775,15 +775,18 @@
 }
 
 .rd-intent-pill {
-  display: inline-block;
-  padding: 10px 22px;
-  border-radius: 999px;
-  background: rgba(255, 107, 74, 0.12);
-  color: #FF6B4A;
+  display: block;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: #FFF5F2;
+  border: 1.5px solid rgba(255, 107, 74, 0.25);
+  color: #CC4422;
   font-family: 'Baloo 2', cursive;
-  font-size: 20px;
-  font-weight: 800;
+  font-size: 17px;
+  font-weight: 700;
   margin-bottom: 26px;
+  text-align: center;
+  line-height: 1.4;
 }
 
 /* Poses gallery in exit overlay */
