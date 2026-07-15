@@ -244,6 +244,16 @@ export function useRefinedDemoMachine() {
           continue
         }
 
+        // ── conversation: chat/question — send to router, no approval modal ──
+        if (intentResult.type === 'conversation') {
+          dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
+          const chatResult = await session.sendText(intentResult.text)
+          active()
+          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
+          dispatch({ orbState: 'listening' })
+          continue
+        }
+
         // ── motion: show confirmation modal before executing ──
         if (intentResult.type === 'motion') {
           const approved = await awaitApproval(intentResult.description)
@@ -256,7 +266,7 @@ export function useRefinedDemoMachine() {
             continue
           }
           dispatch({ orbState: 'thinking', statusText: 'Applying…' })
-          const chatResult = await session.sendText(transcript)
+          const chatResult = await session.sendText(intentResult.description)
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose']))
           dispatch({ orbState: 'listening' })
@@ -337,7 +347,7 @@ export function useRefinedDemoMachine() {
                 addMsg(agentMsg("Got it — what would you like to do instead?", ['Make another', 'Follow my movement']))
                 continue
               }
-              const lr = await session.sendText(lt)
+              const lr = await session.sendText(liResult.description)
               active()
               addMsg(agentMsg(lr.content || ''))
               dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
@@ -413,7 +423,7 @@ export function useRefinedDemoMachine() {
                   continue
                 }
                 dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-                const fr = await session.sendText(ft)
+                const fr = await session.sendText(ftDesc)
                 active()
                 addMsg(agentMsg(fr.content || ''))
                 if (fr.satisfied === true) satisfied = true
@@ -534,7 +544,7 @@ export function useRefinedDemoMachine() {
               continue
             }
             dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-            const fr = await session.sendText(ft)
+            const fr = await session.sendText(ftDesc)
             active()
             addMsg(agentMsg(fr.content || ''))
             if (fr.satisfied === true) satisfied = true

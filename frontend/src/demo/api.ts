@@ -523,6 +523,7 @@ export function sleep(ms: number): Promise<void> {
 export type IntentResult =
   | { type: 'immediate'; intent: string }
   | { type: 'clarification'; question: string }
+  | { type: 'conversation'; text: string }
   | { type: 'motion'; description: string }
 
 export interface ChatMsg {
@@ -555,6 +556,7 @@ export async function classifyIntent(
   const data = await res.json()
   if (data.type === 'immediate' && data.intent) return data as IntentResult
   if (data.type === 'clarification' && data.question) return data as IntentResult
+  if (data.type === 'conversation' && data.text) return data as IntentResult
   if (data.type === 'motion' && data.description) return data as IntentResult
   return { type: 'motion', description: text }
 }
