@@ -238,21 +238,36 @@ export function useRefinedDemoMachine() {
         // finishing a sentence and the text appearing.
         addMsg(childMsg(transcript))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-        const intent = await classifyIntent(transcript, followActive)
+        const intentResult = await classifyIntent(transcript, followActive)
         active()
 
-        // Gate every intent behind explicit user approval (placeholder step —
-        // final integration TBD). On reject, ask the user to rephrase and
-        // return to listening.
-        const approved = await awaitApproval(intent)
-        active()
-        if (!approved) {
-          addMsg(agentMsg(
-            "Got it — what would you like to do instead?",
-            ['Follow my movement', 'Capture my pose', 'My Poses'],
-          ))
+        // ── clarification: ask a follow-up, loop back ──
+        if (intentResult.type === 'clarification') {
+          addMsg(agentMsg(intentResult.question, ['Follow my movement', 'Capture my pose', 'My Poses']))
           continue
         }
+
+        // ── motion: show confirmation modal before executing ──
+        if (intentResult.type === 'motion') {
+          const approved = await awaitApproval(intentResult.description)
+          active()
+          if (!approved) {
+            addMsg(agentMsg(
+              "Got it — what would you like to do instead?",
+              ['Follow my movement', 'Capture my pose', 'My Poses'],
+            ))
+            continue
+          }
+          dispatch({ orbState: 'thinking', statusText: 'Applying…' })
+          const chatResult = await session.sendText(transcript)
+          active()
+          addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose']))
+          dispatch({ orbState: 'listening' })
+          continue
+        }
+
+        // ── immediate: execute directly without confirmation ──
+        const intent = intentResult.intent
 
         // ── follow_start ──
         if (intent === 'follow_start') {
@@ -311,17 +326,30 @@ export function useRefinedDemoMachine() {
             // sees their words appear immediately.
             addMsg(childMsg(lt))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-            const li = await classifyIntent(lt, false)
+            const liResult = await classifyIntent(lt, false)
             active()
-            const libApproved = await awaitApproval(li)
-            active()
-            if (!libApproved) {
-              addMsg(agentMsg(
-                "Got it — what would you like to do instead?",
-                ['Make another', 'Follow my movement'],
-              ))
+
+            if (liResult.type === 'clarification') {
+              addMsg(agentMsg(liResult.question, ['Make another', 'Follow my movement']))
               continue
             }
+
+            if (liResult.type === 'motion') {
+              const libApproved = await awaitApproval(liResult.description)
+              active()
+              if (!libApproved) {
+                addMsg(agentMsg("Got it — what would you like to do instead?", ['Make another', 'Follow my movement']))
+                continue
+              }
+              const lr = await session.sendText(lt)
+              active()
+              addMsg(agentMsg(lr.content || ''))
+              dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
+              break
+            }
+
+            const li = liResult.intent
+
             if (li === 'exit') {
               savedPoses = await listPoses()
               active()
@@ -371,22 +399,23 @@ export function useRefinedDemoMachine() {
                 const ft = await listenOrInject()
                 active()
                 if (!ft.trim()) continue
-                // Show child transcript immediately so the user sees their
-                // words appear before the classify-intent + LLM roundtrip.
                 addMsg(childMsg(ft))
-                const ftIntent = await classifyIntent(ft, false)
+                const ftResult = await classifyIntent(ft, false)
                 active()
-                const ftApproved = await awaitApproval(ftIntent)
-                active()
-                if (!ftApproved) {
-                  addMsg(agentMsg(
-                    "Got it — how should I tweak the pose instead?",
-                  ))
+                if (ftResult.type === 'clarification') {
+                  addMsg(agentMsg(ftResult.question))
                   continue
                 }
-                if (ftIntent === 'follow_start') {
+                if (ftResult.type === 'immediate' && ftResult.intent === 'follow_start') {
                   followEscape = true
                   break
+                }
+                const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
+                const ftApproved = await awaitApproval(ftDesc)
+                active()
+                if (!ftApproved) {
+                  addMsg(agentMsg("Got it — how should I tweak the pose instead?"))
+                  continue
                 }
                 dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
                 const fr = await session.sendText(ft)
@@ -491,22 +520,23 @@ export function useRefinedDemoMachine() {
             const ft = await listenOrInject()
             active()
             if (!ft.trim()) continue
-            // Show child transcript immediately so the user sees their words
-            // appear before the classify-intent + LLM roundtrip.
             addMsg(childMsg(ft))
-            const ftIntent = await classifyIntent(ft, false)
+            const ftResult = await classifyIntent(ft, false)
             active()
-            const ftApproved = await awaitApproval(ftIntent)
-            active()
-            if (!ftApproved) {
-              addMsg(agentMsg(
-                "Got it — how should I tweak the pose instead?",
-              ))
+            if (ftResult.type === 'clarification') {
+              addMsg(agentMsg(ftResult.question))
               continue
             }
-            if (ftIntent === 'follow_start') {
+            if (ftResult.type === 'immediate' && ftResult.intent === 'follow_start') {
               followEscape = true
               break
+            }
+            const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
+            const ftApproved = await awaitApproval(ftDesc)
+            active()
+            if (!ftApproved) {
+              addMsg(agentMsg("Got it — how should I tweak the pose instead?"))
+              continue
             }
             dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
             const fr = await session.sendText(ft)
@@ -546,12 +576,6 @@ export function useRefinedDemoMachine() {
           continue
         }
 
-        // ── chat (general motion/conversation) ──
-        dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
-        const chatResult = await session.sendText(transcript)
-        active()
-        addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose']))
-        dispatch({ orbState: 'listening' })
       }
     } catch (err) {
       if (err === CANCELLED) return

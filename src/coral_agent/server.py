@@ -197,6 +197,7 @@ def _sync_sim_to_hardware() -> None:
 
 
 _router_prompt_cache: str | None = None
+_intent_classifier_prompt_cache: str | None = None
 
 
 def get_router_prompt() -> str:
@@ -204,6 +205,13 @@ def get_router_prompt() -> str:
     if _router_prompt_cache is None:
         _router_prompt_cache = (Path(__file__).parent / "prompts" / "router.md").read_text(encoding="utf-8")
     return _router_prompt_cache
+
+
+def get_intent_classifier_prompt() -> str:
+    global _intent_classifier_prompt_cache
+    if _intent_classifier_prompt_cache is None:
+        _intent_classifier_prompt_cache = (Path(__file__).parent / "prompts" / "intent_classifier.md").read_text(encoding="utf-8")
+    return _intent_classifier_prompt_cache
 
 
 @asynccontextmanager
@@ -698,33 +706,41 @@ class IntentRequest(BaseModel):
     follow_active: bool = False
 
 @app.post("/classify-intent")
-async def classify_intent_endpoint(req: IntentRequest) -> dict[str, str]:
-    """Use LLM to classify user's spoken intent for the refined demo."""
-    prompt = f"""You are an intent classifier for a child-friendly voice-controlled robot system.
+async def classify_intent_endpoint(req: IntentRequest) -> dict:
+    """Classify user intent into one of three categories for the refined demo.
 
-Classify the following message into exactly one of these intents:
-- follow_start: User wants the robot to follow/mirror/copy their body movements (e.g. "follow me", "mirror my movements", "copy me")
-- follow_stop: User wants to stop the robot from following (e.g. "stop following", "stop mirroring") — only relevant when follow_active is true
-- capture: User wants to capture/freeze/save their current body pose (e.g. "capture my pose", "take a picture", "snap this", "freeze", "capture")
-- library: User wants to see their saved poses (e.g. "show my poses", "my saved poses", "show library", "what poses do I have")
-- exit: User wants to quit or end the session (e.g. "exit", "quit", "I'm done", "stop", "bye")
-- chat: Any other request — motion commands, questions, pose adjustments, general conversation
-
-follow_active: {str(req.follow_active).lower()}
-Message: "{req.text}"
-
-Respond with ONLY the intent name, nothing else."""
-
-    response = openai.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        max_completion_tokens=20,
+    Returns one of:
+      {"type": "immediate", "intent": "follow_start|follow_stop|capture|library|exit"}
+      {"type": "clarification", "question": "<follow-up question>"}
+      {"type": "motion", "description": "<human-readable description of what the robot will do>"}
+    """
+    base_prompt = get_intent_classifier_prompt()
+    prompt = (
+        base_prompt.rstrip()
+        + f"\nfollow_active: {str(req.follow_active).lower()}\nMessage: \"{req.text}\""
     )
-    intent = response.choices[0].message.content.strip().lower()
-    valid = {"follow_start", "follow_stop", "capture", "library", "exit", "chat"}
-    if intent not in valid:
-        intent = "chat"
-    return {"intent": intent}
+
+    response = await asyncio.to_thread(
+        lambda: openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_completion_tokens=100,
+        )
+    )
+    try:
+        result = json.loads(response.choices[0].message.content)
+        if result.get("type") == "immediate" and result.get("intent") in {
+            "follow_start", "follow_stop", "capture", "library", "exit"
+        }:
+            return result
+        if result.get("type") == "clarification" and result.get("question"):
+            return result
+        if result.get("type") == "motion" and result.get("description"):
+            return result
+    except Exception:
+        pass
+    return {"type": "motion", "description": req.text}
 
 
 @app.get("/poses")

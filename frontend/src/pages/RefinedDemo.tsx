@@ -7,18 +7,6 @@ import {
 import { LiveStream } from './DummyStream'
 import './RefinedDemo.css'
 
-const INTENT_LABELS: Record<string, string> = {
-  follow_start: 'Follow Movement',
-  follow_stop: 'Stop Following',
-  capture: 'Capture Pose',
-  library: 'Show Poses',
-  exit: 'Exit Session',
-  chat: 'Chat / Motion Command',
-}
-
-function formatIntent(intent: string): string {
-  return INTENT_LABELS[intent] ?? intent
-}
 
 function RobotIllustration() {
   return (
@@ -295,8 +283,8 @@ export default function RefinedDemo() {
         <div className="rd-overlay">
           <div className="rd-overlay-card">
             <div className="rd-overlay-title">Is this right?</div>
-            <div className="rd-intent-label">Intent</div>
-            <div className="rd-intent-pill">{formatIntent(state.pendingIntent)}</div>
+            <div className="rd-intent-label">What I'll do</div>
+            <div className="rd-intent-pill">{state.pendingIntent}</div>
             <div className="rd-overlay-btns">
               <button className="rd-overlay-btn primary" onClick={approveIntent}>
                 Approve

@@ -457,36 +457,23 @@ export function sleep(ms: number): Promise<void> {
 }
 
 // Placeholder intent classifier — synchronous regex/keyword matcher wrapped
-// in a Promise so call sites don't change. This is intentionally dumb: the
-// final integration hasn't been decided yet, so keep it deterministic, cheap,
-// and easy to rip out. `follow_active` is used to disambiguate a bare "stop"
-// (follow_stop only when the robot is currently following).
-export async function classifyIntent(text: string, followActive: boolean): Promise<string> {
-  const t = text.toLowerCase()
+export type IntentResult =
+  | { type: 'immediate'; intent: string }
+  | { type: 'clarification'; question: string }
+  | { type: 'motion'; description: string }
 
-  // exit — end the session
-  if (/\b(exit|quit|good\s?bye|bye|leave|(i'?m|we'?re)\s+done|all\s+done|end\s+session)\b/.test(t)) {
-    return 'exit'
-  }
-
-  // follow_stop — either explicit ("stop following") or bare "stop" while following
-  if (/\bstop\s+(following|mirroring|copying|imitating|tracking)\b/.test(t)) return 'follow_stop'
-  if (followActive && /\bstop\b/.test(t)) return 'follow_stop'
-
-  // follow_start — mirror/copy/imitate my movement
-  if (/\b(follow|mirror|copy|imitate|track)\b/.test(t)) return 'follow_start'
-
-  // capture — snapshot / freeze the current pose
-  if (/\b(capture|snap|freeze|take\s+(?:a\s+)?(?:picture|photo|snapshot)|save\s+(?:my|this|the)\s+pose)\b/.test(t)) {
-    return 'capture'
-  }
-
-  // library — see saved poses
-  if (/\b(my\s+poses|library|saved\s+poses|show\s+(?:me\s+)?(?:my\s+)?poses|what\s+poses|see\s+(?:my\s+)?poses)\b/.test(t)) {
-    return 'library'
-  }
-
-  return 'chat'
+export async function classifyIntent(text: string, followActive: boolean): Promise<IntentResult> {
+  const res = await fetch('http://localhost:8000/classify-intent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, follow_active: followActive }),
+  })
+  if (!res.ok) return { type: 'motion', description: text }
+  const data = await res.json()
+  if (data.type === 'immediate' && data.intent) return data as IntentResult
+  if (data.type === 'clarification' && data.question) return data as IntentResult
+  if (data.type === 'motion' && data.description) return data as IntentResult
+  return { type: 'motion', description: text }
 }
 
 export async function listPoses(): Promise<string[]> {
