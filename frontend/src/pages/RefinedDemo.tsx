@@ -9,6 +9,44 @@ import { LiveStream } from './DummyStream'
 import RobotViewer from './RobotViewer'
 import './RefinedDemo.css'
 
+
+function RobotIllustration() {
+  return (
+    <div className="rd-robot">
+      <div className="rd-robot-neck-wrap">
+        <div className="rd-robot-antenna" />
+        <div className="rd-robot-neck" />
+      </div>
+      <div className="rd-robot-head">
+        <div className="rd-robot-eye" />
+        <div className="rd-robot-eye" />
+      </div>
+      <div className="rd-robot-torso-wrap">
+        <div className="rd-robot-torso">
+          <div className="rd-robot-chest">
+            <div className="rd-robot-bar" style={{ width: 6, height: 14 }} />
+            <div className="rd-robot-bar" style={{ width: 6, height: 26 }} />
+            <div className="rd-robot-bar" style={{ width: 6, height: 18 }} />
+            <div className="rd-robot-bar" style={{ width: 6, height: 10 }} />
+          </div>
+        </div>
+        <div className="rd-robot-arm rd-robot-arm-left">
+          <div className="rd-robot-joint" />
+          <div className="rd-robot-limb" />
+        </div>
+        <div className="rd-robot-arm rd-robot-arm-right">
+          <div className="rd-robot-joint" />
+          <div className="rd-robot-limb" />
+        </div>
+      </div>
+      <div className="rd-robot-legs">
+        <div className="rd-robot-leg" />
+        <div className="rd-robot-leg" />
+      </div>
+    </div>
+  )
+}
+
 export default function RefinedDemo() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -17,6 +55,8 @@ export default function RefinedDemo() {
     start,
     stop,
     injectText,
+    approveIntent,
+    rejectIntent,
     goToLibrary,
     goToExit,
     startAgain,
@@ -253,6 +293,24 @@ export default function RefinedDemo() {
         </div>
       )}
 
+      {/* Intent approval modal — placeholder gate before executing a branch. */}
+      {state.pendingIntent && (
+        <div className="rd-overlay">
+          <div className="rd-overlay-card">
+            <div className="rd-overlay-title">Is this right?</div>
+            <div className="rd-intent-label">What I'll do</div>
+            <div className="rd-intent-pill">{state.pendingIntent}</div>
+            <div className="rd-overlay-btns">
+              <button className="rd-overlay-btn primary" onClick={approveIntent}>
+                Approve
+              </button>
+              <button className="rd-overlay-btn secondary" onClick={rejectIntent}>
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
