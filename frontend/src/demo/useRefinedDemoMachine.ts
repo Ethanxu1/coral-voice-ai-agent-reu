@@ -235,7 +235,7 @@ export function useRefinedDemoMachine() {
         // finishing a sentence and the text appearing.
         addMsg(childMsg(transcript))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-        const intentResult = await classifyIntent(transcript, followActive)
+        const intentResult = await classifyIntent(transcript, followActive, msgs)
         active()
 
         // ── clarification: ask a follow-up, loop back ──
@@ -322,7 +322,7 @@ export function useRefinedDemoMachine() {
             // sees their words appear immediately.
             addMsg(childMsg(lt))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-            const liResult = await classifyIntent(lt, false)
+            const liResult = await classifyIntent(lt, false, msgs)
             active()
 
             if (liResult.type === 'clarification') {
@@ -395,7 +395,7 @@ export function useRefinedDemoMachine() {
                 active()
                 if (!ft.trim()) continue
                 addMsg(childMsg(ft))
-                const ftResult = await classifyIntent(ft, false)
+                const ftResult = await classifyIntent(ft, false, msgs)
                 active()
                 if (ftResult.type === 'clarification') {
                   addMsg(agentMsg(ftResult.question))
@@ -516,7 +516,7 @@ export function useRefinedDemoMachine() {
             active()
             if (!ft.trim()) continue
             addMsg(childMsg(ft))
-            const ftResult = await classifyIntent(ft, false)
+            const ftResult = await classifyIntent(ft, false, msgs)
             active()
             if (ftResult.type === 'clarification') {
               addMsg(agentMsg(ftResult.question))

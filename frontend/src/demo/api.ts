@@ -525,11 +525,31 @@ export type IntentResult =
   | { type: 'clarification'; question: string }
   | { type: 'motion'; description: string }
 
-export async function classifyIntent(text: string, followActive: boolean): Promise<IntentResult> {
+export interface ChatMsg {
+  role: 'agent' | 'child' | 'system'
+  text: string
+}
+
+function msgsToHistory(msgs: ChatMsg[]): { role: 'user' | 'assistant'; content: string }[] {
+  const out: { role: 'user' | 'assistant'; content: string }[] = []
+  for (const m of msgs) {
+    if (m.role === 'child') out.push({ role: 'user', content: m.text })
+    else if (m.role === 'agent') out.push({ role: 'assistant', content: m.text })
+    // 'system' messages (e.g. "Starting countdown…") are UI-only, skip them
+  }
+  return out
+}
+
+export async function classifyIntent(
+  text: string,
+  followActive: boolean,
+  msgs?: ChatMsg[],
+): Promise<IntentResult> {
+  const history = msgs ? msgsToHistory(msgs) : undefined
   const res = await fetch('http://localhost:8000/classify-intent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, follow_active: followActive }),
+    body: JSON.stringify({ text, follow_active: followActive, history }),
   })
   if (!res.ok) return { type: 'motion', description: text }
   const data = await res.json()

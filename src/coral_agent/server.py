@@ -747,6 +747,7 @@ async def demo_watch_for_action(timeout: float = 30.0) -> dict[str, Any]:
 class IntentRequest(BaseModel):
     text: str
     follow_active: bool = False
+    history: list[dict] | None = None  # [{"role": "user"|"assistant", "content": str}, ...]
 
 @app.post("/classify-intent")
 async def classify_intent_endpoint(req: IntentRequest) -> dict:
@@ -757,16 +758,19 @@ async def classify_intent_endpoint(req: IntentRequest) -> dict:
       {"type": "clarification", "question": "<follow-up question>"}
       {"type": "motion", "description": "<human-readable description of what the robot will do>"}
     """
-    base_prompt = get_intent_classifier_prompt()
-    prompt = (
-        base_prompt.rstrip()
-        + f"\nfollow_active: {str(req.follow_active).lower()}\nMessage: \"{req.text}\""
-    )
+    system_prompt = get_intent_classifier_prompt()
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    if req.history:
+        messages.extend(req.history)
+    messages.append({
+        "role": "user",
+        "content": f"follow_active: {str(req.follow_active).lower()}\nMessage: \"{req.text}\"",
+    })
 
     response = await asyncio.to_thread(
         lambda: openai.chat.completions.create(
             model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             response_format={"type": "json_object"},
             max_completion_tokens=100,
         )
