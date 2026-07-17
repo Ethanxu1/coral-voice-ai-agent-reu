@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useProDemoMachine, type ProState, type ProStatus } from '../demo/useProDemoMachine'
+import RobotModeToggle from '../components/RobotModeToggle'
 import { LiveStream } from './DummyStream'
 import './ProDemo.css'
 
@@ -52,6 +53,13 @@ export default function ProDemo() {
           {running && <button className="pro-btn" onClick={exit}>End</button>}
         </div>
       </header>
+
+      {/* Dev-only leg-mode/sim-hardware switch — ProDemo is the internal
+          testing tool, so this is the one page that needs it reachable
+          without going back to "/" first. */}
+      <div className="pro-devbar">
+        <RobotModeToggle />
+      </div>
 
       <main className="pro-stage">
         <Stage state={state} onSubmitText={submitText} onSkip={skip} />

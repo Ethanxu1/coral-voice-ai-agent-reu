@@ -10,11 +10,14 @@ import {
   mapFeatures,
   move,
   openActionSession,
+  playPose,
   playShutter,
+  resetPose,
   saveCurrentPose,
   sendAudioForTranscript,
   setRobotState,
   sleep,
+  type ServoCommand,
 } from './api'
 
 export type RefinedStage =
@@ -48,6 +51,12 @@ export interface RefinedState {
   flash: boolean
   error: string | null
   pendingIntent: string | null
+  // Index of the saved pose currently being performed on the end-session
+  // replay screen, or null when not replaying.
+  replayIdx: number | null
+  // True while the backend collision + fall checks run on a captured pose —
+  // drives the "Safety check…" badge over the sim panel.
+  safetyChecking: boolean
 }
 
 const INIT: RefinedState = {
@@ -63,6 +72,8 @@ const INIT: RefinedState = {
   flash: false,
   error: null,
   pendingIntent: null,
+  replayIdx: null,
+  safetyChecking: false,
 }
 
 function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
@@ -132,6 +143,45 @@ export function useRefinedDemoMachine() {
     dispatch({ pendingIntent: null })
     resolve?.(false)
   }, [])
+
+  // End-session replay: strike every saved pose in turn so the child sees each
+  // move they taught. Highlight the move, play it on the robot, hold so it's
+  // visible, reset to stand, then move on. Runs on its own cancellation token
+  // (bumped by stop()/goToExit()/run()) so it halts the moment the user leaves
+  // the exit screen.
+  const runExitReplay = useCallback(async (names: string[]) => {
+    abortCurrentCapture()
+    const token = ++tokenRef.current
+    const alive = () => tokenRef.current === token
+
+    if (!names.length) {
+      dispatch({ replayIdx: null })
+      return
+    }
+
+    await setRobotState('IDLE')
+    // Begin from a clean stand, then chain the moves directly (no reset between).
+    await resetPose().catch(() => {})
+    if (!alive()) return
+    await sleep(700)
+
+    for (let i = 0; i < names.length; i++) {
+      if (!alive()) return
+      dispatch({ replayIdx: i, statusText: `Performing "${names[i]}"` })
+      try {
+        // Transition straight from the current sim pose into the next move —
+        // no reset to stand in between.
+        await playPose(names[i], 1200)
+      } catch {
+        // A pose that fails to play (e.g. deleted) shouldn't stall the show.
+      }
+      if (!alive()) return
+      await sleep(2400) // hold the pose so it's clearly visible
+    }
+
+    if (!alive()) return
+    dispatch({ replayIdx: null, statusText: '' })
+  }, [abortCurrentCapture])
 
   const run = useCallback(async () => {
     // Kill any capture left over from a prior run() invocation (strict-mode
@@ -207,6 +257,36 @@ export function useRefinedDemoMachine() {
         approvalResolverRef.current = resolve
         dispatch({ pendingIntent: description })
       })
+
+    // Execute a captured pose's servo commands behind the backend safety
+    // checks (kinematic collision clamp + dynamics fall check), holding a
+    // visible "Safety check…" state for 1.5s while they run, then reporting
+    // the verdict into the chat. If the fall check tripped, the server
+    // executed 0% of the move — returns false so the caller can bail out of
+    // the capture flow instead of pretending the pose landed.
+    const moveWithSafetyCheck = async (commands: ServoCommand[]): Promise<boolean> => {
+      dispatch({ safetyChecking: true, orbState: 'thinking', statusText: 'Running safety check…' })
+      const [result] = await Promise.all([
+        move(commands).catch(() => null),
+        sleep(1500),
+      ])
+      dispatch({ safetyChecking: false })
+      if (result && result.safety.fallBlocked) {
+        addMsg(agentMsg(
+          "Whoa — my safety check says that pose would tip me over, so I didn't do it! Let's try a different one.",
+          ['Try again', 'Follow my movement'],
+        ))
+        return false
+      }
+      if (result && result.safety.collisionClamped) {
+        addMsg(sysMsg(
+          `Safety check: pulled the move back to ${Math.round(result.safety.safeFraction * 100)}% to avoid a collision.`,
+        ))
+      } else {
+        addMsg(sysMsg('Safety check passed!'))
+      }
+      return true
+    }
 
     try {
       while (true) {
@@ -327,6 +407,7 @@ export function useRefinedDemoMachine() {
           savedPoses = await listPoses()
           active()
           dispatch({ stage: 'EXIT_CONFIRM', savedPoses })
+          runExitReplay(savedPoses)
           return
         }
 
@@ -380,6 +461,7 @@ export function useRefinedDemoMachine() {
               savedPoses = await listPoses()
               active()
               dispatch({ stage: 'EXIT_CONFIRM', savedPoses })
+              runExitReplay(savedPoses)
               return
             }
             if (li === 'capture') {
@@ -412,8 +494,14 @@ export function useRefinedDemoMachine() {
                 dispatch({ stage: 'LIBRARY', savedPoses })
                 continue
               }
-              await move(mapResult.commands).catch(() => {})
+              const moved = await moveWithSafetyCheck(mapResult.commands)
               active()
+              if (!moved) {
+                // Fall check blocked the move (0% executed) — back to the
+                // library prompt instead of fine-tuning a pose that never landed.
+                dispatch({ stage: 'LIBRARY', savedPoses, orbState: 'listening' })
+                continue
+              }
               addMsg(sysMsg('Pose captured!'))
               addMsg(agentMsg('Awesome pose! Want to fine-tune it, or save it as is?', ['Fine-tune it', 'Save it']))
               dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: 'listening', statusText: 'Listening for tweaks…' })
@@ -537,8 +625,14 @@ export function useRefinedDemoMachine() {
               continue
             }
 
-            await move(mapResult.commands).catch(() => {})
+            const moved = await moveWithSafetyCheck(mapResult.commands)
             active()
+            if (!moved) {
+              // Fall check blocked the move (0% executed) — back to listening
+              // instead of fine-tuning a pose that never landed.
+              dispatch({ stage: currentStage, orbState: 'listening' })
+              continue
+            }
             capturedFrame = mapResult.imageB64
             addMsg(sysMsg('Pose captured!'))
           }
@@ -624,7 +718,7 @@ export function useRefinedDemoMachine() {
       abortCurrentCapture()
       session.close()
     }
-  }, [abortCurrentCapture])
+  }, [abortCurrentCapture, runExitReplay])
 
   const stop = useCallback(() => {
     tokenRef.current++
@@ -642,13 +736,14 @@ export function useRefinedDemoMachine() {
     dispatch({ stage: 'LIBRARY', savedPoses: names })
   }, [abortCurrentCapture])
 
-  const goToExit = useCallback(() => {
+  const goToExit = useCallback(async () => {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
-    setRobotState('IDLE')
-    dispatch({ stage: 'EXIT_CONFIRM' })
-  }, [abortCurrentCapture])
+    const names = await listPoses()
+    dispatch({ stage: 'EXIT_CONFIRM', savedPoses: names, replayIdx: null })
+    runExitReplay(names)
+  }, [abortCurrentCapture, runExitReplay])
 
   const startAgain = useCallback(() => {
     run()

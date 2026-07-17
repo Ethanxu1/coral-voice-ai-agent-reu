@@ -203,7 +203,12 @@ class AiNexSimulator:
 
         with self._lock:
             self.data.ctrl[actuator_id] = position
-        logger.debug(f"Set {joint_name} to {position:.3f} rad")
+        # TRACE, not DEBUG: this fires once per joint per interpolation sub-step
+        # (every ~20ms during a move, or ~50ms per joint during Follow), so at
+        # DEBUG it drowns out actually-useful DEBUG/INFO logs (e.g. map-features'
+        # leg_mode / bucket-classification lines). loguru's default level is
+        # DEBUG, so TRACE is silent unless explicitly enabled (LOGURU_LEVEL=TRACE).
+        logger.trace(f"Set {joint_name} to {position:.3f} rad")
 
     def move_joint(self, joint_name: str, delta: float) -> float:
         current = self.get_joint_position(joint_name)
@@ -434,9 +439,13 @@ class AiNexSimulator:
         float32s — [x, y, z, qw, qx, qy, qz]. MuJoCo has already resolved forward
         kinematics into geom_xpos/geom_xmat, so the browser only applies these
         transforms to pre-loaded meshes. Coordinates are MuJoCo world frame (Z-up).
+
+        A trailing 3 float32s carry the whole-robot center of mass in the same
+        world frame (MuJoCo's subtree_com for body 0, i.e. the mass-weighted
+        average over every body). The browser uses this for a balance readout.
         """
         n = len(self._render_geom_ids)
-        buf = np.empty((n, 7), dtype=np.float32)
+        buf = np.empty(n * 7 + 3, dtype=np.float32)
         quat = np.empty(4, dtype=np.float64)
         with self._lock:
             # Refresh forward kinematics so geom_xpos/geom_xmat reflect the
@@ -446,9 +455,11 @@ class AiNexSimulator:
             # interleave with the stepping loop under the same lock.
             mujoco.mj_forward(self.model, self.data)
             for row, gid in enumerate(self._render_geom_ids):
-                buf[row, 0:3] = self.data.geom_xpos[gid]
+                o = row * 7
+                buf[o:o + 3] = self.data.geom_xpos[gid]
                 mujoco.mju_mat2Quat(quat, self.data.geom_xmat[gid])
-                buf[row, 3:7] = quat
+                buf[o + 3:o + 7] = quat
+            buf[n * 7:n * 7 + 3] = self.data.subtree_com[0]
         return buf.tobytes()
 
     def start_viewer(self, on_close: Callable[[], None] | None = None) -> None:

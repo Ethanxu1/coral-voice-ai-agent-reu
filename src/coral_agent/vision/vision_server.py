@@ -226,6 +226,9 @@ async def map_features(leg_mode: str = "retarget"):
       "retarget"  live pelvis-frame hip pitch/roll + knee bend (default).
       "legacy"    the old anatomically-wrong atan2 mapping (hip_yaw ← swing).
       "classify"  MobileNetV3 → snap legs to the matching canned pose's stance.
+      "buckets"   classify knee/ankle bend depth and hip yaw into discrete
+                  stances (low/stand/high, in/stand/out) and snap to each
+                  bucket's fixed target.
     """
     if leg_mode not in leg_modes.LEG_MODES:
         raise HTTPException(
@@ -233,10 +236,20 @@ async def map_features(leg_mode: str = "retarget"):
             detail=f"unknown leg_mode '{leg_mode}'; expected one of {leg_modes.LEG_MODES}",
         )
 
+    # Unconditional — logs every /map-features call's leg_mode regardless of
+    # which branch below runs, so "is buckets actually selected?" is answerable
+    # from this one line instead of inferring it from the resulting joint values
+    # (e.g. non-zero/varying hip_roll is a signature of "retarget", since
+    # "buckets" always pins hip_roll to stand).
+    logger.info("map-features: leg_mode=%s", leg_mode)
+
     if _latest_jpeg is None:
         raise HTTPException(status_code=503, detail="no camera frame available yet")
 
     body = _latest_landmarks or []
+    # _latest_jpeg already has the knee-bend/hip-yaw angle arcs baked in — drawn
+    # continuously on every live frame by PoseEstimator.process_frame, not just
+    # on this single capture (see pose_estimator._draw_bucket_angle_arcs).
     image_b64 = base64.b64encode(_latest_jpeg).decode("ascii")
 
     # Debug: log the raw knee visibilities so we can see why legs did/didn't
@@ -270,10 +283,21 @@ async def map_features(leg_mode: str = "retarget"):
 
     if leg_mode != "retarget":
         # Arms keep the live retargeting; replace the pelvis-frame legs with the
-        # selected mode's leg pulses (authored in hardware units → sim radians).
+        # selected mode's legs.
         targets = leg_modes.strip_legs(targets)
         if leg_mode == "legacy":
-            leg_pulses = leg_modes.legacy_leg_pulses(body)
+            # Authored in hardware units → convert to sim radians.
+            targets.update(leg_modes.leg_pulses_to_targets(leg_modes.legacy_leg_pulses(body)))
+        elif leg_mode == "buckets":
+            # Bucket tables are already authored in sim radians. Hip yaw is
+            # leg-independent, so knee_ankle + each side's hip yaw are logged
+            # separately.
+            knee_ankle, hip_yaw_l, hip_yaw_r = leg_modes.classify_buckets(body)
+            logger.info(
+                "buckets: knee_ankle=%s hip_yaw_l=%s hip_yaw_r=%s",
+                knee_ankle, hip_yaw_l, hip_yaw_r,
+            )
+            targets.update(leg_modes.combine_bucket_targets(knee_ankle, hip_yaw_l, hip_yaw_r))
         else:  # "classify"
             pose_class, probs = await _classify_clean_frame()
             conf = probs.get(pose_class) if isinstance(probs, dict) else None
@@ -283,7 +307,7 @@ async def map_features(leg_mode: str = "retarget"):
                 f" ({conf:.1f}%)" if isinstance(conf, (int, float)) else "",
             )
             leg_pulses = leg_modes.classify_leg_pulses(pose_class)
-        targets.update(leg_modes.leg_pulses_to_targets(leg_pulses))
+            targets.update(leg_modes.leg_pulses_to_targets(leg_pulses))
 
     # Mode-independent knee gate: if the knees aren't confidently visible, stand
     # the legs regardless of leg_mode. compute_joint_targets already does this for
@@ -292,6 +316,13 @@ async def map_features(leg_mode: str = "retarget"):
     if not knees_confidently_visible(body):
         targets = leg_modes.strip_legs(targets)
         targets.update(leg_modes.stand_leg_targets())
+
+    # Definitive check: the exact leg-only values about to be dispatched, so we
+    # can tell a computation bug (wrong values here) apart from a downstream
+    # dispatch/rendering issue (right values here, wrong result in the sim) or
+    # a mix-up with arm motion (which legitimately moves live every capture).
+    leg_targets_final = {k: round(v, 4) for k, v in targets.items() if k in leg_modes.LEG_JOINTS}
+    logger.info("map-features: final leg targets = %s", leg_targets_final)
 
     commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
     return {
@@ -355,6 +386,18 @@ async def capture_stable_position_frozen():
     if frozen is None:
         raise HTTPException(status_code=409, detail="no frozen frame")
     return frozen.to_pose_dict()
+
+
+@app.post("/settings/angle-arcs")
+async def set_angle_arcs(enabled: bool = True):
+    """Toggle the knee-bend/hip-yaw debug angle arcs drawn on every live frame
+    (see pose_estimator._draw_bucket_angle_arcs). Applies immediately to the
+    running vision loop — no restart needed, unlike most other changes here."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    _estimator.show_angle_arcs = enabled
+    logger.info("angle-arcs: enabled=%s", enabled)
+    return {"show_angle_arcs": enabled}
 
 
 @app.get("/health")

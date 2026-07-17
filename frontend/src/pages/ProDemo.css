@@ -37,6 +37,20 @@
 .pro-back:hover { color: var(--text); }
 .pro-title { font-size: 14px; font-weight: 700; letter-spacing: 0.2px; }
 
+/* Dev-only leg-mode/sim-hardware switch strip (RobotModeToggle keeps its own
+   App.css styling — this just contains it within ProDemo's dark theme). */
+.pro-devbar {
+  padding: 8px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.pro-devbar .robot-mode-toggle {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  max-width: 420px;
+}
+
 .pro-rounds { display: flex; align-items: center; gap: 8px; }
 .pro-round-dot {
   width: 9px; height: 9px; border-radius: 50%;

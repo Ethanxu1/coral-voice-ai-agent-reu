@@ -6,7 +6,7 @@
 // /classify returns.
 
 import { ACTION_WS, SPEAKER_BASE } from './config'
-import { getFeaturesBase, getRobotBase, getRobotConfig } from './robotConfig'
+import { getFeaturesBase, getPiBase, getRobotBase, getRobotConfig, getSimBase } from './robotConfig'
 import type { LegMode } from './robotConfig'
 
 /** One servo target: Hiwonder id + pulse (0–1000) + move time. */
@@ -94,28 +94,84 @@ export async function mapFeatures(legMode?: LegMode): Promise<MapFeaturesResult>
   }
 }
 
+// Toggle the knee-bend/hip-yaw debug angle arcs drawn on every live frame by
+// the Mac vision server (see pose_estimator._draw_bucket_angle_arcs). Applies
+// immediately, no restart needed. Best-effort like setRobotState — in
+// hardware mode this endpoint doesn't exist on the Pi, so a failure here
+// shouldn't block the UI toggle from flipping locally.
+export async function setAngleArcsEnabled(enabled: boolean): Promise<void> {
+  try {
+    await fetch(`${getFeaturesBase()}/settings/angle-arcs?enabled=${enabled}`, {
+      method: 'POST',
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
+// Safety-check outcome attached to /move responses. `fallBlocked` means the
+// dynamics shadow-check saw the robot topple, so the server executed 0% of
+// the move; `collisionClamped` means the kinematic checker pulled the motion
+// back to `safeFraction` of the commanded target.
+export interface MoveSafety {
+  fallBlocked: boolean
+  collisionClamped: boolean
+  safeFraction: number
+  badPairs: string[]
+}
+
+export interface MoveResult {
+  executed: boolean
+  safety: MoveSafety
+}
+
+const SAFE_MOVE: MoveSafety = {
+  fallBlocked: false,
+  collisionClamped: false,
+  safeFraction: 1,
+  badPairs: [],
+}
+
 // Drive the robot/sim with raw servo commands (from mapFeatures). No-op safe if
-// the command list is empty.
-export async function move(commands: ServoCommand[]): Promise<void> {
-  if (commands.length === 0) return
+// the command list is empty. Returns the server's safety verdict so callers
+// (the refined demo) can report a blocked move to the user.
+export async function move(commands: ServoCommand[]): Promise<MoveResult> {
+  if (commands.length === 0) return { executed: false, safety: SAFE_MOVE }
   const res = await fetch(`${getRobotBase()}/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(commands),
   })
   if (!res.ok) throw new Error(`move failed: ${res.status}`)
+  const data = await res.json().catch(() => null)
+  const s = data?.safety
+  return {
+    executed: data?.status !== 'blocked',
+    safety: s
+      ? {
+          fallBlocked: s.fall_blocked === true,
+          collisionClamped: s.collision_clamped === true,
+          safeFraction: typeof s.safe_fraction === 'number' ? s.safe_fraction : 1,
+          badPairs: Array.isArray(s.bad_pairs) ? s.bad_pairs : [],
+        }
+      : SAFE_MOVE, // Pi robot_server's /move has no safety block — treat as safe
+  }
 }
 
 // Apply a raw {joint: hardware_pulse} pose to the sim (testing tool). Pulses are
 // the same hardware units authored in motions.py; the server converts them to sim
-// radians. Sim only — always hits the main Mac server, not the Pi.
+// radians. Sim only — always hits the main Mac server, not the Pi (getSimBase
+// ignores the sim/hardware toggle; the Pi has no /set-pose).
+// `skipCollisionCheck` applies the pose exactly as authored, bypassing the
+// server's collision shadow-roll (joint limits still clamp).
 export async function setPose(
   pulses: Record<string, number>,
+  skipCollisionCheck = false,
 ): Promise<{ applied: string[]; skipped: string[] }> {
-  const res = await fetch(`${getRobotBase()}/set-pose`, {
+  const res = await fetch(`${getSimBase()}/set-pose`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pulses }),
+    body: JSON.stringify({ pulses, skip_collision_check: skipCollisionCheck }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
@@ -123,6 +179,50 @@ export async function setPose(
   }
   const data = await res.json()
   return { applied: data.applied ?? [], skipped: data.skipped ?? [] }
+}
+
+/** joint name → Hiwonder servo id (mirrors the Pi server's SERVO_ID). */
+export const SERVO_ID: Record<string, number> = {
+  l_ank_roll: 1, r_ank_roll: 2,
+  l_ank_pitch: 3, r_ank_pitch: 4,
+  l_knee: 5, r_knee: 6,
+  l_hip_pitch: 7, r_hip_pitch: 8,
+  l_hip_roll: 9, r_hip_roll: 10,
+  l_hip_yaw: 11, r_hip_yaw: 12,
+  l_sho_pitch: 13, r_sho_pitch: 14,
+  l_sho_roll: 15, r_sho_roll: 16,
+  l_el_pitch: 17, r_el_pitch: 18,
+  l_el_yaw: 19, r_el_yaw: 20,
+  l_gripper: 21, r_gripper: 22,
+  head_pan: 23, head_tilt: 24,
+}
+
+// Play a raw {joint: hardware_pulse} pose on the physical robot via the Pi's
+// minimal /move endpoint (testing tool). Pulses go to the hardware as-is (the
+// Pi clamps to each servo's safe range); the response returns only after the
+// motion finishes. Always hits the Pi, regardless of the sim/hardware toggle.
+export async function movePulses(
+  pulses: Record<string, number>,
+  durationMs: number,
+): Promise<{ count: number }> {
+  const commands: ServoCommand[] = Object.entries(pulses)
+    .filter(([name]) => SERVO_ID[name] !== undefined)
+    .map(([name, position]) => ({
+      servo_id: SERVO_ID[name],
+      position,
+      duration_ms: durationMs,
+    }))
+  const res = await fetch(`${getPiBase()}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(commands),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(`robot move failed: ${res.status} ${body?.detail ?? ''}`.trim())
+  }
+  const data = await res.json().catch(() => null)
+  return { count: data?.count ?? commands.length }
 }
 
 export async function watchForAction(timeoutS: number): Promise<{ detected: boolean }> {
@@ -574,6 +674,16 @@ export async function saveCurrentPose(name: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
+}
+
+// Strike a saved pose directly by name (no LLM). Used by the end-session replay.
+export async function playPose(name: string, durationMs = 1000): Promise<void> {
+  const res = await fetch('http://localhost:8000/poses/play', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, duration_ms: durationMs }),
+  })
+  if (!res.ok) throw new Error(`play pose failed: ${res.status}`)
 }
 
 // Short camera-shutter blip via WebAudio (no asset needed).

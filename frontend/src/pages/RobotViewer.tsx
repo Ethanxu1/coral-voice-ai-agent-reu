@@ -33,6 +33,15 @@ function bakeMeshOffset(geo: THREE.BufferGeometry, g: GeomInfo) {
 
 // Wire layout per geom: [x, y, z, qw, qx, qy, qz] (see get_geom_poses).
 const FLOATS_PER_GEOM = 7
+// Trailing [x, y, z] after all geoms: whole-robot center of mass (subtree_com[0]).
+const COM_FLOATS = 3
+
+// How far the ground-projected COM can drift from the world origin before we
+// flag it as a balance risk. This only works because the robot's stance never
+// translates in this sim (no walking) — world origin ≈ center of its support
+// polygon. Thresholds are placeholders (no measured foot-polygon geometry).
+const COM_WARN_M = 0.03
+const COM_DANGER_M = 0.06
 
 // The server sends mesh_url as a root-relative path (/assets/...), which would
 // otherwise resolve against the Vite dev origin (5173) and hand STLLoader the
@@ -90,6 +99,10 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
   const posesRef = useRef<Float32Array | null>(null)
+  // Ground-projected (x, y) distance of the whole-robot COM from the world
+  // origin, in meters. Polled off posesRef on a slow timer — no need to
+  // re-render at the pose stream's full 30fps for a text readout.
+  const [comDeviance, setComDeviance] = useState<number | null>(null)
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -145,6 +158,22 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
     }
   }, [])
 
+  useEffect(() => {
+    if (geometries.length === 0) return
+    const comOffset = geometries.length * FLOATS_PER_GEOM
+    const id = setInterval(() => {
+      const poses = posesRef.current
+      if (!poses || poses.length < comOffset + COM_FLOATS) return
+      const comX = poses[comOffset]
+      const comY = poses[comOffset + 1]
+      setComDeviance(Math.hypot(comX, comY))
+    }, 150)
+    return () => clearInterval(id)
+  }, [geometries.length])
+
+  const comColor =
+    comDeviance == null ? '#94a3b8' : comDeviance > COM_DANGER_M ? '#f87171' : comDeviance > COM_WARN_M ? '#fbbf24' : '#4ade80'
+
   return (
     <div
       style={
@@ -171,6 +200,31 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
             ← Back
           </Link>
           <span style={{ opacity: 0.7 }}>MuJoCo viewer · {status}</span>
+        </div>
+      )}
+
+      {!embedded && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1,
+            top: 12,
+            right: 12,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 10px',
+            borderRadius: 6,
+            background: 'rgba(21, 21, 26, 0.7)',
+            color: '#cbd5e1',
+            font: '12px ui-monospace, Menlo, monospace',
+          }}
+        >
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: comColor, flexShrink: 0 }} />
+          <span>
+            CoM Δ from origin:{' '}
+            {comDeviance == null ? '—' : `${(comDeviance * 100).toFixed(1)} cm`}
+          </span>
         </div>
       )}
 

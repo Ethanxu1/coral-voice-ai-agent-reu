@@ -18,6 +18,7 @@ from mediapipe.tasks.python.vision import drawing_utils as mp_drawing
 
 from . import geometry
 from .calibration import CalibrationManager, CalibrationState
+from .leg_modes import raw_bucket_readouts
 from .smpl_fit import UserShape
 
 # Model asset paths (downloaded on first run)
@@ -446,6 +447,115 @@ def _draw_skeleton_from_dicts(frame: np.ndarray, landmarks: list[dict]) -> None:
             cv2.circle(frame, (px, py), 5, color, -1)
 
 
+_ANGLE_VIS_THRESHOLD = 0.3
+
+
+def _draw_angle_arc(
+    frame: np.ndarray,
+    vertex_px: tuple[int, int],
+    ray1_px: tuple[int, int],
+    ray2_px: tuple[int, int],
+    label: str,
+    color: tuple[int, int, int],
+    radius: int = 30,
+) -> None:
+    """Draw an arc at `vertex_px` spanning the angle between the two rays to
+    ray1_px/ray2_px, plus a degree label near the arc's midpoint.
+
+    The arc's shape reflects the 2D screen-space angle between the two rays; for
+    knee bend (a genuinely 3D quantity, foreshortened by the camera) the arc is
+    only an approximation, so the label always shows the real computed value
+    from leg_modes.raw_bucket_readouts — the arc is just a visual pointer to
+    which two segments that value sits between.
+    """
+    vx, vy = vertex_px
+    a1 = math.degrees(math.atan2(ray1_px[1] - vy, ray1_px[0] - vx))
+    a2 = math.degrees(math.atan2(ray2_px[1] - vy, ray2_px[0] - vx))
+    # Normalize to the shorter arc between the two ray angles (cv2.ellipse
+    # sweeps start->end increasing, so we need start < end with span <= 180).
+    diff = (a2 - a1 + 180) % 360 - 180
+    start, end = (a1, a1 + diff) if diff >= 0 else (a1 + diff, a1)
+
+    cv2.line(frame, vertex_px, ray1_px, color, 1)
+    cv2.line(frame, vertex_px, ray2_px, color, 1)
+    cv2.ellipse(frame, vertex_px, (radius, radius), 0, start, end, color, 2)
+
+    mid = math.radians((start + end) / 2)
+    lx = int(vx + (radius + 16) * math.cos(mid))
+    ly = int(vy + (radius + 16) * math.sin(mid))
+    cv2.putText(frame, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
+    cv2.putText(frame, label, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+
+def _draw_hip_yaw_guide(
+    frame: np.ndarray,
+    hip_px: tuple[int, int],
+    knee_px: tuple[int, int],
+    sho_px: tuple[int, int],
+    bucket: str,
+    color: tuple[int, int, int],
+) -> None:
+    """Visualize the positional hip-yaw decision: a horizontal ruler at the
+    knee's height with boundary posts at the hip-x (in|stand) and shoulder-x
+    (stand|out), the knee's x marked between them, labeled with the bucket.
+    Mirrors _hip_yaw_bucket_side's "where does the knee sit horizontally"
+    comparison directly.
+    """
+    y = knee_px[1]
+    hip_x, sho_x, knee_x = hip_px[0], sho_px[0], knee_px[0]
+    x_lo, x_hi = min(hip_x, sho_x, knee_x) - 14, max(hip_x, sho_x, knee_x) + 14
+
+    cv2.line(frame, (x_lo, y), (x_hi, y), color, 1)          # ruler
+    for bx in (hip_x, sho_x):                                 # boundary posts
+        cv2.line(frame, (bx, y - 8), (bx, y + 8), color, 1)
+    cv2.circle(frame, (knee_x, y), 5, color, -1)             # knee position
+
+    label = f"yaw:{bucket}"
+    cv2.putText(frame, label, (x_lo, y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
+    cv2.putText(frame, label, (x_lo, y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+
+def _draw_bucket_angle_arcs(frame: np.ndarray, body_landmarks: list[dict]) -> None:
+    """Overlay the two quantities leg_modes.py's "buckets" leg_mode classifies
+    on, for both legs: the knee-bend 3D angle (arc + degree label at the knee)
+    and the hip-yaw horizontal decision (ruler + boundary posts at the hip).
+
+    Purely a debug/live visualization on the video feed — never affects
+    classification, which stays entirely in leg_modes.py. Skips any component
+    whose landmarks aren't confidently visible, or whose value couldn't be
+    computed at all (see leg_modes.raw_bucket_readouts).
+    """
+    h, w = frame.shape[:2]
+
+    def px(idx: int) -> Optional[tuple[int, int]]:
+        if idx >= len(body_landmarks):
+            return None
+        lm = body_landmarks[idx]
+        if lm.get("visibility", 0.0) < _ANGLE_VIS_THRESHOLD:
+            return None
+        return (int(lm["x"] * w), int(lm["y"] * h))
+
+    readouts = raw_bucket_readouts(body_landmarks)
+
+    # (side prefix, hip idx, knee idx, ankle idx, shoulder idx)
+    sides = (
+        ("l", geometry.LEFT_HIP, geometry.LEFT_KNEE, geometry.LEFT_ANKLE, geometry.LEFT_SHOULDER),
+        ("r", geometry.RIGHT_HIP, geometry.RIGHT_KNEE, geometry.RIGHT_ANKLE, geometry.RIGHT_SHOULDER),
+    )
+    for side, hip_i, knee_i, ankle_i, sho_i in sides:
+        hip_px, knee_px, ankle_px, sho_px = px(hip_i), px(knee_i), px(ankle_i), px(sho_i)
+
+        knee_deg = readouts[f"knee_bend_{side}_deg"]
+        if knee_deg is not None and hip_px and knee_px and ankle_px:
+            _draw_angle_arc(
+                frame, knee_px, hip_px, ankle_px, f"{knee_deg:.0f}deg", color=(0, 255, 136)
+            )
+
+        yaw_bucket = readouts[f"hip_yaw_{side}_bucket"]
+        if yaw_bucket is not None and hip_px and knee_px and sho_px:
+            _draw_hip_yaw_guide(frame, hip_px, knee_px, sho_px, yaw_bucket, color=(0, 204, 255))
+
+
 def _default_smpl_fit_hook(frames: list[list[dict]]) -> Optional[UserShape]:
     """Run the SMPL β fit, swallowing common opt-in failures.
 
@@ -499,6 +609,12 @@ class PoseEstimator:
         self._frame_height = 480
         self._running = False
         self.stability = StabilityCapture(fit_hook=_default_smpl_fit_hook)
+        # Debug overlay toggle: draw the knee-bend/hip-yaw angle arcs (see
+        # _draw_bucket_angle_arcs) on every live frame. Off by default — this
+        # is a dev diagnostic, and the video feed is also shown on the kid-facing
+        # demo pages, so it shouldn't clutter the view unless explicitly enabled.
+        # Set directly (vision_server's /settings/angle-arcs flips it live).
+        self.show_angle_arcs = False
 
     @property
     def user_shape(self) -> Optional[UserShape]:
@@ -703,6 +819,8 @@ class PoseEstimator:
                     entry["zw"] = round(fzw, 5)
                 body_landmarks.append(entry)
             self._draw_pose_skeleton(overlay, raw_pose_lms)
+            if self.show_angle_arcs:
+                _draw_bucket_angle_arcs(overlay, body_landmarks)
 
         # Solve head pose: prefer torso-relative from world landmarks (decouples
         # head from torso rotation); fall back to face-PnP when shoulders/hips

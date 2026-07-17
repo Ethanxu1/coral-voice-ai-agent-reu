@@ -142,8 +142,15 @@ export default function RefinedDemo() {
             </div>
           )}
 
-          {state.stage === 'CAPTURED' && (
+          {state.stage === 'CAPTURED' && !state.safetyChecking && (
             <div className="rd-captured-badge">Pose captured!</div>
+          )}
+
+          {state.safetyChecking && (
+            <div className="rd-safety-badge">
+              <span className="rd-safety-spinner" />
+              Safety check…
+            </div>
           )}
 
           {state.flash && <div className="rd-flash" />}
@@ -238,26 +245,44 @@ export default function RefinedDemo() {
       {state.stage === 'EXIT_CONFIRM' && (
         <div className="rd-overlay">
           <div className="rd-overlay-card">
-            <div className="rd-overlay-title">End Session</div>
+            <div className="rd-overlay-title">
+              {state.savedPoses.length > 0 ? 'Here are the moves you taught me!' : 'End Session'}
+            </div>
             <div className="rd-overlay-blurb">
               You might be wondering how I knew which move to do. I have a special
               machine that tells me where your arms and legs are in the picture,
               and then I use that to make my arms and legs match that pose!
             </div>
+
+            {state.savedPoses.length > 0 && (
+              <>
+                {/* Live sim so the child sees the robot strike each saved move. */}
+                <div className="rd-exit-stage">
+                  <RobotViewer embedded />
+                  <div className="rd-exit-stage-caption">
+                    {state.replayIdx !== null
+                      ? `Performing "${state.savedPoses[state.replayIdx]}" · ${state.replayIdx + 1} of ${state.savedPoses.length}`
+                      : "That's every move you taught me!"}
+                  </div>
+                </div>
+                <div className="rd-exit-poses">
+                  {state.savedPoses.map((name, i) => (
+                    <span
+                      key={name}
+                      className={`rd-exit-pose-tag${i === state.replayIdx ? ' rd-exit-pose-tag-active' : ''}`}
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+
             <div className="rd-overlay-subtitle">
               {state.savedPoses.length > 0
                 ? `You saved ${state.savedPoses.length} pose${state.savedPoses.length !== 1 ? 's' : ''} today.`
                 : "You didn't save any poses — come back and try again!"}
             </div>
-            {state.savedPoses.length > 0 && (
-              <div className="rd-exit-poses">
-                {state.savedPoses.map((name) => (
-                  <span key={name} className="rd-exit-pose-tag">
-                    {name}
-                  </span>
-                ))}
-              </div>
-            )}
             <div className="rd-overlay-btns">
               <button
                 className="rd-overlay-btn primary"
