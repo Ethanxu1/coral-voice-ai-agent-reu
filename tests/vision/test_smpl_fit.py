@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from coral_agent.vision.smpl_fit import (
+from vision.smpl_fit import (
     _BLAZE_TO_SMPL,
     _average_world_landmarks,
     _visible_mask,
@@ -72,7 +72,7 @@ def smpl_model():
     """Load SMPL or skip the entire module if anything in the stack is missing."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("smplx")
-    from coral_agent.vision.smpl_loader import SMPLWeightsMissingError, load_smpl
+    from vision.smpl_loader import SMPLWeightsMissingError, load_smpl
     try:
         model = load_smpl(num_betas=10, device="cpu")
     except SMPLWeightsMissingError as e:
@@ -105,7 +105,7 @@ def test_smpl_betas_roundtrip(smpl_model):
     on CPU with a tight iteration budget. The point is to verify the pipeline
     converges in the right direction, not to validate SMPL itself.
     """
-    from coral_agent.vision.smpl_fit import fit_betas
+    from vision.smpl_fit import fit_betas
 
     model, torch = smpl_model
     betas_true = np.array([0.5, -0.3, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
