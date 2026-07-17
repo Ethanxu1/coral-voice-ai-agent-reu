@@ -168,6 +168,419 @@ MUSCLES_PULSE = {
     'l_gripper':   610,  'r_gripper':   374,
 }
 
+# ── Bucket leg stances (27 = 3 knee/ankle x 3 left hip-yaw x 3 right hip-yaw) ──
+# One pose per "buckets" leg-mode combination: legs at the bucket's targets
+# (leg_modes.py's tables, converted to hardware pulses via
+# rad_to_hardware_units), arms + head at stand. Naming:
+# BUCKET_<KNEE_ANKLE>_<HIP_YAW_LEFT>_<HIP_YAW_RIGHT>_PULSE. If the bucket
+# tables in leg_modes.py are retuned, regenerate these values to match.
+
+BUCKET_HIGH_IN_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_IN_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_IN_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_STAND_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_STAND_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_STAND_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_OUT_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_OUT_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_HIGH_OUT_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 591,  'r_ank_pitch': 409,
+    'l_knee':      453,  'r_knee':      547,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_IN_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_IN_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_IN_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_STAND_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_STAND_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_STAND_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_OUT_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_OUT_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_STAND_OUT_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 640,  'r_ank_pitch': 360,
+    'l_knee':      500,  'r_knee':      500,
+    'l_hip_pitch': 350,  'r_hip_pitch': 650,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_IN_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_IN_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_IN_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   512,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_STAND_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_STAND_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_STAND_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   500,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_OUT_IN_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   488,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_OUT_STAND_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   500,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+BUCKET_LOW_OUT_OUT_PULSE = {
+    'l_ank_roll':  500,  'r_ank_roll':  500,
+    'l_ank_pitch': 720,  'r_ank_pitch': 280,
+    'l_knee':      650,  'r_knee':      350,
+    'l_hip_pitch': 245,  'r_hip_pitch': 755,
+    'l_hip_roll':  500,  'r_hip_roll':  500,
+    'l_hip_yaw':   428,  'r_hip_yaw':   572,
+    'l_sho_pitch': 835,  'r_sho_pitch': 165,
+    'l_sho_roll':  830,  'r_sho_roll':  170,
+    'l_el_pitch':  500,  'r_el_pitch':  500,
+    'l_el_yaw':    150,  'r_el_yaw':    850,
+    'l_gripper':   500,  'r_gripper':   500,
+    'head_pan':    500,  'head_tilt':   500,
+}
+
+
 # ── Motion sequences ──────────────────────────────────────────────────────────
 
 Motion = List[Tuple[Dict[str, int], int]]
@@ -309,6 +722,34 @@ MOTIONS: Dict[str, Motion] = {
     "muscles":    _single(MUSCLES_PULSE),
     "hand-raised": _single(HANDS_UP_PULSE),
     "warrior2":   _single(WARRIOR_PULSE),
+    # 27 bucket leg stances (see the pulse constants above)
+    "bucket-high-in-in": _single(BUCKET_HIGH_IN_IN_PULSE),
+    "bucket-high-in-stand": _single(BUCKET_HIGH_IN_STAND_PULSE),
+    "bucket-high-in-out": _single(BUCKET_HIGH_IN_OUT_PULSE),
+    "bucket-high-stand-in": _single(BUCKET_HIGH_STAND_IN_PULSE),
+    "bucket-high-stand-stand": _single(BUCKET_HIGH_STAND_STAND_PULSE),
+    "bucket-high-stand-out": _single(BUCKET_HIGH_STAND_OUT_PULSE),
+    "bucket-high-out-in": _single(BUCKET_HIGH_OUT_IN_PULSE),
+    "bucket-high-out-stand": _single(BUCKET_HIGH_OUT_STAND_PULSE),
+    "bucket-high-out-out": _single(BUCKET_HIGH_OUT_OUT_PULSE),
+    "bucket-stand-in-in": _single(BUCKET_STAND_IN_IN_PULSE),
+    "bucket-stand-in-stand": _single(BUCKET_STAND_IN_STAND_PULSE),
+    "bucket-stand-in-out": _single(BUCKET_STAND_IN_OUT_PULSE),
+    "bucket-stand-stand-in": _single(BUCKET_STAND_STAND_IN_PULSE),
+    "bucket-stand-stand-stand": _single(BUCKET_STAND_STAND_STAND_PULSE),
+    "bucket-stand-stand-out": _single(BUCKET_STAND_STAND_OUT_PULSE),
+    "bucket-stand-out-in": _single(BUCKET_STAND_OUT_IN_PULSE),
+    "bucket-stand-out-stand": _single(BUCKET_STAND_OUT_STAND_PULSE),
+    "bucket-stand-out-out": _single(BUCKET_STAND_OUT_OUT_PULSE),
+    "bucket-low-in-in": _single(BUCKET_LOW_IN_IN_PULSE),
+    "bucket-low-in-stand": _single(BUCKET_LOW_IN_STAND_PULSE),
+    "bucket-low-in-out": _single(BUCKET_LOW_IN_OUT_PULSE),
+    "bucket-low-stand-in": _single(BUCKET_LOW_STAND_IN_PULSE),
+    "bucket-low-stand-stand": _single(BUCKET_LOW_STAND_STAND_PULSE),
+    "bucket-low-stand-out": _single(BUCKET_LOW_STAND_OUT_PULSE),
+    "bucket-low-out-in": _single(BUCKET_LOW_OUT_IN_PULSE),
+    "bucket-low-out-stand": _single(BUCKET_LOW_OUT_STAND_PULSE),
+    "bucket-low-out-out": _single(BUCKET_LOW_OUT_OUT_PULSE),
 }
 
 

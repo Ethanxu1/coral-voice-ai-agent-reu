@@ -60,19 +60,20 @@ def test_leg_pulses_to_targets_stand_maps_to_calibrated_anchor():
         assert targets[joint] == pytest.approx(HW_STAND_RAD.get(joint, 0.0), abs=1e-9), joint
 
 
-def test_classify_leg_targets_bypass_tight_joint_limits():
-    """Classify canned poses go through leg_pulses_to_targets (hardware→rad), NOT
-    _clamp_to_limits, so a deep crouch is free to exceed the tight leg caps that
-    live retargeting is held to. Guards the 'classify ignores limits' behaviour."""
+def test_classify_leg_targets_within_joint_limits():
+    """JOINT_LIMITS is now DERIVED from HW_SERVO_LIMITS (the hardware pulse
+    ranges), and the canned classify poses were authored inside those ranges —
+    so their leg targets must fall within the sim limits. Guards the sim ==
+    hardware clamp agreement: a canned pose exceeding a sim limit means the
+    two tables have drifted apart again."""
     from coral_agent.validation import JOINT_LIMITS
 
     targets = leg_modes.leg_pulses_to_targets(leg_modes.classify_leg_pulses("dab"))
-    # At least one leg joint should land outside its tight retargeting cap.
     exceeded = [
         j for j, rad in targets.items()
         if j in JOINT_LIMITS and not JOINT_LIMITS[j].is_valid(rad)
     ]
-    assert exceeded, "expected dab's crouch to exceed a tight leg cap (bypass path)"
+    assert not exceeded, f"dab's leg targets exceed the hardware-derived sim limits: {exceeded}"
 
 
 def test_leg_pulses_to_targets_matches_hardware_inverse():
@@ -171,3 +172,81 @@ def test_classify_leg_targets_convert_cleanly():
     targets = leg_modes.leg_pulses_to_targets(pulses)
     assert set(targets) == set(leg_modes.LEG_JOINTS)
     assert all(math.isfinite(v) for v in targets.values())
+
+
+# ── Mode 4: buckets ──────────────────────────────────────────────────────────
+
+
+def _lmk(x: float, vis: float = 1.0) -> dict:
+    """Image-space landmark (only x matters for the positional hip-yaw test)."""
+    return {"x": x, "y": 0.5, "z": 0.0, "visibility": vis}
+
+
+def _hip_yaw_body(l_hip_x, r_hip_x, l_knee_x, r_knee_x, l_sho_x, r_sho_x) -> list[dict]:
+    b = [_lmk(0.5) for _ in range(33)]
+    g = leg_modes.geometry
+    b[g.LEFT_HIP], b[g.RIGHT_HIP] = _lmk(l_hip_x), _lmk(r_hip_x)
+    b[g.LEFT_KNEE], b[g.RIGHT_KNEE] = _lmk(l_knee_x), _lmk(r_knee_x)
+    b[g.LEFT_SHOULDER], b[g.RIGHT_SHOULDER] = _lmk(l_sho_x), _lmk(r_sho_x)
+    return b
+
+
+@pytest.mark.parametrize("avg_deg,expected", [
+    (0.0, "high"), (29.9, "high"),
+    (30.0, "stand"), (50.0, "stand"), (65.0, "stand"),
+    (65.1, "low"), (120.0, "low"),
+])
+def test_knee_ankle_bucket_thresholds(avg_deg, expected):
+    """Thresholds: <30 high, 30-65 stand, >65 low.
+
+    geometry.knee_bend returns ~0deg for a STRAIGHT leg and grows as the knee
+    bends, so a small angle means the person is standing tall ("high" stance)
+    and a large angle means they're crouched ("low" stance)."""
+    assert leg_modes._knee_ankle_bucket_from_avg_deg(avg_deg) == expected
+
+
+# Person facing a mirrored camera: left side sits at larger image-x, right side
+# smaller. Shoulders wider than hips (l_sho 0.66 > l_hip 0.60; r_sho 0.34 < r_hip 0.40).
+@pytest.mark.parametrize("knee_x,expected", [
+    (0.55, "in"),     # inward of hip (0.60)
+    (0.60, "in"),     # exactly at hip -> in (boundary inclusive)
+    (0.63, "stand"),  # between hip and shoulder
+    (0.66, "stand"),  # exactly at shoulder -> stand
+    (0.72, "out"),    # outward of shoulder (0.66)
+])
+def test_hip_yaw_left_horizontal(knee_x, expected):
+    body = _hip_yaw_body(0.60, 0.40, knee_x, 0.40, 0.66, 0.34)
+    assert leg_modes._hip_yaw_bucket_side(body, "left") == expected
+
+
+@pytest.mark.parametrize("knee_x,expected", [
+    (0.45, "in"),     # inward of hip (0.40) — larger x is inward on the right side
+    (0.40, "in"),
+    (0.37, "stand"),
+    (0.30, "out"),    # outward of shoulder (0.34)
+])
+def test_hip_yaw_right_horizontal(knee_x, expected):
+    """Right side's 'outward' is the opposite image-x direction from the left,
+    handled by the outward-sign derivation from the two hips."""
+    body = _hip_yaw_body(0.60, 0.40, 0.60, knee_x, 0.66, 0.34)
+    assert leg_modes._hip_yaw_bucket_side(body, "right") == expected
+
+
+def test_hip_yaw_legs_independent():
+    """One leg can land 'in' while the other is 'out' — hip yaw is per-leg."""
+    # left knee inward (0.55 < hip 0.60), right knee outward (0.30 < shoulder 0.34)
+    body = _hip_yaw_body(0.60, 0.40, 0.55, 0.30, 0.66, 0.34)
+    assert leg_modes._hip_yaw_bucket_side(body, "left") == "in"
+    assert leg_modes._hip_yaw_bucket_side(body, "right") == "out"
+
+
+def test_raw_bucket_readouts_reports_knee_deg_and_hip_yaw_bucket():
+    body = _hip_yaw_body(0.60, 0.40, 0.63, 0.37, 0.66, 0.34)
+    out = leg_modes.raw_bucket_readouts(body)
+    assert set(out) == {
+        "knee_bend_l_deg", "knee_bend_r_deg", "hip_yaw_l_bucket", "hip_yaw_r_bucket",
+    }
+    # These landmarks have no world coords -> knee angle unavailable, hip-yaw bucket computed.
+    assert out["knee_bend_l_deg"] is None
+    assert out["hip_yaw_l_bucket"] == "stand"
+    assert out["hip_yaw_r_bucket"] == "stand"
