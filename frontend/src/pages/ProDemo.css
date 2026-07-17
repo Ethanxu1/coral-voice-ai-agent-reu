@@ -37,6 +37,20 @@
 .pro-back:hover { color: var(--text); }
 .pro-title { font-size: 14px; font-weight: 700; letter-spacing: 0.2px; }
 
+/* Dev-only leg-mode/sim-hardware switch strip (RobotModeToggle keeps its own
+   App.css styling — this just contains it within ProDemo's dark theme). */
+.pro-devbar {
+  padding: 8px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.pro-devbar .robot-mode-toggle {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  max-width: 420px;
+}
+
 .pro-rounds { display: flex; align-items: center; gap: 8px; }
 .pro-round-dot {
   width: 9px; height: 9px; border-radius: 50%;
@@ -89,6 +103,10 @@
   border: 1px solid var(--border);
   font-size: 15px; font-weight: 600; white-space: nowrap;
 }
+.pro-capture-btn {
+  position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+  font-size: 15px; padding: 10px 28px;
+}
 .pro-detail {
   position: absolute; bottom: 62px; left: 50%; transform: translateX(-50%);
   padding: 8px 16px; border-radius: 8px;
@@ -140,9 +158,11 @@
 @keyframes pro-flash { from { opacity: 0.9; } to { opacity: 0; } }
 
 /* ── Split (adjust / name) ───────────────────────────────────────────────── */
-.pro-split { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; height: 100%; }
-.pro-frame-pane { border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--border); }
+.pro-split { display: grid; grid-template-columns: 1.3fr 1fr; grid-template-rows: 1fr; gap: 20px; height: 100%; }
+.pro-frame-pane { border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--border); height: 100%; }
 .pro-frame { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Override tui-stream's TestUI styling when used inside the pro frame pane */
+.pro-frame-pane .tui-stream { border-radius: 0; border: none; width: 100%; height: 100%; }
 .pro-frame-empty { display: grid; place-items: center; color: var(--text-dim); background: var(--surface-2); }
 
 .pro-input-pane {
@@ -164,6 +184,43 @@
 .pro-status-recording .pro-status-icon { animation: pro-pulse 1.2s ease-in-out infinite; }
 .pro-status-action { border-color: var(--good); color: var(--good); }
 .pro-status-clarify { border-color: var(--warn); color: var(--warn); }
+
+/* ── Waveform (live mic level) ───────────────────────────────────────────── */
+.pro-wave {
+  display: flex; align-items: center; gap: 3px;
+  height: 42px; padding: 6px 12px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  align-self: stretch;
+}
+.pro-wave-bar {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 2px;
+  min-height: 3px;
+  transition: height 60ms linear;
+  opacity: 0.85;
+}
+
+/* ── Mini-conversation (last You / Coral exchange) ───────────────────────── */
+/* Persists across turns so the user has time to read what they said and what
+   the agent replied even after the loop moves on to the next input. */
+.pro-convo {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px; border-radius: 12px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.pro-convo-row {
+  display: grid; grid-template-columns: 52px 1fr; align-items: baseline;
+  gap: 12px; font-size: 15px; line-height: 1.35;
+}
+.pro-convo-who {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
+  text-transform: uppercase; text-align: right;
+}
+.pro-convo-who-you { color: var(--text-dim); }
+.pro-convo-who-coral { color: var(--accent); }
+.pro-convo-msg { color: var(--text); }
+.pro-convo-msg-you { font-style: italic; color: var(--text-dim); }
 
 .pro-text-entry { display: flex; gap: 10px; }
 .pro-text-input {
@@ -204,6 +261,8 @@
 }
 .pro-btn:hover { border-color: var(--text-dim); }
 .pro-btn.ghost { background: transparent; }
+.pro-skip { align-self: flex-start; margin-top: auto; opacity: 0.8; }
+.pro-skip:hover { opacity: 1; }
 .pro-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 11px 26px; font-size: 15px; }
 .pro-btn.primary:hover { filter: brightness(1.08); }
 

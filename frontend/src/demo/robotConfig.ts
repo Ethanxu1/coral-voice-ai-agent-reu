@@ -12,10 +12,25 @@ import { useSyncExternalStore } from 'react'
 
 export type RobotMode = 'sim' | 'hardware'
 
+/** How /map-features drives the legs. Arms always use live retargeting.
+ *  - retarget: live pelvis-frame hip pitch/roll + knee bend (default)
+ *  - legacy:   old atan2 mapping (hip_yaw ← forward/back swing)
+ *  - classify: MobileNetV3 → snap legs to the matching canned pose
+ *  - buckets:  classify knee/ankle/hip-pitch depth (both legs together) and
+ *              hip yaw (each leg independently) into discrete low/stand/high
+ *              and in/stand/out stances, then snap to the matching targets */
+export type LegMode = 'retarget' | 'legacy' | 'classify' | 'buckets'
+
 export interface RobotConfig {
   mode: RobotMode
   /** Pi hostname/IP used to build robot + stream URLs in hardware mode. */
   piHost: string
+  /** Leg-retargeting strategy passed to /map-features. */
+  legMode: LegMode
+  /** Debug overlay: draw the knee-bend/hip-yaw angle arcs on the live video
+   *  feed (Mac vision-server only — see POST /settings/angle-arcs). Off by
+   *  default so it doesn't clutter the kid-facing demo pages. */
+  showAngleArcs: boolean
 }
 
 const STORAGE_KEY = 'coral.robotConfig'
@@ -24,6 +39,8 @@ const env = import.meta.env as Record<string, string | undefined>
 const DEFAULT_CONFIG: RobotConfig = {
   mode: 'sim',
   piHost: env.VITE_ROBOT_HOST ?? '192.168.8.219',
+  legMode: 'retarget',
+  showAngleArcs: false,
 }
 
 function loadConfig(): RobotConfig {
@@ -83,4 +100,17 @@ export function getFeaturesBase(): string {
   const { mode, piHost } = config
   if (mode === 'hardware') return `http://${piHost}:9000`
   return env.VITE_FEATURES_BASE ?? 'http://localhost:8001'
+}
+
+// Mode-independent bases, for tools that pick their target explicitly (e.g.
+// the Pose Tester's sim/robot/both selector) instead of following the toggle.
+
+/** Mac sim server (:8000), regardless of the sim/hardware toggle. */
+export function getSimBase(): string {
+  return env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
+}
+
+/** Pi robot server (:9000), regardless of the sim/hardware toggle. */
+export function getPiBase(): string {
+  return `http://${config.piHost}:9000`
 }

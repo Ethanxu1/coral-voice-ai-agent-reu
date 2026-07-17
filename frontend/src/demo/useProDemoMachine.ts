@@ -77,6 +77,7 @@ function reducer(state: ProState, patch: Partial<ProState>): ProState {
 }
 
 const CANCELLED = Symbol('cancelled')
+const SKIP = Symbol('skip')
 const MAX_RETAKES = 3
 
 export function useProDemoMachine() {
@@ -84,6 +85,8 @@ export function useProDemoMachine() {
   const tokenRef = useRef(0)
   const inputModeRef = useRef<InputMode>('voice')
   const textResolverRef = useRef<((value: string) => void) | null>(null)
+  // Resolves the ADJUST-stage input race with SKIP so the loop jumps to NAME.
+  const skipResolverRef = useRef<(() => void) | null>(null)
 
   useEffect(() => () => { tokenRef.current++ }, []) // abort on unmount
 
@@ -102,6 +105,13 @@ export function useProDemoMachine() {
   const toggleInputMode = useCallback(() => {
     inputModeRef.current = inputModeRef.current === 'voice' ? 'text' : 'voice'
     dispatch({ inputMode: inputModeRef.current })
+  }, [])
+
+  // Skip the current ADJUST prompt and go straight to naming the captured pose.
+  const skip = useCallback(() => {
+    const resolve = skipResolverRef.current
+    skipResolverRef.current = null
+    resolve?.()
   }, [])
 
   const run = useCallback(async () => {
@@ -161,21 +171,30 @@ export function useProDemoMachine() {
         }
 
         // ── ADJUST: voice or text instruction, looped until an action lands ──
+        // The user can skip: each input await races a skip signal that breaks
+        // straight to NAME, leaving the captured pose as-is (no refinement).
         let gotAction = false
-        while (!gotAction) {
+        let skipped = false
+        while (!gotAction && !skipped) {
           active()
+          const skipSignal = new Promise<typeof SKIP>((resolve) => {
+            skipResolverRef.current = () => resolve(SKIP)
+          })
           let result
           if (inputModeRef.current === 'text') {
             dispatch({ stage: 'ADJUST', status: 'idle', awaitingText: true, caption: 'Describe an adjustment' })
-            const text = await awaitText(); active()
+            const input = await Promise.race<string | typeof SKIP>([awaitText(), skipSignal]); active()
+            if (input === SKIP) { skipped = true; break }
             dispatch({ awaitingText: false, status: 'thinking', caption: 'Applying adjustment…' })
-            result = await sendTextForAction(text); active()
+            result = await sendTextForAction(input); active()
           } else {
             dispatch({ stage: 'ADJUST', status: 'recording', caption: 'Listening — describe an adjustment' })
-            const blob = await captureUtterance(); active()
+            const captured = await Promise.race<Blob | typeof SKIP>([captureUtterance(), skipSignal]); active()
+            if (captured === SKIP) { skipped = true; break }
             dispatch({ status: 'thinking', caption: 'Applying adjustment…' })
-            result = await sendAudioForAction(blob); active()
+            result = await sendAudioForAction(captured); active()
           }
+          skipResolverRef.current = null
           if (result.hasAction) {
             gotAction = true
             dispatch({ status: 'action', caption: result.content || 'Adjustment applied' })
@@ -184,6 +203,12 @@ export function useProDemoMachine() {
             dispatch({ status: 'clarify', caption: result.content || 'Didn\'t catch that — try rephrasing' })
             await sleep(1600); active()
           }
+        }
+        // Clean up a pending text prompt if the loop exited via skip.
+        skipResolverRef.current = null
+        if (skipped) {
+          textResolverRef.current = null
+          dispatch({ awaitingText: false, status: 'idle', caption: 'Skipped adjustment' })
         }
 
         // ── NAME: label this move ────────────────────────────────────────────
@@ -214,11 +239,12 @@ export function useProDemoMachine() {
     tokenRef.current++
     textResolverRef.current?.('')
     textResolverRef.current = null
+    skipResolverRef.current = null
     setRobotState('IDLE')
     dispatch({ ...initialState, inputMode: inputModeRef.current })
   }, [])
 
-  return { state, start: run, retry: run, exit, toggleInputMode, submitText }
+  return { state, start: run, retry: run, exit, toggleInputMode, submitText, skip }
 }
 
 async function watchSafely(): Promise<{ detected: boolean }> {

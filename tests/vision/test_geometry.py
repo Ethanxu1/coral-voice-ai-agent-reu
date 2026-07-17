@@ -21,7 +21,7 @@ import math
 import numpy as np
 import pytest
 
-from coral_agent.vision import geometry
+from vision import geometry
 
 
 # ── Canonical landmark positions ───────────────────────────────────────────────
@@ -278,3 +278,68 @@ def test_depth_gate_clear_for_lateral_arm():
     sh = np.array([0.4, 0.4])
     el = np.array([0.6, 0.4])  # 0.2 distance
     assert geometry.arm_image_projection_short(sh, el, threshold=0.05) is False
+
+
+# ── Pelvis frame + leg angles ──────────────────────────────────────────────────
+# pelvis_frame takes world-up as an explicit argument (unlike torso_frame it
+# can't derive "up" from two hip points), so these tests pass the up-hint that
+# matches this file's y-up synthetic convention. pose_to_robot passes -y for
+# real MediaPipe data.
+
+UP_HINT = np.array([0.0, 1.0, 0.0])
+
+
+def test_pelvis_frame_is_identity_for_upright_neutral():
+    R = geometry.pelvis_frame(L_HIP, R_HIP, UP_HINT)
+    assert R is not None
+    assert np.allclose(R, np.eye(3), atol=1e-6)
+
+
+def test_pelvis_frame_ignores_torso_lean():
+    """The pelvis frame depends only on hips + world-up: identical whether the
+    person is upright or folded at the waist (that's the point of not reusing
+    the torso frame for legs)."""
+    R = geometry.pelvis_frame(L_HIP, R_HIP, UP_HINT)
+    # No shoulder inputs exist to vary — the frame is fully determined by the
+    # hip line and the up hint; verify columns are the anatomical axes.
+    assert np.allclose(R[:, 0], [1, 0, 0], atol=1e-6)  # person's left
+    assert np.allclose(R[:, 1], [0, 1, 0], atol=1e-6)  # up
+    assert np.allclose(R[:, 2], [0, 0, 1], atol=1e-6)  # forward
+
+
+def test_pelvis_frame_degenerate_when_hip_line_vertical():
+    """Hip line parallel to world-up (person lying sideways) → None."""
+    l_hip = np.array([0.0, 0.1, 0.0])
+    r_hip = np.array([0.0, -0.1, 0.0])
+    assert geometry.pelvis_frame(l_hip, r_hip, UP_HINT) is None
+
+
+def test_hip_pitch_roll_decoupled():
+    """Thigh forward → pure pitch; thigh sideways → pure roll (same
+    decomposition contract as shoulder_pitch_roll)."""
+    R = geometry.pelvis_frame(L_HIP, R_HIP, UP_HINT)
+
+    # Person's right thigh 30° forward (down = -y, forward = +z here)
+    knee_fwd = R_HIP + np.array([0.0, -0.4 * math.cos(math.radians(30)),
+                                 +0.4 * math.sin(math.radians(30))])
+    pitch, roll = geometry.hip_pitch_roll(R_HIP, knee_fwd, R, side="right")
+    assert pitch == pytest.approx(math.radians(30), abs=1e-6)
+    assert roll == pytest.approx(0.0, abs=1e-6)
+
+    # Person's right thigh 20° out to the side (person's right = -x)
+    knee_out = R_HIP + np.array([-0.4 * math.sin(math.radians(20)),
+                                 -0.4 * math.cos(math.radians(20)), 0.0])
+    pitch, roll = geometry.hip_pitch_roll(R_HIP, knee_out, R, side="right")
+    assert pitch == pytest.approx(0.0, abs=1e-6)
+    assert roll == pytest.approx(math.radians(20), abs=1e-6)
+
+
+def test_knee_bend_straight_and_bent():
+    hip = np.array([0.0, 0.0, 0.0])
+    knee = np.array([0.0, -0.4, 0.0])
+    ankle_straight = np.array([0.0, -0.8, 0.0])
+    assert geometry.knee_bend(hip, knee, ankle_straight) == pytest.approx(0.0, abs=1e-6)
+
+    # Shank swung 90° back relative to the thigh line
+    ankle_bent = knee + np.array([0.0, 0.0, -0.4])
+    assert geometry.knee_bend(hip, knee, ankle_bent) == pytest.approx(math.pi / 2, abs=1e-6)

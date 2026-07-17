@@ -30,9 +30,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from coral_agent.robot.servo_config import JOINT_NAME_MAP
-from coral_agent.vision.pose_estimator import FrameResult, PoseEstimator
-from coral_agent.vision.pose_to_robot import (
+from robot.servo_config import JOINT_NAME_MAP
+from vision.pose_estimator import FrameResult, PoseEstimator
+from vision.pose_to_robot import (
     compute_joint_targets,
     hips_detected,
     targets_to_hardware_servo_commands,

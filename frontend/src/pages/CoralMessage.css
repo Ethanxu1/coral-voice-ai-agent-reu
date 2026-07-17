@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Baloo+2:wght@400;600;700;800&display=swap');
+
+/* Shared full-screen "Coral says…" pages (Welcome, Outro). */
+.cm-root {
+  height: 100vh;
+  overflow: hidden;
+  background: #EFE8DA;
+  font-family: 'Nunito', sans-serif;
+  color: #2D2926;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 24px 32px;
+  box-sizing: border-box;
+}
+
+.cm-logo {
+  font-family: 'Baloo 2', cursive;
+  font-size: 24px;
+  font-weight: 800;
+  color: #2D2926;
+  letter-spacing: -0.5px;
+  flex-shrink: 0;
+}
+
+.cm-logo span {
+  color: #FF6B4A;
+}
+
+.cm-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cm-card {
+  max-width: 620px;
+  width: 100%;
+  background: #fff;
+  border-radius: 28px;
+  padding: 44px 48px 40px;
+  box-shadow: 0 24px 60px rgba(45, 41, 38, 0.12);
+  text-align: center;
+  animation: cm-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes cm-pop {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.cm-avatar {
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #FF8A6B, #FF6B4A);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 44px;
+  box-shadow: 0 10px 24px rgba(255, 107, 74, 0.35);
+}
+
+.cm-eyebrow {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #FF6B4A;
+  margin-bottom: 12px;
+}
+
+.cm-message {
+  font-size: 22px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: #2D2926;
+  margin: 0 0 32px;
+}
+
+.cm-btns {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.cm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 28px;
+  border-radius: 50px;
+  border: none;
+  font-family: 'Nunito', sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cm-btn:hover {
+  transform: translateY(-2px);
+}
+
+.cm-btn.primary {
+  background: #FF6B4A;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(255, 107, 74, 0.35);
+}
+
+.cm-btn.primary:hover {
+  background: #e55c3b;
+}
+
+.cm-btn.secondary {
+  background: rgba(45, 41, 38, 0.08);
+  color: #2D2926;
+}
+
+.cm-btn.secondary:hover {
+  background: rgba(45, 41, 38, 0.14);
+}

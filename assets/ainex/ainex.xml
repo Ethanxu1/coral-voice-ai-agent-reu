@@ -335,7 +335,8 @@
 
   <!-- Keyframes for initial poses -->
   <keyframe>
-    <!-- Standing straight (legs at zero, arms tucked) -->
+    <!-- Stand pose, calibrated to match the physical robot at STAND_PULSE -->
+    <!-- (bent-knee stance; kept in sync with HW_STAND_RAD in hardware_angle_utils.py). -->
     <!-- qpos order: root(7) + joints in body order -->
     <!-- root: x y z qw qx qy qz = 0 0 0.28 1 0 0 0 -->
     <!-- joints: r_hip_yaw r_hip_roll r_hip_pitch r_knee r_ank_pitch r_ank_roll -->
@@ -346,18 +347,22 @@
     <!-- qpos order: root_x root_y root_z root_qw root_qx root_qy root_qz (7) | joints (24) -->
     <key name="stand"
          qpos="0 0 0.28 1 0 0 0
-               0 0 0 0 0 0
-               0 0 0 0 0 0
+               0 0 0.4887 -0.9250 -0.4538 -0.0698
+               0 0 -0.4887 0.9250 0.4538 0
                0 0
-               0 1.403 0 1.226 0
-               0 -1.403 0 -1.226 0"/>
+               -0.4363 1.3614 0 1.5708 0
+               -0.4363 -1.3614 0 -1.5708 0"/>
+
+    
+    <!-- may not correspond to actual bent knees pose
+    
     <key name="stand_bent_knees"
          qpos="0 0 0.28 1 0 0 0
                0 0 -0.3 0.6 -0.3 0
                0 0 0.3 -0.6 0.3 0
                0 0
                0 1.403 0 1.226 0
-               0 -1.403 0 -1.226 0"/>
+               0 -1.403 0 -1.226 0"/> -->
   </keyframe>
 
 </mujoco>

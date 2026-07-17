@@ -1,6 +1,0 @@
-<launch>
-  <node pkg="ainex_demo" type="body.py"         name="body"         output="screen"/>
-  <node pkg="ainex_demo" type="head.py"          name="head"         output="screen"/>
-  <node pkg="ainex_demo" type="vision.py"        name="vision"       output="screen"/>
-  <node pkg="ainex_demo" type="robot_server.py"  name="robot_server" output="screen"/>
-</launch>

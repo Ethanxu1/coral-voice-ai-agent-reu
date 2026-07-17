@@ -19,12 +19,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from coral_agent.robot.angle_utils import servo_units_to_rad
-from coral_agent.robot.interface import ServoCommand
-from coral_agent.robot.motions import MOTIONS
-from coral_agent.robot.servo_config import SERVO_ID_MAP, STAND_PULSE
-from coral_agent.robot.sim_controller import SimController
-from coral_agent.simulator.mujoco_sim import AiNexSimulator
+from robot.angle_utils import servo_units_to_rad
+from robot.interface import ServoCommand
+from robot.motions import MOTIONS
+from robot.servo_config import SERVO_ID_MAP, STAND_PULSE
+from robot.sim_controller import SimController
+from simulator.mujoco_sim import AiNexSimulator
 
 HOLD_SECONDS = 2.0
 

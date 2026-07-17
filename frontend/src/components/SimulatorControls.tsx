@@ -216,7 +216,202 @@ function SimulatorControls({
           </div>
         </div>
 
+        <div className="control-group">
+          <h3>Left Leg</h3>
+          <div className="button-row">
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_hip_forward')}
+              disabled={!isConnected}
+            >
+              Hip Forward
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_hip_backward')}
+              disabled={!isConnected}
+            >
+              Hip Back
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_hip_out')}
+              disabled={!isConnected}
+            >
+              Hip Out
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_hip_in')}
+              disabled={!isConnected}
+            >
+              Hip In
+            </button>
+          </div>
+          <div className="button-row" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_hip_rotate_in')}
+              disabled={!isConnected}
+            >
+              Hip Rotate In
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_hip_rotate_out')}
+              disabled={!isConnected}
+            >
+              Hip Rotate Out
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_knee_bend')}
+              disabled={!isConnected}
+            >
+              Bend Knee
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_knee_extend')}
+              disabled={!isConnected}
+            >
+              Extend Knee
+            </button>
+          </div>
+          <div className="button-row" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_ankle_up')}
+              disabled={!isConnected}
+            >
+              Ankle Up
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_ankle_down')}
+              disabled={!isConnected}
+            >
+              Ankle Down
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_ankle_roll_in')}
+              disabled={!isConnected}
+            >
+              Ankle Roll In
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('left_ankle_roll_out')}
+              disabled={!isConnected}
+            >
+              Ankle Roll Out
+            </button>
+          </div>
+        </div>
+
+        <div className="control-group">
+          <h3>Right Leg</h3>
+          <div className="button-row">
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_hip_forward')}
+              disabled={!isConnected}
+            >
+              Hip Forward
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_hip_backward')}
+              disabled={!isConnected}
+            >
+              Hip Back
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_hip_out')}
+              disabled={!isConnected}
+            >
+              Hip Out
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_hip_in')}
+              disabled={!isConnected}
+            >
+              Hip In
+            </button>
+          </div>
+          <div className="button-row" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_hip_rotate_in')}
+              disabled={!isConnected}
+            >
+              Hip Rotate In
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_hip_rotate_out')}
+              disabled={!isConnected}
+            >
+              Hip Rotate Out
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_knee_bend')}
+              disabled={!isConnected}
+            >
+              Bend Knee
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_knee_extend')}
+              disabled={!isConnected}
+            >
+              Extend Knee
+            </button>
+          </div>
+          <div className="button-row" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_ankle_up')}
+              disabled={!isConnected}
+            >
+              Ankle Up
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_ankle_down')}
+              disabled={!isConnected}
+            >
+              Ankle Down
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_ankle_roll_in')}
+              disabled={!isConnected}
+            >
+              Ankle Roll In
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => onCommand('right_ankle_roll_out')}
+              disabled={!isConnected}
+            >
+              Ankle Roll Out
+            </button>
+          </div>
+        </div>
+
         <div className="button-row" style={{ marginTop: '0.5rem' }}>
+          <button
+            className="control-btn preset"
+            onClick={() => onCommand('stand')}
+            disabled={!isConnected}
+          >
+            Stand
+          </button>
           <button
             className="control-btn preset"
             onClick={() => onCommand('reset')}

@@ -1,25 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Routes, Route, Link } from 'react-router-dom'
+import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import SimulatorControls from './components/SimulatorControls'
-import ChatSidebar from './components/ChatSidebar'
+import ChatSidebar, { type Message } from './components/ChatSidebar'
 import HomeVisionPanel from './components/HomeVisionPanel'
 import PoseVisualization from './pages/PoseVisualization'
-import TestUIRouter from './pages/TestUIRouter'
 import ProDemo from './pages/ProDemo'
+import RefinedDemo from './pages/RefinedDemo'
+import Welcome from './pages/Welcome'
+import Tutorial from './pages/Tutorial'
+import MoveMate from './pages/MoveMate'
+import PoseTester from './pages/PoseTester'
+import RobotViewer from './pages/RobotViewer'
 import RobotModeToggle from './components/RobotModeToggle'
-
-interface WaypointInfo {
-  waypoint_index: number
-  joints: { [key: string]: number }
-  speed: number
-}
-
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  waypoints?: WaypointInfo[]
-  audioUrl?: string
-}
 
 interface JointStates {
   [key: string]: number
@@ -181,17 +173,23 @@ function App() {
           jointStates={jointStates}
         />
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <Link to="/tutorial" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">📚 Tutorial</button>
+          </Link>
           <Link to="/pose" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">Pose Tracking</button>
           </Link>
-          <Link to="/demo" style={{ textDecoration: 'none' }}>
-            <button className="primitives-test-btn">🎬 Demo Mode</button>
-          </Link>
-          <Link to="/testui" style={{ textDecoration: 'none' }}>
-            <button className="primitives-test-btn">🎨 Test UI</button>
-          </Link>
-          <Link to="/prodemo" style={{ textDecoration: 'none' }}>
+          <Link to="/prodemo" state={{ fromApp: true }} style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🧪 Pro Demo</button>
+          </Link>
+          <Link to="/welcome" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">✨ Refined Demo</button>
+          </Link>
+          <Link to="/pose-tester" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🦿 Pose Tester</button>
+          </Link>
+          <Link to="/viewer" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🕹️ 3D Viewer</button>
           </Link>
         </div>
         <RobotModeToggle />
@@ -203,9 +201,14 @@ function App() {
     <Routes>
       <Route path="/" element={mainView} />
       <Route path="/pose" element={<PoseVisualization />} />
-      <Route path="/demo" element={<TestUIRouter />} />
-      <Route path="/testui" element={<TestUIRouter />} />
       <Route path="/prodemo" element={<ProDemo />} />
+      <Route path="/welcome" element={<Welcome />} />
+      <Route path="/home" element={<RefinedDemo />} />
+      <Route path="/tutorial" element={<Tutorial />} />
+      <Route path="/movemate" element={<MoveMate />} />
+      <Route path="/pose-tester" element={<PoseTester />} />
+      <Route path="/viewer" element={<RobotViewer />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
