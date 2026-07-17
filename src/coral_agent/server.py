@@ -42,14 +42,15 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
 
 
-from coral_agent.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
+from coral_agent.robot.angle_utils import rad_to_servo_units, servo_units_to_rad, speed_to_duration_ms
 from coral_agent.robot.hardware_angle_utils import hardware_units_to_rad
 from coral_agent.robot.hardware_controller import AiNexHardwareController
 from coral_agent.robot.interface import ServoCommand
-from coral_agent.robot.servo_config import SERVO_ID_MAP
+from coral_agent.robot.servo_config import JOINT_NAME_MAP, SERVO_ID_MAP
 from coral_agent.robot.sim_controller import SimController
 from coral_agent.simulator import AiNexSimulator
-from coral_agent.collision_checker import CollisionChecker
+from coral_agent.collision.collision_checker import CollisionChecker
+from coral_agent.collision.stability_checker import StabilityChecker
 from coral_agent.simulator.mujoco_sim import COMMAND_MAP, execute_command
 from coral_agent.state import (
     StateManager,
@@ -77,6 +78,7 @@ hardware_dispatcher: AiNexHardwareController | None = None
 robot_mode: str = "sim"
 follow_controller: FollowController | None = None
 collision_checker: CollisionChecker | None = None
+stability_checker: StabilityChecker | None = None
 
 
 def _get_robot_state() -> dict[str, float]:
@@ -246,6 +248,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Collision checker disabled via ENABLE_COLLISION_CHECK=false")
 
+    global stability_checker
+    if os.getenv("ENABLE_FALL_CHECK", "true").lower() in ("true", "1", "yes"):
+        stability_checker = StabilityChecker()
+        logger.info("Fall check enabled — moves that topple the robot will be blocked entirely")
+    else:
+        logger.info("Fall check disabled via ENABLE_FALL_CHECK=false")
+
     follow_controller = FollowController(dispatch_servo_commands)
 
     langfuse_client = Langfuse()
@@ -406,6 +415,58 @@ class Waypoint:
 
 
 
+def collision_checked_targets(
+    sim: AiNexSimulator | None, target_joints: dict[str, float], context: str
+) -> tuple[dict[str, float], dict[str, Any]]:
+    """Run both safety checks on target_joints from the sim's current state.
+
+    1. Kinematic self-collision (CollisionChecker): clamps every moving joint
+       back to the last collision-free fraction of the motion.
+    2. Dynamic fall check (StabilityChecker): shadow-settles the (clamped)
+       target under gravity; if the robot's head ends below the fall threshold
+       (it toppled), the ENTIRE move is blocked — 0% executed, the returned
+       targets are the sim's current joints — since there's no safe fraction
+       of falling over.
+
+    Returns (safe_targets, safety_report). safety_report is JSON-ready so
+    endpoints can pass it straight to the frontend:
+      {"fall_blocked": bool, "collision_clamped": bool, "safe_fraction": float,
+       "bad_pairs": [...], "head_z": float|None, "threshold_z": float|None}
+    Checks are individually skipped (no-op) when their checker is disabled.
+    """
+    report: dict[str, Any] = {
+        "fall_blocked": False,
+        "collision_clamped": False,
+        "safe_fraction": 1.0,
+        "bad_pairs": [],
+        "head_z": None,
+        "threshold_z": None,
+    }
+    if sim is None or not target_joints:
+        return target_joints, report
+    current = sim.get_all_joint_states()
+
+    safe_joints = target_joints
+    if collision_checker is not None:
+        safe_joints, safe_frac, bad_pairs = collision_checker.check_trajectory(current, target_joints)
+        if safe_frac < 1.0:
+            logger.warning(f"{context}: collision risk ({bad_pairs}); reduced to {safe_frac:.0%} of target")
+            report.update(collision_clamped=True, safe_fraction=safe_frac, bad_pairs=bad_pairs)
+
+    if stability_checker is not None:
+        fall = stability_checker.check_fall(safe_joints, current)
+        report.update(head_z=fall["head_z"], threshold_z=fall["threshold_z"])
+        if fall["fell"]:
+            logger.warning(
+                f"{context}: FALL RISK — settled head_z={fall['head_z']} < "
+                f"threshold {fall['threshold_z']}; move blocked entirely (0%)"
+            )
+            report.update(fall_blocked=True, safe_fraction=0.0)
+            return dict(current), report
+
+    return safe_joints, report
+
+
 async def dispatch_servo_commands(commands: list[ServoCommand]) -> None:
     """Send a batch of ServoCommands to both sim and hardware dispatchers concurrently.
 
@@ -450,6 +511,19 @@ async def execute_waypoints(
                     f"reduced to {safe_frac:.0%} of target"
                 )
                 waypoint.joints = safe_joints
+
+        # Fall check: if this waypoint would topple the robot, skip it entirely
+        # (0% — hold the current pose) rather than clamping; there's no safe
+        # fraction of falling over.
+        if stability_checker is not None:
+            current = simulator.get_all_joint_states()
+            fall = stability_checker.check_fall(waypoint.joints, current)
+            if fall["fell"]:
+                logger.warning(
+                    f"Waypoint {i} FALL RISK — settled head_z={fall['head_z']} < "
+                    f"threshold {fall['threshold_z']}; waypoint blocked entirely (0%)"
+                )
+                waypoint.joints = dict(current)
 
         commands = []
         for joint_name, rad in waypoint.joints.items():
@@ -599,6 +673,9 @@ class ServoMove(BaseModel):
 class SetPoseRequest(BaseModel):
     """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
     pulses: dict[str, int]
+    # Pose Tester's "collision check off" mode: apply the pose exactly as
+    # authored, skipping the collision shadow-roll (JOINT_LIMITS still clamp).
+    skip_collision_check: bool = False
 
 
 class StateRequest(BaseModel):
@@ -690,22 +767,36 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
     *hardware* servo unit, so it's converted to sim radians with
     hardware_units_to_rad (the same path /motion uses for named poses) — this
     is what makes joints whose hardware neutral isn't 500 (hip_pitch, ankles,
-    sho_pitch, el_yaw) land at the right MuJoCo angle. set_joint_position then
-    clamps each to its JOINT_LIMITS. Sim only; unknown joints are reported back.
+    sho_pitch, el_yaw) land at the right MuJoCo angle. The combined target is
+    then shadow-rolled through the collision checker (same as /move) before
+    set_joint_position applies it, which also clamps each to its JOINT_LIMITS.
+    Sim only; unknown joints are reported back.
     """
     if simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
     applied: list[str] = []
     skipped: list[str] = []
+
+    target_joints: dict[str, float] = {}
     for joint, pulse in req.pulses.items():
         if joint not in SERVO_ID_MAP:
             skipped.append(joint)
             continue
         try:
-            simulator.set_joint_position(joint, hardware_units_to_rad(int(pulse), joint))
+            target_joints[joint] = hardware_units_to_rad(int(pulse), joint)
+        except Exception as e:  # bad pulse value — skip, keep going
+            logger.debug(f"/set-pose: skip joint {joint}: {e}")
+            skipped.append(joint)
+
+    if not req.skip_collision_check:
+        target_joints, _safety = collision_checked_targets(simulator, target_joints, "/set-pose")
+
+    for joint, rad in target_joints.items():
+        try:
+            simulator.set_joint_position(joint, rad)
             applied.append(joint)
-        except Exception as e:  # unknown sim joint / bad value — skip, keep going
+        except Exception as e:  # unknown sim joint — skip, keep going
             logger.debug(f"/set-pose: skip joint {joint}: {e}")
             skipped.append(joint)
 
@@ -719,15 +810,45 @@ async def demo_move(moves: list[ServoMove]) -> dict[str, Any]:
     Used by the demo's pose-mimicry path: the frontend fetches servo commands
     from the vision server's /map-features (landmark retargeting) and posts them
     here to drive the robot. Mirrors the Pi robot_server's /move contract.
+
+    Landmark retargeting has no notion of self-collision, so before dispatch we
+    shadow-roll the combined target through the collision checker and clamp any
+    servo whose commanded pose would drive it into another link.
+
+    Decodes with servo_units_to_rad (the uniform 500-centre sim map), not
+    hardware_units_to_rad — /map-features (this endpoint's only real caller)
+    always encodes with rad_to_servo_units, the same uniform map, regardless of
+    sim/hardware mode (see pose_to_robot.targets_to_servo_commands). Decoding
+    with the per-joint hardware-calibrated inverse instead mismatched the
+    encoder for every joint whose STAND_PULSE != 500 or HW_STAND_RAD != 0 —
+    i.e. every leg/arm joint except hip_roll/hip_yaw — corrupting the target
+    silently (e.g. a captured stand-pose l_knee=0.925 rad round-tripped to
+    ~1.85 rad, a wildly different knee bend, while hip_roll/hip_yaw happened
+    to survive because their hardware calibration is trivial).
     """
     if simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
-    commands = [
-        ServoCommand(servo_id=m.servo_id, position=m.position, duration_ms=max(100, m.duration_ms))
+
+    target_joints = {
+        joint: servo_units_to_rad(m.position)
         for m in moves
-    ]
+        if (joint := JOINT_NAME_MAP.get(m.servo_id)) is not None
+    }
+    target_joints, safety = collision_checked_targets(simulator, target_joints, "/move")
+
+    # Fall check failed → the move is unsafe as a whole. Dispatch nothing (0%
+    # of the move) and let the caller report the blocked result to the user.
+    if safety["fall_blocked"]:
+        return {"status": "blocked", "count": 0, "safety": safety}
+
+    commands = []
+    for m in moves:
+        joint = JOINT_NAME_MAP.get(m.servo_id)
+        position = rad_to_servo_units(target_joints[joint]) if joint in target_joints else m.position
+        commands.append(ServoCommand(servo_id=m.servo_id, position=position, duration_ms=max(100, m.duration_ms)))
+
     await dispatch_servo_commands(commands)
-    return {"status": "done", "count": len(commands)}
+    return {"status": "done", "count": len(commands), "safety": safety}
 
 
 @app.get("/watch-for-action")
@@ -824,6 +945,41 @@ async def save_current_pose_endpoint(req: SaveCurrentPoseRequest) -> dict[str, s
         raise HTTPException(status_code=400, detail="Name cannot be empty")
     save_pose(clean_name, joints)
     return {"name": clean_name, "status": "saved"}
+
+
+class PlayPoseRequest(BaseModel):
+    name: str
+    duration_ms: int = 1000
+
+
+@app.post("/poses/play")
+async def play_pose_endpoint(req: PlayPoseRequest) -> dict[str, Any]:
+    """Strike a saved pose directly by name, without the LLM motion planner.
+
+    Looks up the stored joint angles and dispatches them straight to the sim (and
+    hardware, in robot mode) — used by the end-of-session replay that shows each
+    learned move in turn. Saved poses were captured live, so a pose reachable from
+    one starting stance isn't guaranteed collision-free from wherever the robot
+    is now — shadow-roll it first, same as /move and /set-pose.
+    """
+    clean_name = req.name.strip()
+    joints = get_pose(clean_name)
+    if joints is None:
+        raise HTTPException(status_code=404, detail=f"Pose '{clean_name}' not found")
+    joints, _safety = collision_checked_targets(simulator, joints, f"/poses/play '{clean_name}'")
+    duration_ms = max(1, req.duration_ms)
+    commands = [
+        ServoCommand(
+            servo_id=SERVO_ID_MAP[joint],
+            position=rad_to_servo_units(rad),
+            duration_ms=duration_ms,
+        )
+        for joint, rad in joints.items()
+        if joint in SERVO_ID_MAP
+    ]
+    await dispatch_servo_commands(commands)
+    logger.info(f"Played saved pose '{clean_name}' ({len(commands)} joints)")
+    return {"name": clean_name, "joints_played": len(commands), "status": "played"}
 
 
 class HierarchicalMemory:

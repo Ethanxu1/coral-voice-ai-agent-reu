@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from coral_agent.collision_checker import CollisionChecker
+from coral_agent.collision.collision_checker import CollisionChecker
 from coral_agent.simulator import AiNexSimulator
 
 

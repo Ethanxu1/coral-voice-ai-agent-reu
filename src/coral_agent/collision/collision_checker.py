@@ -16,7 +16,6 @@ from pathlib import Path
 import mujoco
 from loguru import logger
 
-
 class CollisionChecker:
     def __init__(
         self,
@@ -25,7 +24,9 @@ class CollisionChecker:
         buffer_steps: int = 2,
     ):
         if model_path is None:
-            project_root = Path(__file__).parent.parent.parent
+            # collision_checker.py lives at src/coral_agent/collision/ — four
+            # levels up from the project root.
+            project_root = Path(__file__).parent.parent.parent.parent
             model_path = str(project_root / "assets" / "ainex" / "ainex.xml")
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
@@ -55,11 +56,29 @@ class CollisionChecker:
         if key_id >= 0:
             mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
 
+    def stand_joints(self) -> dict[str, float]:
+        """Joint angles (radians) of the model's ``stand`` keyframe."""
+        self._apply_stand_keyframe()
+        return {
+            name: float(self.data.qpos[addr])
+            for name, addr in self._qpos_addr.items()
+        }
+
     def _apply_joints(self, joints: dict[str, float]) -> None:
         for name, val in joints.items():
             addr = self._qpos_addr.get(name)
             if addr is not None:
                 self.data.qpos[addr] = val
+
+    def render_pose(self, joints: dict[str, float]) -> None:
+        """Set self.data to `joints` (stand keyframe as the baseline for any
+        joint not in the dict) and resolve forward kinematics — for callers
+        (e.g. collision_test.py) that want to sync a live viewer to a result
+        without reaching into the stand/apply-joints internals themselves.
+        """
+        self._apply_stand_keyframe()
+        self._apply_joints(joints)
+        mujoco.mj_forward(self.model, self.data)
 
     def _contact_pairs(self) -> set[frozenset[str]]:
         pairs: set[frozenset[str]] = set()
