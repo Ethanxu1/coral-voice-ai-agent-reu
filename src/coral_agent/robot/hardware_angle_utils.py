@@ -86,23 +86,39 @@ HW_DIRECTION: dict[str, int] = {
 # Leg servos: hip_roll (9/10) and hip_yaw (11/12) are user-tested sweeps;
 # hip_pitch (5-8) and knee ranges are NOT hardware-swept — they're conservative
 # bounds derived from the retargeting angle caps around each stand pulse.
+#
+# SINGLE SOURCE OF TRUTH for joint range: validation.py derives its sim-radian
+# JOINT_LIMITS from this table via hardware_units_to_rad, so sim clamping and
+# hardware clamping stay in lockstep. Every range MUST contain its joint's
+# STAND_PULSE — a range that excludes stand makes the stand pose itself
+# unreachable through any clamped path (this is what made /move's "stand" land
+# visibly off the true stand.d6a pose before r_sho_pitch/l_sho_roll/r_sho_roll
+# were widened to include their stand pulses).
+
+
+#  Note that the robot can still collide with itself in these ranges
+#  These are just a precaution against wildly dangerous movements
 HW_SERVO_LIMITS: dict[str, tuple[int, int]] = {
-    "l_sho_pitch": (333, 835),   # servo 13
-    "r_sho_pitch": (200, 773),   # servo 14
-    "l_sho_roll":  (440, 800),   # servo 15
-    "r_sho_roll":  (213, 613),   # servo 16
+    "l_ank_roll":  (400, 600),   # servo 1
+    "r_ank_roll":  (400, 600),   # servo 2
+    "l_ank_pitch": (620, 720),   # servo 3 — stand=640; 720 = crouch lean (dab/stand_low)
+    "r_ank_pitch": (280, 380),   # servo 4 — stand=360; 280 = crouch lean (dab/stand_low)
+    "l_sho_pitch": (333, 835),   # servo 13 — stand=835 (at ceiling)
+    "r_sho_pitch": (165, 773),   # servo 14 — widened from 200 to include stand=165
+    "l_sho_roll":  (440, 830),   # servo 15 — widened from 800 to include stand=830
+    "r_sho_roll":  (170, 613),   # servo 16 — widened from 213 to include stand=170
     "l_el_pitch":  (440, 653),   # servo 17
     "r_el_pitch":  (320, 560),   # servo 18
     "l_el_yaw":    (90, 360),    # servo 19
-    "r_el_yaw":    (573, 880),   # servo 20
+    "r_el_yaw":    (573, 880),   # servo 20 DAMAGED — never command below 360
     "l_knee":      (440, 760),   # servo 5  — conservative, stand=500
     "r_knee":      (240, 560),   # servo 6  — conservative, stand=500
     "l_hip_pitch": (150, 450),   # servo 7  — conservative, stand=350
     "r_hip_pitch": (550, 850),   # servo 8  — conservative, stand=650
     "l_hip_roll":  (400, 600),   # servo 9  — user-tested: 400=outward 30°, 600=inward 20°
     "r_hip_roll":  (400, 600),   # servo 10 — user-tested: 400=inward 20°, 600=outward 30°
-    "l_hip_yaw":   (300, 600),   # servo 11 — user-tested: 300=outward 45°, 600=inward 20°
-    "r_hip_yaw":   (400, 700),   # servo 12 — user-tested: 400=inward 20°, 700=outward 45°
+    "l_hip_yaw":   (428, 515),   # servo 11 — tightened to the bucket-stance span (out=428, in=512)
+    "r_hip_yaw":   (485, 572),   # servo 12 — mirror of servo 11 about stand=500 (in=488, out=572)
 }
 
 _CENTER = 500

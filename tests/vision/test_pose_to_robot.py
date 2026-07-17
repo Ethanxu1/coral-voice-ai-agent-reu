@@ -22,6 +22,7 @@ import math
 import pytest
 
 from coral_agent.robot.hardware_angle_utils import HW_STAND_RAD
+from coral_agent.validation import JOINT_LIMITS
 from coral_agent.vision.pose_to_robot import (
     _STAND_L_SHO_ROLL,
     _STAND_R_SHO_ROLL,
@@ -124,9 +125,10 @@ def test_t_pose_targets():
     assert targets["l_sho_roll"] == pytest.approx(_STAND_L_SHO_ROLL + math.pi / 2, abs=1e-3)
     assert targets["r_sho_roll"] == pytest.approx(_STAND_R_SHO_ROLL - math.pi / 2, abs=1e-3)
 
-    # Elbows extended → bend≈0
-    assert abs(targets["l_el_yaw"]) < 1e-3
-    assert abs(targets["r_el_yaw"]) < 1e-3
+    # Elbows extended → bend target 0, but the hardware-derived elbow ranges
+    # can't reach a fully straight arm, so the target clamps to the bound.
+    assert targets["l_el_yaw"] == pytest.approx(JOINT_LIMITS["l_el_yaw"].clamp(0.0), abs=1e-3)
+    assert targets["r_el_yaw"] == pytest.approx(JOINT_LIMITS["r_el_yaw"].clamp(0.0), abs=1e-3)
 
 
 def test_rest_pose_targets():
@@ -202,8 +204,11 @@ def test_forearm_twist_emits_el_pitch_when_hand_landmarks_present():
     targets = compute_joint_targets(body, head_pose=None)
     assert "l_el_pitch" in targets
     assert "r_el_pitch" in targets
-    # Palm-down should produce the same anatomical twist on both sides
-    assert targets["l_el_pitch"] == pytest.approx(targets["r_el_pitch"], abs=1e-3)
+    # Palm-down twists past both forearm servos' hardware ranges, so each side
+    # clamps to its own derived bound (the ranges are asymmetric, so the two
+    # sides no longer land on equal values).
+    assert targets["l_el_pitch"] == pytest.approx(JOINT_LIMITS["l_el_pitch"].min, abs=1e-3)
+    assert targets["r_el_pitch"] == pytest.approx(JOINT_LIMITS["r_el_pitch"].min, abs=1e-3)
 
 
 def test_forearm_twist_omitted_when_hand_landmarks_missing():
@@ -239,12 +244,16 @@ def test_head_pan_tilt_clamps_to_caps():
 
 
 def test_standing_legs_neutral():
-    """Legs straight down → all six leg targets emitted and ≈ 0."""
+    """Legs straight down → all six leg targets emitted at the clamp of 0.
+
+    The hardware-derived hip-pitch/knee ranges don't include a fully straight
+    leg (the robot always stands slightly bent), so 0 rad clamps to the nearest
+    bound; hip_roll's range contains 0 and stays exactly neutral."""
     body = _build_body()  # defaults are standing
     targets = compute_joint_targets(body, head_pose=None)
     for joint in ("l_hip_pitch", "r_hip_pitch", "l_hip_roll", "r_hip_roll",
                   "l_knee", "r_knee"):
-        assert targets[joint] == pytest.approx(0.0, abs=1e-3), joint
+        assert targets[joint] == pytest.approx(JOINT_LIMITS[joint].clamp(0.0), abs=1e-3), joint
 
 
 def test_knee_raise_maps_to_robot_left_leg():
@@ -261,11 +270,13 @@ def test_knee_raise_maps_to_robot_left_leg():
     targets = compute_joint_targets(body, head_pose=None)
 
     assert targets["l_hip_pitch"] == pytest.approx(-math.radians(30), abs=1e-3)
-    assert targets["l_knee"] == pytest.approx(+math.radians(30), abs=1e-3)
+    # +30° knee bend is shallower than the hardware range's minimum bend, so
+    # it clamps up to the bound.
+    assert targets["l_knee"] == pytest.approx(JOINT_LIMITS["l_knee"].clamp(math.radians(30)), abs=1e-3)
     assert targets["l_hip_roll"] == pytest.approx(0.0, abs=1e-3)
-    # Person's left leg (robot right) is still standing
-    assert targets["r_hip_pitch"] == pytest.approx(0.0, abs=1e-3)
-    assert targets["r_knee"] == pytest.approx(0.0, abs=1e-3)
+    # Person's left leg (robot right) is still standing (0 clamps to the bound)
+    assert targets["r_hip_pitch"] == pytest.approx(JOINT_LIMITS["r_hip_pitch"].clamp(0.0), abs=1e-3)
+    assert targets["r_knee"] == pytest.approx(JOINT_LIMITS["r_knee"].clamp(0.0), abs=1e-3)
 
 
 def test_leg_abduction_maps_mirrored():
@@ -282,13 +293,14 @@ def test_leg_abduction_maps_mirrored():
     targets = compute_joint_targets(body, head_pose=None)
 
     assert targets["l_hip_roll"] == pytest.approx(-math.radians(20), abs=1e-3)
-    assert targets["l_hip_pitch"] == pytest.approx(0.0, abs=1e-3)
-    assert targets["l_knee"] == pytest.approx(0.0, abs=1e-3)
+    assert targets["l_hip_pitch"] == pytest.approx(JOINT_LIMITS["l_hip_pitch"].clamp(0.0), abs=1e-3)
+    assert targets["l_knee"] == pytest.approx(JOINT_LIMITS["l_knee"].clamp(0.0), abs=1e-3)
     assert targets["r_hip_roll"] == pytest.approx(0.0, abs=1e-3)
 
 
 def test_leg_targets_clamped_to_limits():
-    """Hip flexion beyond the 45° cap clamps instead of passing through."""
+    """Hip flexion beyond the hardware-derived cap clamps instead of passing
+    through: -80° = -1.396 rad exceeds l_hip_pitch's derived minimum."""
     dy = 0.4 * math.cos(math.radians(80))
     dz = -0.4 * math.sin(math.radians(80))  # thigh 80° forward
     body = _build_body(
@@ -297,8 +309,8 @@ def test_leg_targets_clamped_to_limits():
         img_r_knee=(0.45, 0.72),
     )
     targets = compute_joint_targets(body, head_pose=None)
-    # l_hip_pitch limit is (-0.79, 0.35); -80° = -1.396 clamps to -0.79
-    assert targets["l_hip_pitch"] == pytest.approx(-0.79, abs=1e-6)
+    assert math.radians(-80) < JOINT_LIMITS["l_hip_pitch"].min  # premise: cap is tighter
+    assert targets["l_hip_pitch"] == pytest.approx(JOINT_LIMITS["l_hip_pitch"].min, abs=1e-6)
 
 
 def test_leg_depth_gate_suppresses_leg():

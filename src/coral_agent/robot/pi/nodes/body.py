@@ -44,22 +44,18 @@ SERVO_ID = {
 }
 EMPTY_SERVOS = {'head_pan', 'head_tilt'}
 
-# Physical servo safety limits (override 0-1000 for constrained servos).
-SERVO_LIMITS = {
-    19: (0, 600),     # l_el_yaw
-    20: (360, 850),   # r_el_yaw (damaged — never below 360)
-}
-
 MIN_FRAME_MS = 100  # floor for any single move duration
 
 
-def _clamp(servo_id, position):
-    lo, hi = SERVO_LIMITS.get(servo_id, (0, 1000))
-    return max(lo, min(hi, int(position)))
-
-
 def pulse_to_servos(pulse):
-    """Convert {servo_name: pulse} into [[servo_id, safe_pulse], ...]."""
+    """Convert {servo_name: pulse} into [[servo_id, pulse], ...].
+
+    Deliberately NO safety clamp here: server.py already clamps every position
+    to SERVO_LIMITS before it reaches this node, and a second clamp with its
+    own copy of the table would silently fight the first whenever the two
+    tables drift apart. server.py's table is the single hardware source of
+    truth; this node just plays what it's given.
+    """
     servos = []
     for name, value in pulse.items():
         if name in EMPTY_SERVOS or value is None:
@@ -67,7 +63,7 @@ def pulse_to_servos(pulse):
         sid = SERVO_ID.get(name)
         if sid is None or sid in (23, 24):
             continue
-        servos.append([sid, _clamp(sid, value)])
+        servos.append([sid, int(value)])
     return servos
 
 

@@ -39,6 +39,7 @@ catkin_install_python(PROGRAMS
   nodes/vision.py
   nodes/head.py
   nodes/body.py
+  nodes/server.py
   nodes/robot_server.py
   nodes/motions.py
   nodes/pose_to_robot.py

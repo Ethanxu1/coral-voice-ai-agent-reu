@@ -78,6 +78,9 @@ SERVO_ID: Dict[str, int] = {
 _EMPTY_SERVOS = {"head_pan", "head_tilt"}
 _SKIP_SERVO_IDS = {23, 24}
 
+
+
+    
 SERVO_LIMITS: Dict[int, Tuple[int, int]] = {
     13: (333, 835),   # l_sho_pitch
     14: (200, 773),   # r_sho_pitch
@@ -87,6 +90,24 @@ SERVO_LIMITS: Dict[int, Tuple[int, int]] = {
     18: (320, 560),   # r_el_pitch
     19: (90, 360),    # l_el_yaw
     20: (573, 880),   # r_el_yaw DAMAGED — never command below 360
+"l_sho_pitch": (333, 835),   # servo 13
+    "r_sho_pitch": (200, 773),   # servo 14
+    "l_sho_roll":  (440, 800),   # servo 15
+    "r_sho_roll":  (213, 613),   # servo 16
+    "l_el_pitch":  (440, 653),   # servo 17
+    "r_el_pitch":  (320, 560),   # servo 18
+    "l_el_yaw":    (90, 360),    # servo 19
+    "r_el_yaw":    (573, 880),   # servo 20
+    "l_knee":      (440, 760),   # servo 5  — conservative, stand=500
+    "r_knee":      (240, 560),   # servo 6  — conservative, stand=500
+    "l_hip_pitch": (150, 450),   # servo 7  — conservative, stand=350
+    "r_hip_pitch": (550, 850),   # servo 8  — conservative, stand=650
+    "l_hip_roll":  (400, 600),   # servo 9  — user-tested: 400=outward 30°, 600=inward 20°
+    "r_hip_roll":  (400, 600),   # servo 10 — user-tested: 400=inward 20°, 600=outward 30°
+    "l_hip_yaw":   (300, 600),   # servo 11 — user-tested: 300=outward 45°, 600=inward 20°
+    "r_hip_yaw":   (400, 700),   # servo 12 — user-tested: 400=inward 20°, 700=outward 45°
+}
+
 }
 
 STAND_PULSE: Dict[str, int] = {
