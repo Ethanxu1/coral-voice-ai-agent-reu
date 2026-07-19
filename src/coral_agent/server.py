@@ -56,6 +56,7 @@ from coral_agent.state import (
     StateManager,
 )
 from coral_agent.validation import (
+    JOINT_LIMITS,
     ValidationResult,
     describe_joint_state,
     validate_motion_sign,
@@ -678,6 +679,12 @@ class SetPoseRequest(BaseModel):
     skip_collision_check: bool = False
 
 
+class JointSetRequest(BaseModel):
+    """Set one joint to an absolute angle in sim radians (manual viewer mode)."""
+    name: str
+    angle: float
+
+
 class StateRequest(BaseModel):
     mode: str
 
@@ -801,6 +808,31 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
             skipped.append(joint)
 
     return {"status": "done", "applied": applied, "skipped": skipped}
+
+
+@app.post("/joint/set")
+async def joint_set(req: JointSetRequest) -> dict[str, Any]:
+    """Set one joint to an absolute angle in radians (web viewer manual mode).
+
+    The viewer's rotation gizmo posts here while the user drags. The angle is
+    clamped with validation.JOINT_LIMITS — the same safety caps move_joint
+    uses — then applied via set_joint_position (which additionally clamps to
+    the joint's mechanical range). Sim only; never touches hardware.
+    """
+    if simulator is None:
+        return {"status": "error", "detail": "simulator not initialized"}
+    if req.name not in JOINT_LIMITS:
+        raise HTTPException(status_code=404, detail=f"unknown joint: {req.name}")
+
+    applied = JOINT_LIMITS[req.name].clamp(req.angle)
+    simulator.set_joint_position(req.name, applied)
+    return {
+        "status": "done",
+        "name": req.name,
+        "requested": req.angle,
+        "applied": applied,
+        "clamped": applied != req.angle,
+    }
 
 
 @app.post("/move")
@@ -1664,6 +1696,12 @@ async def sim_stream_endpoint(websocket: WebSocket):
     JSON 'init' frame naming each render geom's mesh + color (this defines the
     index order), then push binary float32 pose buffers at a fixed rate. No
     simulation runs client-side, so the view can never drift from the sim/robot.
+
+    The init frame also carries static per-joint metadata (limits, geom
+    association) for the viewer's manual mode, and every JOINT_FRAME_INTERVAL
+    binary frames we interleave one JSON 'joints' frame with live per-joint
+    angle/anchor/axis so the client can place rotation gizmos. Clients branch
+    on text vs binary, so the binary pose wire format is unchanged.
     """
     await websocket.accept()
     if simulator is None:
@@ -1675,13 +1713,24 @@ async def sim_stream_endpoint(websocket: WebSocket):
         "type": "init",
         "mesh_url": "/assets/ainex/meshes/",
         "geoms": simulator.get_render_geom_info(),
+        "joints": simulator.get_joint_metadata(),
     })
     logger.info("Sim viewer client connected")
 
     fps = 30
+    # Send live joint frames at ~5 Hz — plenty for tooltip numbers and gizmo
+    # placement, and keeps the JSON frames rare next to the 30 fps pose stream.
+    joint_frame_interval = 6
+    frame_count = 0
     try:
         while True:
             await websocket.send_bytes(simulator.get_geom_poses())
+            frame_count += 1
+            if frame_count % joint_frame_interval == 0:
+                await websocket.send_json({
+                    "type": "joints",
+                    "joints": simulator.get_joint_frames(),
+                })
             await asyncio.sleep(1 / fps)
     except (WebSocketDisconnect, RuntimeError):
         pass
