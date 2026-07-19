@@ -204,7 +204,10 @@ export function useRefinedDemoMachine() {
 
     dispatch({ ...INIT, stage: 'LISTENING', messages: msgs, statusText: "I'm listening…" })
 
-    const session = openActionSession()
+    // Stable session ID shared by the intent classifier HTTP calls and the
+    // persistent action websocket so Langfuse groups everything in one trace.
+    const sessionId = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const session = openActionSession(sessionId)
 
     const addMsg = (msg: RefinedChatMsg) => {
       msgs = [...msgs, msg]
@@ -315,7 +318,7 @@ export function useRefinedDemoMachine() {
         // finishing a sentence and the text appearing.
         addMsg(childMsg(transcript))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-        const intentResult = await classifyIntent(transcript, followActive, msgs)
+        const intentResult = await classifyIntent(transcript, followActive, msgs, sessionId)
         active()
 
         // ── clarification: ask a follow-up, loop back ──
@@ -402,6 +405,34 @@ export function useRefinedDemoMachine() {
           continue
         }
 
+        // ── naming: launch the full save-and-name workflow ──
+        if (intent === 'naming') {
+          const suggestedName = (intentResult as { name?: string }).name?.trim()
+          let poseName: string
+          if (suggestedName) {
+            poseName = suggestedName
+            addMsg(sysMsg(`Saving as "${poseName}"!`))
+          } else {
+            addMsg(agentMsg("What would you like to name this pose?"))
+            dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+            const nameText = await listenOrInject()
+            active()
+            dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+            poseName = nameText.trim() || `Pose ${Date.now()}`
+          }
+          await saveCurrentPose(poseName)
+          active()
+          savedPoses = await listPoses()
+          active()
+          addMsg(sysMsg(`Saved as "${poseName}"!`))
+          addMsg(agentMsg(
+            `"${poseName}" is saved! Say a pose name to have me strike it, or let's keep going!`,
+            ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ savedPoses, stage: 'LISTENING', capturedFrame: null })
+          continue
+        }
+
         // ── exit ──
         if (intent === 'exit') {
           savedPoses = await listPoses()
@@ -434,7 +465,7 @@ export function useRefinedDemoMachine() {
             // sees their words appear immediately.
             addMsg(childMsg(lt))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-            const liResult = await classifyIntent(lt, false, msgs)
+            const liResult = await classifyIntent(lt, false, msgs, sessionId)
             active()
 
             if (liResult.type === 'clarification') {
@@ -456,7 +487,7 @@ export function useRefinedDemoMachine() {
               break
             }
 
-            const li = liResult.intent
+            const li = liResult.type === 'immediate' ? liResult.intent : undefined
             if (li === 'exit') {
               savedPoses = await listPoses()
               active()
@@ -507,6 +538,7 @@ export function useRefinedDemoMachine() {
               dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: 'listening', statusText: 'Listening for tweaks…' })
               let satisfied = false
               let followEscape = false
+              let suggestedName: string | null = null
               while (!satisfied) {
                 active()
                 dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
@@ -514,7 +546,7 @@ export function useRefinedDemoMachine() {
                 active()
                 if (!ft.trim()) continue
                 addMsg(childMsg(ft))
-                const ftResult = await classifyIntent(ft, false, msgs)
+                const ftResult = await classifyIntent(ft, false, msgs, sessionId)
                 active()
                 if (ftResult.type === 'clarification') {
                   addMsg(agentMsg(ftResult.question))
@@ -524,7 +556,10 @@ export function useRefinedDemoMachine() {
                   followEscape = true
                   break
                 }
-                if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+                if (ftResult.type === 'immediate' && (ftResult.intent === 'save_robot_pose' || ftResult.intent === 'naming')) {
+                  if (ftResult.intent === 'naming' && ftResult.name?.trim()) {
+                    suggestedName = ftResult.name.trim()
+                  }
                   satisfied = true
                   break
                 }
@@ -549,11 +584,17 @@ export function useRefinedDemoMachine() {
                 dispatch({ followActive: true, capturedFrame: null })
                 break  // exit library inner loop → main loop continues
               }
-              dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-              const nameText = await listenOrInject()
-              active()
-              dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-              const poseName = nameText.trim() || `Pose ${Date.now()}`
+              let poseName: string
+              if (suggestedName) {
+                poseName = suggestedName
+                addMsg(sysMsg(`Saving as "${poseName}"!`))
+              } else {
+                dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+                const nameText = await listenOrInject()
+                active()
+                dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+                poseName = nameText.trim() || `Pose ${Date.now()}`
+              }
               await saveCurrentPose(poseName)
               active()
               savedPoses = await listPoses()
@@ -643,6 +684,7 @@ export function useRefinedDemoMachine() {
           // FINETUNE loop
           let satisfied = false
           let followEscape = false
+          let suggestedName: string | null = null
           while (!satisfied) {
             active()
             dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
@@ -650,7 +692,7 @@ export function useRefinedDemoMachine() {
             active()
             if (!ft.trim()) continue
             addMsg(childMsg(ft))
-            const ftResult = await classifyIntent(ft, false, msgs)
+            const ftResult = await classifyIntent(ft, false, msgs, sessionId)
             active()
             if (ftResult.type === 'clarification') {
               addMsg(agentMsg(ftResult.question))
@@ -660,7 +702,10 @@ export function useRefinedDemoMachine() {
               followEscape = true
               break
             }
-            if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+            if (ftResult.type === 'immediate' && (ftResult.intent === 'save_robot_pose' || ftResult.intent === 'naming')) {
+              if (ftResult.intent === 'naming' && ftResult.name?.trim()) {
+                suggestedName = ftResult.name.trim()
+              }
               satisfied = true
               break
             }
@@ -688,11 +733,17 @@ export function useRefinedDemoMachine() {
           }
 
           // NAMING
-          dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-          const nameText = await listenOrInject()
-          active()
-          dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-          const poseName = nameText.trim() || `Pose ${Date.now()}`
+          let poseName: string
+          if (suggestedName) {
+            poseName = suggestedName
+            addMsg(sysMsg(`Saving as "${poseName}"!`))
+          } else {
+            dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+            const nameText = await listenOrInject()
+            active()
+            dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+            poseName = nameText.trim() || `Pose ${Date.now()}`
+          }
 
           await saveCurrentPose(poseName)
           active()

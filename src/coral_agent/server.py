@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from coral_agent.config import LLM_MODEL
 from coral_agent.follow_controller import FollowController
+from coral_agent.intent_classifier import classify_intent
 from coral_agent.primitives import (
     get_parameterized_primitive,
     get_primitive,
@@ -201,7 +202,7 @@ def _sync_sim_to_hardware() -> None:
 
 
 _router_prompt_cache: str | None = None
-_intent_classifier_prompt_cache: str | None = None
+_whisper_prompt_cache: str | None = None
 
 
 def get_router_prompt() -> str:
@@ -211,11 +212,11 @@ def get_router_prompt() -> str:
     return _router_prompt_cache
 
 
-def get_intent_classifier_prompt() -> str:
-    global _intent_classifier_prompt_cache
-    if _intent_classifier_prompt_cache is None:
-        _intent_classifier_prompt_cache = (Path(__file__).parent / "prompts" / "intent_classifier.md").read_text(encoding="utf-8")
-    return _intent_classifier_prompt_cache
+def get_whisper_prompt() -> str:
+    global _whisper_prompt_cache
+    if _whisper_prompt_cache is None:
+        _whisper_prompt_cache = (Path(__file__).parent / "prompts" / "whisper.md").read_text(encoding="utf-8")
+    return _whisper_prompt_cache
 
 
 @asynccontextmanager
@@ -338,7 +339,12 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         f.write(audio_bytes)
         tmp_path = f.name
     try:
-        segments, _ = model.transcribe(tmp_path, language="en", no_speech_threshold=0.6)
+        segments, _ = model.transcribe(
+            tmp_path,
+            language="en",
+            no_speech_threshold=0.6,
+            initial_prompt=get_whisper_prompt(),
+        )
         return " ".join(
             seg.text.strip() for seg in segments if seg.no_speech_prob < 0.6
         ).strip()
@@ -901,61 +907,47 @@ class IntentRequest(BaseModel):
     text: str
     follow_active: bool = False
     history: list[dict] | None = None  # [{"role": "user"|"assistant", "content": str}, ...]
+    session_id: str | None = None
+
 
 @app.post("/classify-intent")
+@observe(name="classify_intent")
 async def classify_intent_endpoint(req: IntentRequest) -> dict:
-    """Classify user intent into one of three categories for the refined demo.
+    """Classify user intent for the refined demo.
 
-    Returns one of:
-      {"type": "immediate", "intent": "follow_start|follow_stop|capture|library|exit"}
+    Uses a hybrid regex/template classifier first; only ambiguous cases fall
+    back to the LLM. Returns one of:
+      {"type": "immediate", "intent": "follow_start|follow_stop|capture|library|exit|save_robot_pose|naming|undo|reset", "name": "..."}
       {"type": "clarification", "question": "<follow-up question>"}
+      {"type": "conversation", "text": "<the user's message>"}
       {"type": "motion", "description": "<human-readable description of what the robot will do>"}
     """
-    robot_state = await asyncio.to_thread(_get_robot_state)
-    state_degrees = convert_state_to_degrees(robot_state)
-    state_description = describe_joint_state(robot_state)
-    saved_names = list_pose_names()
+    session_id = req.session_id or f"intent-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    langfuse = get_client()
+    with propagate_attributes(
+        session_id=session_id,
+        user_id="coral-user",
+        tags=["coral-agent", "intent-classification"],
+    ):
+        langfuse.update_current_span(input=req.text)
 
-    system_prompt = get_intent_classifier_prompt()
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    if req.history:
-        messages.extend(req.history)
+        robot_state = await asyncio.to_thread(_get_robot_state)
+        state_degrees = convert_state_to_degrees(robot_state)
+        state_description = describe_joint_state(robot_state)
+        saved_names = list_pose_names()
 
-    saved_line = f"SAVED_POSES: {json.dumps(saved_names)}\n" if saved_names else ""
-    messages.append({
-        "role": "user",
-        "content": (
-            saved_line
-            + f"CURRENT_STATE: {json.dumps(state_degrees)}\n"
-            f"STATE_DESCRIPTION: {state_description}\n"
-            f"follow_active: {str(req.follow_active).lower()}\n"
-            f"Message: \"{req.text}\""
-        ),
-    })
-
-    response = await asyncio.to_thread(
-        lambda: openai.chat.completions.create(
+        result = classify_intent(
+            text=req.text,
+            follow_active=req.follow_active,
+            state_degrees=state_degrees,
+            state_description=state_description,
+            saved_names=saved_names,
+            history=req.history,
             model=LLM_MODEL,
-            messages=messages,
-            response_format={"type": "json_object"},
-            max_completion_tokens=200,
         )
-    )
-    try:
-        result = json.loads(response.choices[0].message.content)
-        if result.get("type") == "immediate" and result.get("intent") in {
-            "follow_start", "follow_stop", "capture", "library", "exit", "save_robot_pose"
-        }:
-            return result
-        if result.get("type") == "clarification" and result.get("question"):
-            return result
-        if result.get("type") == "conversation" and result.get("text"):
-            return result
-        if result.get("type") == "motion" and result.get("description"):
-            return result
-    except Exception:
-        pass
-    return {"type": "motion", "description": req.text}
+
+        langfuse.update_current_span(output=result)
+        return result
 
 
 @app.get("/poses")
@@ -1531,7 +1523,9 @@ async def websocket_endpoint(websocket: WebSocket):
     state_manager = StateManager(max_checkpoints=10)
     recorder = ConversationRecorder()
     save_dialog = SavePoseDialog()
-    session_id = f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    # Allow the client to supply a stable session ID so intent classification HTTP
+    # calls and websocket chat turns group together in Langfuse.
+    session_id = websocket.query_params.get("session_id") or f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     # Save initial state as checkpoint
     if simulator:

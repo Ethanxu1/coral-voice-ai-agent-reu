@@ -472,8 +472,9 @@ export interface ActionSession {
   close(): void
 }
 
-export function openActionSession(): ActionSession {
-  const ws = new WebSocket(ACTION_WS)
+export function openActionSession(sessionId?: string): ActionSession {
+  const wsUrl = sessionId ? `${ACTION_WS}?session_id=${encodeURIComponent(sessionId)}` : ACTION_WS
+  const ws = new WebSocket(wsUrl)
 
   const openPromise = new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -619,9 +620,11 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-// Placeholder intent classifier — synchronous regex/keyword matcher wrapped
+// Intent classifier result from /classify-intent.
+// The optional `name` field is populated for the `naming` intent when the user
+// supplies a suggested pose name (e.g. "save this as my cool pose").
 export type IntentResult =
-  | { type: 'immediate'; intent: string }
+  | { type: 'immediate'; intent: string; name?: string }
   | { type: 'clarification'; question: string }
   | { type: 'conversation'; text: string }
   | { type: 'motion'; description: string }
@@ -645,20 +648,23 @@ export async function classifyIntent(
   text: string,
   followActive: boolean,
   msgs?: ChatMsg[],
+  sessionId?: string,
 ): Promise<IntentResult> {
   const history = msgs ? msgsToHistory(msgs) : undefined
   const res = await fetch('http://localhost:8000/classify-intent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, follow_active: followActive, history }),
+    body: JSON.stringify({ text, follow_active: followActive, history, session_id: sessionId }),
   })
-  if (!res.ok) return { type: 'motion', description: text }
+  // If the classifier cannot confidently propose a concrete movement, fall back to
+  // conversation so the agent chats/asks instead of showing the approve/reject modal.
+  if (!res.ok) return { type: 'conversation', text }
   const data = await res.json()
   if (data.type === 'immediate' && data.intent) return data as IntentResult
   if (data.type === 'clarification' && data.question) return data as IntentResult
   if (data.type === 'conversation' && data.text) return data as IntentResult
   if (data.type === 'motion' && data.description) return data as IntentResult
-  return { type: 'motion', description: text }
+  return { type: 'conversation', text }
 }
 
 export async function listPoses(): Promise<string[]> {
