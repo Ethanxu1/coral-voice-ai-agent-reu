@@ -421,7 +421,21 @@ function ChatMsg({
 }) {
   return (
     <div className={`rd-msg ${msg.role}`}>
-      <div className="rd-bubble">{msg.text}</div>
+      <div className="rd-bubble">
+        {msg.text}
+        {msg.role === 'child' && msg.audioUrl && (
+          <button
+            className="rd-audio-play-btn"
+            onClick={() => new Audio(msg.audioUrl).play()}
+            title="Play recording"
+            aria-label="Play recording"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <polygon points="2,1 12,7 2,13" />
+            </svg>
+          </button>
+        )}
+      </div>
       {msg.chips && msg.chips.length > 0 && (
         <div className="rd-chips">
           {msg.chips.map((chip) => (

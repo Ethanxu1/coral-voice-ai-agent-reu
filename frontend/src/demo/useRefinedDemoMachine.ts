@@ -36,6 +36,7 @@ export interface RefinedChatMsg {
   role: 'agent' | 'child' | 'system'
   text: string
   chips?: string[]
+  audioUrl?: string
 }
 
 export interface RefinedState {
@@ -85,8 +86,8 @@ const CANCELLED = Symbol('cancelled')
 function agentMsg(text: string, chips?: string[]): RefinedChatMsg {
   return { role: 'agent', text, chips }
 }
-function childMsg(text: string): RefinedChatMsg {
-  return { role: 'child', text }
+function childMsg(text: string, audioUrl?: string): RefinedChatMsg {
+  return { role: 'child', text, audioUrl }
 }
 function sysMsg(text: string): RefinedChatMsg {
   return { role: 'system', text }
@@ -103,6 +104,19 @@ export function useRefinedDemoMachine() {
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
+  // Object URLs for recorded user utterances; revoked on stop/unmount to avoid leaks.
+  const audioUrlsRef = useRef<string[]>([])
+
+  const revokeAudioUrls = useCallback(() => {
+    audioUrlsRef.current.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url)
+      } catch {
+        // ignore invalid urls
+      }
+    })
+    audioUrlsRef.current = []
+  }, [])
 
   const abortCurrentCapture = useCallback(() => {
     const ctrl = captureAbortRef.current
@@ -120,6 +134,7 @@ export function useRefinedDemoMachine() {
       tokenRef.current++ // abort any in-flight run
       killSpeech()
       abortCurrentCapture()
+      revokeAudioUrls()
     }
   }, [abortCurrentCapture])
 
@@ -218,20 +233,20 @@ export function useRefinedDemoMachine() {
     // A per-call `settled` flag guards against late resolutions leaking into
     // a subsequent turn (e.g. captureUtterance's .then firing after a chip
     // click already resolved this promise).
-    const listenOrInject = async (): Promise<string> => {
-      return new Promise<string>((resolve) => {
+    const listenOrInject = async (): Promise<{ text: string; audioUrl?: string }> => {
+      return new Promise<{ text: string; audioUrl?: string }>((resolve) => {
         const ctrl = new AbortController()
         let settled = false
-        const settle = (val: string) => {
+        const settle = (val: string, audioUrl?: string) => {
           if (settled) return
           settled = true
           chipResolverRef.current = null
           if (captureAbortRef.current === ctrl) captureAbortRef.current = null
-          resolve(val)
+          resolve({ text: val, audioUrl })
         }
 
         captureAbortRef.current = ctrl
-        chipResolverRef.current = settle
+        chipResolverRef.current = (text: string) => settle(text)
 
         captureUtterance({
           onLevel: (rms) => dispatch({ micLevel: rms }),
@@ -239,9 +254,11 @@ export function useRefinedDemoMachine() {
         })
           .then((blob) => {
             if (settled) return
+            const audioUrl = URL.createObjectURL(blob)
+            audioUrlsRef.current.push(audioUrl)
             sendAudioForTranscript(blob)
-              .then((t) => settle(t))
-              .catch(() => settle(''))
+              .then((t) => settle(t, audioUrl))
+              .catch(() => settle('', audioUrl))
           })
           .catch(() => {
             // Always settle with empty on any error (including AbortError).
@@ -305,7 +322,7 @@ export function useRefinedDemoMachine() {
           followActive,
         })
 
-        const transcript = await listenOrInject()
+        const { text: transcript, audioUrl } = await listenOrInject()
         active()
 
         if (!transcript.trim()) {
@@ -316,7 +333,7 @@ export function useRefinedDemoMachine() {
         // classify-intent LLM roundtrip — so they get instant feedback that
         // they were heard. Otherwise there's a visible ~1–2s gap between
         // finishing a sentence and the text appearing.
-        addMsg(childMsg(transcript))
+        addMsg(childMsg(transcript, audioUrl))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
         const intentResult = await classifyIntent(transcript, followActive, msgs, sessionId)
         active()
@@ -388,9 +405,10 @@ export function useRefinedDemoMachine() {
         if (intent === 'save_robot_pose') {
           addMsg(agentMsg("What would you like to name this pose?"))
           dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-          const nameText = await listenOrInject()
+          const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
           active()
           dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+          addMsg(childMsg(nameText, nameAudioUrl))
           const poseName = nameText.trim() || `Pose ${Date.now()}`
           await saveCurrentPose(poseName)
           active()
@@ -415,9 +433,10 @@ export function useRefinedDemoMachine() {
           } else {
             addMsg(agentMsg("What would you like to name this pose?"))
             dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-            const nameText = await listenOrInject()
+            const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
             active()
             dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+            addMsg(childMsg(nameText, nameAudioUrl))
             poseName = nameText.trim() || `Pose ${Date.now()}`
           }
           await saveCurrentPose(poseName)
@@ -458,12 +477,12 @@ export function useRefinedDemoMachine() {
           while (true) {
             active()
             dispatch({ orbState: 'listening', statusText: 'Pick a pose or say "make another"', micLevel: 0 })
-            const lt = await listenOrInject()
+            const { text: lt, audioUrl: ltAudioUrl } = await listenOrInject()
             active()
             if (!lt.trim()) continue
             // Show the child transcript before classify-intent so the user
             // sees their words appear immediately.
-            addMsg(childMsg(lt))
+            addMsg(childMsg(lt, ltAudioUrl))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
             const liResult = await classifyIntent(lt, false, msgs, sessionId)
             active()
@@ -542,10 +561,10 @@ export function useRefinedDemoMachine() {
               while (!satisfied) {
                 active()
                 dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
-                const ft = await listenOrInject()
+                const { text: ft, audioUrl: ftAudioUrl } = await listenOrInject()
                 active()
                 if (!ft.trim()) continue
-                addMsg(childMsg(ft))
+                addMsg(childMsg(ft, ftAudioUrl))
                 const ftResult = await classifyIntent(ft, false, msgs, sessionId)
                 active()
                 if (ftResult.type === 'clarification') {
@@ -590,9 +609,10 @@ export function useRefinedDemoMachine() {
                 addMsg(sysMsg(`Saving as "${poseName}"!`))
               } else {
                 dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-                const nameText = await listenOrInject()
+                const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
                 active()
                 dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+                addMsg(childMsg(nameText, nameAudioUrl))
                 poseName = nameText.trim() || `Pose ${Date.now()}`
               }
               await saveCurrentPose(poseName)
@@ -688,10 +708,10 @@ export function useRefinedDemoMachine() {
           while (!satisfied) {
             active()
             dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
-            const ft = await listenOrInject()
+            const { text: ft, audioUrl: ftAudioUrl } = await listenOrInject()
             active()
             if (!ft.trim()) continue
-            addMsg(childMsg(ft))
+            addMsg(childMsg(ft, ftAudioUrl))
             const ftResult = await classifyIntent(ft, false, msgs, sessionId)
             active()
             if (ftResult.type === 'clarification') {
@@ -739,9 +759,10 @@ export function useRefinedDemoMachine() {
             addMsg(sysMsg(`Saving as "${poseName}"!`))
           } else {
             dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-            const nameText = await listenOrInject()
+            const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
             active()
             dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+            addMsg(childMsg(nameText, nameAudioUrl))
             poseName = nameText.trim() || `Pose ${Date.now()}`
           }
 
@@ -775,9 +796,10 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    revokeAudioUrls()
     setRobotState('IDLE')
     dispatch({ ...INIT })
-  }, [abortCurrentCapture])
+  }, [abortCurrentCapture, revokeAudioUrls])
 
   const goToLibrary = useCallback(async () => {
     tokenRef.current++
