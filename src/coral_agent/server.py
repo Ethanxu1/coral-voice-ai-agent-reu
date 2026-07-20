@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 from coral_agent.config import LLM_MODEL
 from coral_agent.follow_controller import FollowController
+from coral_agent.intent_classifier import classify_intent
 from coral_agent.primitives import (
     get_parameterized_primitive,
     get_primitive,
@@ -201,7 +202,8 @@ def _sync_sim_to_hardware() -> None:
 
 
 _router_prompt_cache: str | None = None
-_intent_classifier_prompt_cache: str | None = None
+_chat_prompt_cache: str | None = None
+_whisper_prompt_cache: str | None = None
 
 
 def get_router_prompt() -> str:
@@ -211,11 +213,18 @@ def get_router_prompt() -> str:
     return _router_prompt_cache
 
 
-def get_intent_classifier_prompt() -> str:
-    global _intent_classifier_prompt_cache
-    if _intent_classifier_prompt_cache is None:
-        _intent_classifier_prompt_cache = (Path(__file__).parent / "prompts" / "intent_classifier.md").read_text(encoding="utf-8")
-    return _intent_classifier_prompt_cache
+def get_chat_prompt() -> str:
+    global _chat_prompt_cache
+    if _chat_prompt_cache is None:
+        _chat_prompt_cache = (Path(__file__).parent / "prompts" / "chat.md").read_text(encoding="utf-8")
+    return _chat_prompt_cache
+
+
+def get_whisper_prompt() -> str:
+    global _whisper_prompt_cache
+    if _whisper_prompt_cache is None:
+        _whisper_prompt_cache = (Path(__file__).parent / "prompts" / "whisper.md").read_text(encoding="utf-8")
+    return _whisper_prompt_cache
 
 
 @asynccontextmanager
@@ -338,7 +347,12 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         f.write(audio_bytes)
         tmp_path = f.name
     try:
-        segments, _ = model.transcribe(tmp_path, language="en", no_speech_threshold=0.6)
+        segments, _ = model.transcribe(
+            tmp_path,
+            language="en",
+            no_speech_threshold=0.6,
+            initial_prompt=get_whisper_prompt(),
+        )
         return " ".join(
             seg.text.strip() for seg in segments if seg.no_speech_prob < 0.6
         ).strip()
@@ -901,61 +915,47 @@ class IntentRequest(BaseModel):
     text: str
     follow_active: bool = False
     history: list[dict] | None = None  # [{"role": "user"|"assistant", "content": str}, ...]
+    session_id: str | None = None
+
 
 @app.post("/classify-intent")
+@observe(name="classify_intent")
 async def classify_intent_endpoint(req: IntentRequest) -> dict:
-    """Classify user intent into one of three categories for the refined demo.
+    """Classify user intent for the refined demo.
 
-    Returns one of:
-      {"type": "immediate", "intent": "follow_start|follow_stop|capture|library|exit"}
+    Uses a hybrid regex/template classifier first; only ambiguous cases fall
+    back to the LLM. Returns one of:
+      {"type": "immediate", "intent": "follow_start|follow_stop|capture|library|exit|save_robot_pose|naming|undo|reset", "name": "..."}
       {"type": "clarification", "question": "<follow-up question>"}
+      {"type": "conversation", "text": "<the user's message>"}
       {"type": "motion", "description": "<human-readable description of what the robot will do>"}
     """
-    robot_state = await asyncio.to_thread(_get_robot_state)
-    state_degrees = convert_state_to_degrees(robot_state)
-    state_description = describe_joint_state(robot_state)
-    saved_names = list_pose_names()
+    session_id = req.session_id or f"intent-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    langfuse = get_client()
+    with propagate_attributes(
+        session_id=session_id,
+        user_id="coral-user",
+        tags=["coral-agent", "intent-classification"],
+    ):
+        langfuse.update_current_span(input=req.text)
 
-    system_prompt = get_intent_classifier_prompt()
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    if req.history:
-        messages.extend(req.history)
+        robot_state = await asyncio.to_thread(_get_robot_state)
+        state_degrees = convert_state_to_degrees(robot_state)
+        state_description = describe_joint_state(robot_state)
+        saved_names = list_pose_names()
 
-    saved_line = f"SAVED_POSES: {json.dumps(saved_names)}\n" if saved_names else ""
-    messages.append({
-        "role": "user",
-        "content": (
-            saved_line
-            + f"CURRENT_STATE: {json.dumps(state_degrees)}\n"
-            f"STATE_DESCRIPTION: {state_description}\n"
-            f"follow_active: {str(req.follow_active).lower()}\n"
-            f"Message: \"{req.text}\""
-        ),
-    })
-
-    response = await asyncio.to_thread(
-        lambda: openai.chat.completions.create(
+        result = classify_intent(
+            text=req.text,
+            follow_active=req.follow_active,
+            state_degrees=state_degrees,
+            state_description=state_description,
+            saved_names=saved_names,
+            history=req.history,
             model=LLM_MODEL,
-            messages=messages,
-            response_format={"type": "json_object"},
-            max_completion_tokens=200,
         )
-    )
-    try:
-        result = json.loads(response.choices[0].message.content)
-        if result.get("type") == "immediate" and result.get("intent") in {
-            "follow_start", "follow_stop", "capture", "library", "exit", "save_robot_pose"
-        }:
-            return result
-        if result.get("type") == "clarification" and result.get("question"):
-            return result
-        if result.get("type") == "conversation" and result.get("text"):
-            return result
-        if result.get("type") == "motion" and result.get("description"):
-            return result
-    except Exception:
-        pass
-    return {"type": "motion", "description": req.text}
+
+        langfuse.update_current_span(output=result)
+        return result
 
 
 @app.get("/poses")
@@ -1406,6 +1406,80 @@ async def process_chat_message(
         return response_data
 
 
+@observe(name="process_conversation_message")
+async def process_conversation_message(
+    user_message: str,
+    memory: "HierarchicalMemory",
+    recorder: "ConversationRecorder",
+    session_id: str,
+) -> dict:
+    """Handle a conversational message with the chat LLM, not the motion planner."""
+    langfuse = get_client()
+
+    with propagate_attributes(
+        session_id=session_id,
+        user_id="coral-user",
+        tags=["coral-agent", "conversation"],
+    ):
+        langfuse.update_current_span(input=user_message)
+
+        robot_state = _get_robot_state()
+        state_description = describe_joint_state(robot_state)
+        memory_ctx = memory.get_context_for_llm()
+
+        saved_names = list_pose_names()
+        saved_line = f"SAVED_POSES: {json.dumps(saved_names)}\n" if saved_names else ""
+        contextual_message = (
+            saved_line
+            + f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
+            f"STATE_DESCRIPTION: {state_description}\n\n"
+            f"USER_MESSAGE: {user_message}"
+        )
+
+        @observe(name="chat_llm")
+        def run_chat_llm():
+            prompt = get_chat_prompt()
+            messages = [
+                {"role": "system", "content": prompt},
+                *memory_ctx,
+                {"role": "user", "content": contextual_message},
+            ]
+            response = openai.chat.completions.create(
+                model=LLM_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                name="chat-response",
+            )
+            return response.choices[0].message.content
+
+        response_text = await asyncio.to_thread(run_chat_llm)
+        try:
+            data = json.loads(response_text)
+            response = data.get("verbal_response", "")
+        except Exception:
+            response = "I'm not sure what to say to that."
+
+        memory.add_exchange(user_message, response, [])
+        recorder.log_interaction(
+            user_message=user_message,
+            assistant_response=response,
+            waypoints_extracted=[],
+            waypoints_executed=[],
+            router_response={"verbal_response": response},
+        )
+
+        result = {
+            "type": "chat_response",
+            "role": "assistant",
+            "content": response,
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+            "satisfied": None,
+        }
+        langfuse.update_current_span(output=result)
+        return result
+
+
 _FOLLOW_START_RE = re.compile(
     r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+moves)\b",
     re.IGNORECASE,
@@ -1531,7 +1605,9 @@ async def websocket_endpoint(websocket: WebSocket):
     state_manager = StateManager(max_checkpoints=10)
     recorder = ConversationRecorder()
     save_dialog = SavePoseDialog()
-    session_id = f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    # Allow the client to supply a stable session ID so intent classification HTTP
+    # calls and websocket chat turns group together in Langfuse.
+    session_id = websocket.query_params.get("session_id") or f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     # Save initial state as checkpoint
     if simulator:
@@ -1610,20 +1686,44 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing
                 user_message = message_data.get("content", "")
+                intent_type = message_data.get("intent_type")
+                motion_description = message_data.get("description")
                 if save_dialog.stage != _SaveStage.IDLE:
                     if await handle_save_dialog(user_message, save_dialog, websocket):
                         continue
                 if await try_handle_system_intent(user_message, websocket, save_dialog):
                     continue
-                response_data = await process_chat_message(
-                    user_message=user_message,
-                    memory=memory,
-                    state_manager=state_manager,
-                    recorder=recorder,
-                    simulator_instance=simulator,
-                    session_id=session_id,
-                    on_action_started=lambda: websocket.send_json({"type": "action_started"}),
-                )
+
+                # Route conversation/clarification to the chat LLM and finalized
+                # motion descriptions to the motion planner. If no intent_type is
+                # provided, fall back to the legacy motion-planner-only behavior.
+                if intent_type == "conversation":
+                    response_data = await process_conversation_message(
+                        user_message=user_message,
+                        memory=memory,
+                        recorder=recorder,
+                        session_id=session_id,
+                    )
+                elif intent_type == "motion" and motion_description:
+                    response_data = await process_chat_message(
+                        user_message=motion_description,
+                        memory=memory,
+                        state_manager=state_manager,
+                        recorder=recorder,
+                        simulator_instance=simulator,
+                        session_id=session_id,
+                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
+                    )
+                else:
+                    response_data = await process_chat_message(
+                        user_message=user_message,
+                        memory=memory,
+                        state_manager=state_manager,
+                        recorder=recorder,
+                        simulator_instance=simulator,
+                        session_id=session_id,
+                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
+                    )
                 await websocket.send_json(response_data)
 
             elif msg_type == "audio":
