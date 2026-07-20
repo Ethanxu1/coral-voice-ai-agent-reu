@@ -9,44 +9,6 @@ import { LiveStream } from './DummyStream'
 import RobotViewer from './RobotViewer'
 import './RefinedDemo.css'
 
-
-function RobotIllustration() {
-  return (
-    <div className="rd-robot">
-      <div className="rd-robot-neck-wrap">
-        <div className="rd-robot-antenna" />
-        <div className="rd-robot-neck" />
-      </div>
-      <div className="rd-robot-head">
-        <div className="rd-robot-eye" />
-        <div className="rd-robot-eye" />
-      </div>
-      <div className="rd-robot-torso-wrap">
-        <div className="rd-robot-torso">
-          <div className="rd-robot-chest">
-            <div className="rd-robot-bar" style={{ width: 6, height: 14 }} />
-            <div className="rd-robot-bar" style={{ width: 6, height: 26 }} />
-            <div className="rd-robot-bar" style={{ width: 6, height: 18 }} />
-            <div className="rd-robot-bar" style={{ width: 6, height: 10 }} />
-          </div>
-        </div>
-        <div className="rd-robot-arm rd-robot-arm-left">
-          <div className="rd-robot-joint" />
-          <div className="rd-robot-limb" />
-        </div>
-        <div className="rd-robot-arm rd-robot-arm-right">
-          <div className="rd-robot-joint" />
-          <div className="rd-robot-limb" />
-        </div>
-      </div>
-      <div className="rd-robot-legs">
-        <div className="rd-robot-leg" />
-        <div className="rd-robot-leg" />
-      </div>
-    </div>
-  )
-}
-
 export default function RefinedDemo() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -412,6 +374,20 @@ function TypingIndicator() {
   )
 }
 
+function intentLabel(type: string | undefined): string {
+  switch (type) {
+    case 'motion': return 'motion'
+    case 'conversation': return 'conversation'
+    case 'clarification': return 'clarification'
+    case 'immediate': return 'system command'
+    default: return type ?? 'unknown'
+  }
+}
+
+function classifierLabel(c: 'regex' | 'llm' | undefined): string {
+  return c === 'regex' ? 'regex' : c === 'llm' ? 'LLM' : ''
+}
+
 function ChatMsg({
   msg,
   onChip,
@@ -421,7 +397,34 @@ function ChatMsg({
 }) {
   return (
     <div className={`rd-msg ${msg.role}`}>
-      <div className="rd-bubble">{msg.text}</div>
+      <div className="rd-bubble">
+        {msg.text}
+        {msg.role === 'child' && msg.audioUrl && (
+          <button
+            className="rd-audio-play-btn"
+            onClick={() => new Audio(msg.audioUrl).play()}
+            title="Play recording"
+            aria-label="Play recording"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <polygon points="2,1 12,7 2,13" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {msg.role === 'child' && msg.intentType && (
+        <div
+          className="rd-intent-meta"
+          title={msg.intentReason || 'Intent classification metadata'}
+        >
+          <span className={`rd-intent-badge rd-intent-type-${msg.intentType}`}>
+            {intentLabel(msg.intentType)}
+          </span>
+          <span className={`rd-intent-badge rd-intent-classifier-${msg.intentClassifier}`}>
+            {classifierLabel(msg.intentClassifier)}
+          </span>
+        </div>
+      )}
       {msg.chips && msg.chips.length > 0 && (
         <div className="rd-chips">
           {msg.chips.map((chip) => (

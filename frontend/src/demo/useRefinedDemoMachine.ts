@@ -36,6 +36,11 @@ export interface RefinedChatMsg {
   role: 'agent' | 'child' | 'system'
   text: string
   chips?: string[]
+  audioUrl?: string
+  // Intent classification metadata, populated after the user's message is classified.
+  intentType?: string
+  intentClassifier?: 'regex' | 'llm'
+  intentReason?: string
 }
 
 export interface RefinedState {
@@ -85,8 +90,27 @@ const CANCELLED = Symbol('cancelled')
 function agentMsg(text: string, chips?: string[]): RefinedChatMsg {
   return { role: 'agent', text, chips }
 }
-function childMsg(text: string): RefinedChatMsg {
-  return { role: 'child', text }
+function childMsg(text: string, audioUrl?: string): RefinedChatMsg {
+  return { role: 'child', text, audioUrl }
+}
+
+function updateLastChildMsgIntent(
+  msgs: RefinedChatMsg[],
+  intent: { type: string; classifier: 'regex' | 'llm'; reason: string }
+): RefinedChatMsg[] {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'child') {
+      const updated = [...msgs]
+      updated[i] = {
+        ...updated[i],
+        intentType: intent.type,
+        intentClassifier: intent.classifier,
+        intentReason: intent.reason,
+      }
+      return updated
+    }
+  }
+  return msgs
 }
 function sysMsg(text: string): RefinedChatMsg {
   return { role: 'system', text }
@@ -103,6 +127,19 @@ export function useRefinedDemoMachine() {
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
+  // Object URLs for recorded user utterances; revoked on stop/unmount to avoid leaks.
+  const audioUrlsRef = useRef<string[]>([])
+
+  const revokeAudioUrls = useCallback(() => {
+    audioUrlsRef.current.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url)
+      } catch {
+        // ignore invalid urls
+      }
+    })
+    audioUrlsRef.current = []
+  }, [])
 
   const abortCurrentCapture = useCallback(() => {
     const ctrl = captureAbortRef.current
@@ -120,6 +157,7 @@ export function useRefinedDemoMachine() {
       tokenRef.current++ // abort any in-flight run
       killSpeech()
       abortCurrentCapture()
+      revokeAudioUrls()
     }
   }, [abortCurrentCapture])
 
@@ -204,7 +242,10 @@ export function useRefinedDemoMachine() {
 
     dispatch({ ...INIT, stage: 'LISTENING', messages: msgs, statusText: "I'm listening…" })
 
-    const session = openActionSession()
+    // Stable session ID shared by the intent classifier HTTP calls and the
+    // persistent action websocket so Langfuse groups everything in one trace.
+    const sessionId = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const session = openActionSession(sessionId)
 
     const addMsg = (msg: RefinedChatMsg) => {
       msgs = [...msgs, msg]
@@ -215,20 +256,20 @@ export function useRefinedDemoMachine() {
     // A per-call `settled` flag guards against late resolutions leaking into
     // a subsequent turn (e.g. captureUtterance's .then firing after a chip
     // click already resolved this promise).
-    const listenOrInject = async (): Promise<string> => {
-      return new Promise<string>((resolve) => {
+    const listenOrInject = async (): Promise<{ text: string; audioUrl?: string }> => {
+      return new Promise<{ text: string; audioUrl?: string }>((resolve) => {
         const ctrl = new AbortController()
         let settled = false
-        const settle = (val: string) => {
+        const settle = (val: string, audioUrl?: string) => {
           if (settled) return
           settled = true
           chipResolverRef.current = null
           if (captureAbortRef.current === ctrl) captureAbortRef.current = null
-          resolve(val)
+          resolve({ text: val, audioUrl })
         }
 
         captureAbortRef.current = ctrl
-        chipResolverRef.current = settle
+        chipResolverRef.current = (text: string) => settle(text)
 
         captureUtterance({
           onLevel: (rms) => dispatch({ micLevel: rms }),
@@ -236,9 +277,11 @@ export function useRefinedDemoMachine() {
         })
           .then((blob) => {
             if (settled) return
+            const audioUrl = URL.createObjectURL(blob)
+            audioUrlsRef.current.push(audioUrl)
             sendAudioForTranscript(blob)
-              .then((t) => settle(t))
-              .catch(() => settle(''))
+              .then((t) => settle(t, audioUrl))
+              .catch(() => settle('', audioUrl))
           })
           .catch(() => {
             // Always settle with empty on any error (including AbortError).
@@ -302,7 +345,7 @@ export function useRefinedDemoMachine() {
           followActive,
         })
 
-        const transcript = await listenOrInject()
+        const { text: transcript, audioUrl } = await listenOrInject()
         active()
 
         if (!transcript.trim()) {
@@ -313,10 +356,12 @@ export function useRefinedDemoMachine() {
         // classify-intent LLM roundtrip — so they get instant feedback that
         // they were heard. Otherwise there's a visible ~1–2s gap between
         // finishing a sentence and the text appearing.
-        addMsg(childMsg(transcript))
+        addMsg(childMsg(transcript, audioUrl))
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-        const intentResult = await classifyIntent(transcript, followActive, msgs)
+        const intentResult = await classifyIntent(transcript, followActive, msgs, sessionId)
         active()
+        msgs = updateLastChildMsgIntent(msgs, intentResult)
+        dispatch({ messages: msgs })
 
         // ── clarification: ask a follow-up, loop back ──
         if (intentResult.type === 'clarification') {
@@ -327,7 +372,7 @@ export function useRefinedDemoMachine() {
         // ── conversation: chat/question — send to router, no approval modal ──
         if (intentResult.type === 'conversation') {
           dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
-          const chatResult = await session.sendText(intentResult.text)
+          const chatResult = await session.sendText(intentResult.text, 'conversation')
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
           dispatch({ orbState: 'listening' })
@@ -346,7 +391,11 @@ export function useRefinedDemoMachine() {
             continue
           }
           dispatch({ orbState: 'thinking', statusText: 'Applying…' })
-          const chatResult = await session.sendText(intentResult.description)
+          const chatResult = await session.sendText(
+            transcript,
+            'motion',
+            intentResult.description,
+          )
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'Save current pose']))
           dispatch({ orbState: 'listening' })
@@ -357,7 +406,7 @@ export function useRefinedDemoMachine() {
         const intent = intentResult.intent
         // ── follow_start ──
         if (intent === 'follow_start') {
-          const result = await session.sendText(transcript)
+          const result = await session.sendText(transcript, 'immediate')
           active()
           addMsg(agentMsg(
             result.content || "I'm now following your movements!",
@@ -370,7 +419,7 @@ export function useRefinedDemoMachine() {
 
         // ── follow_stop ──
         if (intent === 'follow_stop') {
-          const result = await session.sendText(transcript)
+          const result = await session.sendText(transcript, 'immediate')
           active()
           addMsg(agentMsg(
             result.content || 'Stopped following.',
@@ -385,10 +434,40 @@ export function useRefinedDemoMachine() {
         if (intent === 'save_robot_pose') {
           addMsg(agentMsg("What would you like to name this pose?"))
           dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-          const nameText = await listenOrInject()
+          const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
           active()
           dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+          addMsg(childMsg(nameText, nameAudioUrl))
           const poseName = nameText.trim() || `Pose ${Date.now()}`
+          await saveCurrentPose(poseName)
+          active()
+          savedPoses = await listPoses()
+          active()
+          addMsg(sysMsg(`Saved as "${poseName}"!`))
+          addMsg(agentMsg(
+            `"${poseName}" is saved! Say a pose name to have me strike it, or let's keep going!`,
+            ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ savedPoses, stage: 'LISTENING', capturedFrame: null })
+          continue
+        }
+
+        // ── naming: launch the full save-and-name workflow ──
+        if (intent === 'naming') {
+          const suggestedName = (intentResult as { name?: string }).name?.trim()
+          let poseName: string
+          if (suggestedName) {
+            poseName = suggestedName
+            addMsg(sysMsg(`Saving as "${poseName}"!`))
+          } else {
+            addMsg(agentMsg("What would you like to name this pose?"))
+            dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+            const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
+            active()
+            dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+            addMsg(childMsg(nameText, nameAudioUrl))
+            poseName = nameText.trim() || `Pose ${Date.now()}`
+          }
           await saveCurrentPose(poseName)
           active()
           savedPoses = await listPoses()
@@ -427,15 +506,17 @@ export function useRefinedDemoMachine() {
           while (true) {
             active()
             dispatch({ orbState: 'listening', statusText: 'Pick a pose or say "make another"', micLevel: 0 })
-            const lt = await listenOrInject()
+            const { text: lt, audioUrl: ltAudioUrl } = await listenOrInject()
             active()
             if (!lt.trim()) continue
             // Show the child transcript before classify-intent so the user
             // sees their words appear immediately.
-            addMsg(childMsg(lt))
+            addMsg(childMsg(lt, ltAudioUrl))
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-            const liResult = await classifyIntent(lt, false, msgs)
+            const liResult = await classifyIntent(lt, false, msgs, sessionId)
             active()
+            msgs = updateLastChildMsgIntent(msgs, liResult)
+            dispatch({ messages: msgs })
 
             if (liResult.type === 'clarification') {
               addMsg(agentMsg(liResult.question, ['Make another', 'Follow my movement']))
@@ -449,14 +530,14 @@ export function useRefinedDemoMachine() {
                 addMsg(agentMsg("Got it — what would you like to do instead?", ['Make another', 'Follow my movement']))
                 continue
               }
-              const lr = await session.sendText(liResult.description)
+              const lr = await session.sendText(lt, 'motion', liResult.description)
               active()
               addMsg(agentMsg(lr.content || ''))
               dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
               break
             }
 
-            const li = liResult.intent
+            const li = liResult.type === 'immediate' ? liResult.intent : undefined
             if (li === 'exit') {
               savedPoses = await listPoses()
               active()
@@ -507,15 +588,18 @@ export function useRefinedDemoMachine() {
               dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: 'listening', statusText: 'Listening for tweaks…' })
               let satisfied = false
               let followEscape = false
+              let suggestedName: string | null = null
               while (!satisfied) {
                 active()
                 dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
-                const ft = await listenOrInject()
+                const { text: ft, audioUrl: ftAudioUrl } = await listenOrInject()
                 active()
                 if (!ft.trim()) continue
-                addMsg(childMsg(ft))
-                const ftResult = await classifyIntent(ft, false, msgs)
+                addMsg(childMsg(ft, ftAudioUrl))
+                const ftResult = await classifyIntent(ft, false, msgs, sessionId)
                 active()
+                msgs = updateLastChildMsgIntent(msgs, ftResult)
+                dispatch({ messages: msgs })
                 if (ftResult.type === 'clarification') {
                   addMsg(agentMsg(ftResult.question))
                   continue
@@ -524,7 +608,10 @@ export function useRefinedDemoMachine() {
                   followEscape = true
                   break
                 }
-                if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+                if (ftResult.type === 'immediate' && (ftResult.intent === 'save_robot_pose' || ftResult.intent === 'naming')) {
+                  if (ftResult.intent === 'naming' && ftResult.name?.trim()) {
+                    suggestedName = ftResult.name.trim()
+                  }
                   satisfied = true
                   break
                 }
@@ -536,24 +623,35 @@ export function useRefinedDemoMachine() {
                   continue
                 }
                 dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-                const fr = await session.sendText(ftDesc)
+                const fr = await session.sendText(
+                  ft,
+                  ftResult.type === 'motion' ? 'motion' : 'conversation',
+                  ftResult.type === 'motion' ? ftResult.description : undefined,
+                )
                 active()
                 addMsg(agentMsg(fr.content || ''))
                 if (fr.satisfied === true) satisfied = true
               }
               if (followEscape) {
-                const result = await session.sendText('follow my movement')
+                const result = await session.sendText('follow my movement', 'immediate')
                 active()
                 addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
                 followActive = true
                 dispatch({ followActive: true, capturedFrame: null })
                 break  // exit library inner loop → main loop continues
               }
-              dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-              const nameText = await listenOrInject()
-              active()
-              dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-              const poseName = nameText.trim() || `Pose ${Date.now()}`
+              let poseName: string
+              if (suggestedName) {
+                poseName = suggestedName
+                addMsg(sysMsg(`Saving as "${poseName}"!`))
+              } else {
+                dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+                const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
+                active()
+                dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+                addMsg(childMsg(nameText, nameAudioUrl))
+                poseName = nameText.trim() || `Pose ${Date.now()}`
+              }
               await saveCurrentPose(poseName)
               active()
               savedPoses = await listPoses()
@@ -569,7 +667,10 @@ export function useRefinedDemoMachine() {
               continue
             }
             // General command from library view (childMsg already added above)
-            const lr = await session.sendText(lt)
+            const lr = await session.sendText(
+              lt,
+              liResult.type === 'conversation' ? 'conversation' : 'immediate',
+            )
             active()
             addMsg(agentMsg(lr.content || ''))
             if (li !== 'library') {
@@ -586,7 +687,7 @@ export function useRefinedDemoMachine() {
 
           if (followActive) {
             // Robot already mirrors the user — freeze it in place, skip countdown/camera.
-            await session.sendText('stop following').catch(() => {})
+            await session.sendText('stop following', 'immediate').catch(() => {})
             followActive = false
             dispatch({ followActive: false })
             active()
@@ -643,15 +744,18 @@ export function useRefinedDemoMachine() {
           // FINETUNE loop
           let satisfied = false
           let followEscape = false
+          let suggestedName: string | null = null
           while (!satisfied) {
             active()
             dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
-            const ft = await listenOrInject()
+            const { text: ft, audioUrl: ftAudioUrl } = await listenOrInject()
             active()
             if (!ft.trim()) continue
-            addMsg(childMsg(ft))
-            const ftResult = await classifyIntent(ft, false, msgs)
+            addMsg(childMsg(ft, ftAudioUrl))
+            const ftResult = await classifyIntent(ft, false, msgs, sessionId)
             active()
+            msgs = updateLastChildMsgIntent(msgs, ftResult)
+            dispatch({ messages: msgs })
             if (ftResult.type === 'clarification') {
               addMsg(agentMsg(ftResult.question))
               continue
@@ -660,7 +764,10 @@ export function useRefinedDemoMachine() {
               followEscape = true
               break
             }
-            if (ftResult.type === 'immediate' && ftResult.intent === 'save_robot_pose') {
+            if (ftResult.type === 'immediate' && (ftResult.intent === 'save_robot_pose' || ftResult.intent === 'naming')) {
+              if (ftResult.intent === 'naming' && ftResult.name?.trim()) {
+                suggestedName = ftResult.name.trim()
+              }
               satisfied = true
               break
             }
@@ -672,14 +779,18 @@ export function useRefinedDemoMachine() {
               continue
             }
             dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-            const fr = await session.sendText(ftDesc)
+            const fr = await session.sendText(
+              ft,
+              ftResult.type === 'motion' ? 'motion' : 'conversation',
+              ftResult.type === 'motion' ? ftResult.description : undefined,
+            )
             active()
             addMsg(agentMsg(fr.content || ''))
             if (fr.satisfied === true) satisfied = true
           }
 
           if (followEscape) {
-            const result = await session.sendText('follow my movement')
+            const result = await session.sendText('follow my movement', 'immediate')
             active()
             addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
             followActive = true
@@ -688,11 +799,18 @@ export function useRefinedDemoMachine() {
           }
 
           // NAMING
-          dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-          const nameText = await listenOrInject()
-          active()
-          dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-          const poseName = nameText.trim() || `Pose ${Date.now()}`
+          let poseName: string
+          if (suggestedName) {
+            poseName = suggestedName
+            addMsg(sysMsg(`Saving as "${poseName}"!`))
+          } else {
+            dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
+            const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
+            active()
+            dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+            addMsg(childMsg(nameText, nameAudioUrl))
+            poseName = nameText.trim() || `Pose ${Date.now()}`
+          }
 
           await saveCurrentPose(poseName)
           active()
@@ -724,9 +842,10 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    revokeAudioUrls()
     setRobotState('IDLE')
     dispatch({ ...INIT })
-  }, [abortCurrentCapture])
+  }, [abortCurrentCapture, revokeAudioUrls])
 
   const goToLibrary = useCallback(async () => {
     tokenRef.current++

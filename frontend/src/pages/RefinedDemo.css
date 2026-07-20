@@ -577,6 +577,106 @@
   font-size: 14px;
   line-height: 1.5;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rd-audio-play-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.rd-audio-play-btn:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.rd-audio-play-btn:active {
+  transform: scale(0.92);
+}
+
+.rd-msg.agent .rd-audio-play-btn,
+.rd-msg.system .rd-audio-play-btn {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.rd-msg.agent .rd-audio-play-btn:hover,
+.rd-msg.system .rd-audio-play-btn:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* Intent classification metadata badges (child/user messages only) */
+.rd-intent-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-right: 4px;
+  align-self: flex-end;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.rd-intent-badge {
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition: transform 0.1s ease, opacity 0.15s ease;
+}
+
+.rd-intent-meta:hover .rd-intent-badge {
+  transform: translateY(-1px);
+}
+
+/* Intent type colors */
+.rd-intent-type-motion {
+  background: #E3F2FD;
+  color: #1565C0;
+  border-color: #BBDEFB;
+}
+
+.rd-intent-type-conversation {
+  background: #F3E5F5;
+  color: #7B1FA2;
+  border-color: #E1BEE7;
+}
+
+.rd-intent-type-clarification {
+  background: #FFF3E0;
+  color: #EF6C00;
+  border-color: #FFE0B2;
+}
+
+.rd-intent-type-immediate {
+  background: #E8F5E9;
+  color: #2E7D32;
+  border-color: #C8E6C9;
+}
+
+/* Classifier colors */
+.rd-intent-classifier-regex {
+  background: #E0F7FA;
+  color: #00838F;
+  border-color: #B2EBF2;
+}
+
+.rd-intent-classifier-llm {
+  background: #FBE9E7;
+  color: #D84315;
+  border-color: #FFCCBC;
 }
 
 .rd-msg.agent .rd-bubble {

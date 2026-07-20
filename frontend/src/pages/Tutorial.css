@@ -19,8 +19,18 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.tut-return-stand {
+.tut-facilitator-hint {
   position: fixed; top: 18px; right: 18px; z-index: 60;
+  width: 34px; height: 34px; border-radius: 50%;
+  font-family: 'Nunito', system-ui, sans-serif; font-weight: 800; font-size: 16px;
+  color: #A69FB0; background: #FFFDF8;
+  border: 2px solid rgba(44,39,64,.14);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px rgba(40,30,20,.12); transition: transform .15s, box-shadow .15s;
+}
+.tut-facilitator-hint:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(40,30,20,.18); color: #8A8398; }
+
+.tut-return-stand {
   font-family: 'Nunito', system-ui, sans-serif; font-weight: 800; font-size: 14px;
   color: #2C2740; background: #FFFDF8;
   border: 2px solid rgba(44,39,64,.14); border-radius: 999px;
@@ -737,6 +747,43 @@
 .tut-capture-live, .tut-capture-frame {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; display: block;
+}
+
+/* Thumbnail shown inside the right panel after a capture. */
+.tut-capture-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 18px;
+  border: 2px solid #F2E9DA;
+  box-shadow: 0 8px 22px rgba(40,30,20,.1);
+}
+
+/* Follow-mode badge used in the sim panel overlay. */
+.tut-follow-badge {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(4px);
+  padding: 9px 16px;
+  border-radius: 999px;
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+  pointer-events: none;
+}
+.tut-follow-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #3FA76B;
+  box-shadow: 0 0 0 4px rgba(63,167,107,.3);
+  animation: softpulse 1.3s infinite;
 }
 .tut-capture-countdown {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
