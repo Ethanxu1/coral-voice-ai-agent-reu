@@ -34,9 +34,9 @@ _SETTLE_SECONDS = 1.5
 # A pose "fell" when the settled head height drops below this fraction of the
 # settled STAND head height. Calibration points (from leg_bucket_test runs):
 # stand head_z ≈ 0.358, deepest legitimate crouch ("low" bucket) ≈ 0.322 (~0.90x),
-# fallen flat ≈ 0.1 or less (~0.3x) — 0.75 cleanly separates the two regimes.
+# fallen flat ≈ 0.1 or less (~0.3x) — 0.70 cleanly separates the two regimes.
 # Overridable via FALL_HEAD_HEIGHT_FRAC for tuning without a code change.
-_DEFAULT_FALL_HEAD_FRAC = float(os.getenv("FALL_HEAD_HEIGHT_FRAC", "0.75"))
+_DEFAULT_FALL_HEAD_FRAC = float(os.getenv("FALL_HEAD_HEIGHT_FRAC", "0.70"))
 
 
 class StabilityChecker:

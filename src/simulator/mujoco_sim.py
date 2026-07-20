@@ -108,12 +108,24 @@ class AiNexSimulator:
             # for that recentered frame, so the client must bake this offset into
             # the raw STL (v_proc = R(mesh_quat)^T @ (v_raw - mesh_pos)) or every
             # link renders displaced by its own centroid ("exploded" robot).
+            # Associate the geom with the joint of its owning body so the
+            # browser viewer can map a clicked mesh back to a joint (manual
+            # mode). MuJoCo joint names == our short names (see ainex.xml);
+            # bodies with no joint (or the root freejoint) get None.
+            body_id = int(self.model.geom_bodyid[gid])
+            jnt_id = int(self.model.body_jntadr[body_id])
+            geom_joint: str | None = None
+            if jnt_id >= 0:
+                jnt_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, jnt_id)
+                if jnt_name in self.JOINT_NAMES:
+                    geom_joint = jnt_name
             self._render_geom_ids.append(gid)
             self._render_geoms.append({
                 "mesh": mesh_name,
                 "rgba": [float(c) for c in rgba],
                 "mesh_pos": [float(c) for c in self.model.mesh_pos[mesh_id]],
                 "mesh_quat": [float(c) for c in self.model.mesh_quat[mesh_id]],  # wxyz
+                "joint": geom_joint,
             })
 
         self._viewer_thread: threading.Thread | None = None
@@ -431,6 +443,52 @@ class AiNexSimulator:
         setup time and thereafter only needs the streamed numbers.
         """
         return self._render_geoms
+
+    def get_joint_metadata(self) -> dict:
+        """Static per-joint metadata for the browser viewer's manual mode.
+
+        Per joint (short name): rotation limits in sim radians (from
+        validation.JOINT_LIMITS, the same source move_joint clamps with, falling
+        back to the model's mechanical range) and the render-geom indices that
+        belong to it (matching get_geom_poses() order), so the client can map
+        hovered/clicked meshes to joints.
+        """
+        joints: dict[str, dict] = {}
+        for short_name in self.JOINT_NAMES:
+            limit = JOINT_LIMITS.get(short_name)
+            if limit is not None:
+                lo, hi = limit.min, limit.max
+            else:
+                jnt_id = self._joint_ids[short_name]
+                lo, hi = (float(v) for v in self.model.jnt_range[jnt_id])
+            joints[short_name] = {"min": lo, "max": hi, "geom_indices": []}
+        for idx, geom in enumerate(self._render_geoms):
+            if geom["joint"] is not None:
+                joints[geom["joint"]]["geom_indices"].append(idx)
+        return joints
+
+    def get_joint_frames(self) -> list[dict]:
+        """Live per-joint world frame for the browser viewer's manual mode.
+
+        Per joint (short name): current angle (rad), world-space anchor
+        (xanchor) and rotation axis (xaxis), all in the MuJoCo world frame
+        (Z-up). The client uses the anchor/axis to place a rotation gizmo and
+        the angle for tooltips.
+        """
+        with self._lock:
+            # Refresh FK so xanchor/xaxis/qpos are current even when the physics
+            # loop isn't stepping (same reasoning as get_geom_poses).
+            mujoco.mj_forward(self.model, self.data)
+            frames = []
+            for short_name in self.JOINT_NAMES:
+                jnt_id = self._joint_ids[short_name]
+                frames.append({
+                    "name": short_name,
+                    "angle": float(self.data.qpos[self.model.jnt_qposadr[jnt_id]]),
+                    "pos": [float(v) for v in self.data.xanchor[jnt_id]],
+                    "axis": [float(v) for v in self.data.xaxis[jnt_id]],
+                })
+        return frames
 
     def get_geom_poses(self) -> bytes:
         """World-space pose of every render geom as a packed float32 buffer.
