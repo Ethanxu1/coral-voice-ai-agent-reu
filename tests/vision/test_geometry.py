@@ -21,7 +21,7 @@ import math
 import numpy as np
 import pytest
 
-from coral_agent.vision import geometry
+from vision import geometry
 
 
 # ── Canonical landmark positions ───────────────────────────────────────────────

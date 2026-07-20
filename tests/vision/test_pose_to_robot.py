@@ -21,9 +21,9 @@ import math
 
 import pytest
 
-from coral_agent.robot.hardware_angle_utils import HW_STAND_RAD
-from coral_agent.validation import JOINT_LIMITS
-from coral_agent.vision.pose_to_robot import (
+from robot.hardware_angle_utils import HW_STAND_RAD
+from validation import JOINT_LIMITS
+from vision.pose_to_robot import (
     _STAND_L_SHO_ROLL,
     _STAND_R_SHO_ROLL,
     compute_joint_targets,

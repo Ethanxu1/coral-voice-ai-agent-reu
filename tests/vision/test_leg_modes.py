@@ -12,10 +12,10 @@ import math
 
 import pytest
 
-from coral_agent.robot import motions
-from coral_agent.robot.hardware_angle_utils import hardware_units_to_rad
-from coral_agent.robot.servo_config import STAND_PULSE
-from coral_agent.vision import leg_modes
+from robot import motions
+from robot.hardware_angle_utils import hardware_units_to_rad
+from robot.servo_config import STAND_PULSE
+from vision import leg_modes
 
 
 def _empty_landmark() -> dict:
@@ -51,7 +51,7 @@ def test_strip_legs_keeps_arms_and_head():
 def test_leg_pulses_to_targets_stand_maps_to_calibrated_anchor():
     """Stand pulses invert to the calibrated stand radians (HW_STAND_RAD) — not
     necessarily 0, since the stand is a bent-knee stance after calibration."""
-    from coral_agent.robot.hardware_angle_utils import HW_STAND_RAD
+    from robot.hardware_angle_utils import HW_STAND_RAD
 
     stand = {j: STAND_PULSE[j] for j in leg_modes.LEG_JOINTS}
     targets = leg_modes.leg_pulses_to_targets(stand)
@@ -66,7 +66,7 @@ def test_classify_leg_targets_within_joint_limits():
     so their leg targets must fall within the sim limits. Guards the sim ==
     hardware clamp agreement: a canned pose exceeding a sim limit means the
     two tables have drifted apart again."""
-    from coral_agent.validation import JOINT_LIMITS
+    from validation import JOINT_LIMITS
 
     targets = leg_modes.leg_pulses_to_targets(leg_modes.classify_leg_pulses("dab"))
     exceeded = [

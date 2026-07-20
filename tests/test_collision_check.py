@@ -4,8 +4,8 @@ import math
 
 import pytest
 
-from coral_agent.collision.collision_checker import CollisionChecker
-from coral_agent.simulator import AiNexSimulator
+from collision.collision_checker import CollisionChecker
+from simulator import AiNexSimulator
 
 
 @pytest.fixture(scope="module")
