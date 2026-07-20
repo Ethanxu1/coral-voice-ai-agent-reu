@@ -157,7 +157,13 @@ function RobotMeshes({
   )
 }
 
-export default function RobotViewer({ embedded = false }: { embedded?: boolean } = {}) {
+export default function RobotViewer({
+  embedded = false,
+  forcedMode,
+}: {
+  embedded?: boolean
+  forcedMode?: 'auto' | 'manual'
+} = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
@@ -168,7 +174,7 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
   const [comDeviance, setComDeviance] = useState<number | null>(null)
 
   // --- Manual mode: hover/click joints, rotate them with a gizmo ---
-  const [mode, setMode] = useState<ViewerMode>('auto')
+  const [mode, setMode] = useState<ViewerMode>(forcedMode ?? 'auto')
   const [hovered, setHovered] = useState<HoverInfo | null>(null)
   const [selectedJoint, setSelectedJoint] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -300,6 +306,7 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
     comDeviance == null ? '#94a3b8' : comDeviance > COM_DANGER_M ? '#f87171' : comDeviance > COM_WARN_M ? '#fbbf24' : '#4ade80'
 
   const switchMode = (next: ViewerMode) => {
+    if (forcedMode) return
     setMode(next)
     if (next === 'auto') {
       setHovered(null)
@@ -375,28 +382,54 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
       )}
 
       {/* Mode toggle: automatic (agent drives the sim) vs manual (user rotates
-          joints with the mouse). Shown embedded and standalone. */}
-      <div
-        style={{
-          position: 'absolute',
-          zIndex: 2,
-          top: 12,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          display: 'flex',
-          gap: 4,
-          padding: 4,
-          borderRadius: 7,
-          background: 'rgba(21, 21, 26, 0.7)',
-        }}
-      >
-        <button style={modeButtonStyle(mode === 'auto')} onClick={() => switchMode('auto')}>
-          Automatic
-        </button>
-        <button style={modeButtonStyle(mode === 'manual')} onClick={() => switchMode('manual')}>
-          Manual
-        </button>
-      </div>
+          joints with the mouse). Hidden when the parent forces a mode. */}
+      {!forcedMode && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 2,
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            gap: 4,
+            padding: 4,
+            borderRadius: 7,
+            background: 'rgba(21, 21, 26, 0.7)',
+          }}
+        >
+          <button style={modeButtonStyle(mode === 'auto')} onClick={() => switchMode('auto')}>
+            Automatic
+          </button>
+          <button style={modeButtonStyle(mode === 'manual')} onClick={() => switchMode('manual')}>
+            Manual
+          </button>
+        </div>
+      )}
+
+      {/* Manual-mode instruction label for the tutorial playground. */}
+      {forcedMode === 'manual' && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 2,
+            top: 12,
+            left: 12,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 12px',
+            borderRadius: 8,
+            background: 'rgba(21, 21, 26, 0.75)',
+            color: '#e2e8f0',
+            font: '13px Nunito, system-ui, sans-serif',
+            maxWidth: 280,
+          }}
+        >
+          <span style={{ fontSize: 16 }}>👆</span>
+          Click a body part, then drag the ring to move it.
+        </div>
+      )}
 
       {/* Manual-mode tooltip: shows the hovered joint normally, and the active
           (selected/dragged) joint's angle when a gizmo is in use. PointerEvents
