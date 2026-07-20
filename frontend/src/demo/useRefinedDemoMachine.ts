@@ -19,6 +19,7 @@ import {
   sleep,
   type ServoCommand,
 } from './api'
+import { getRobotConfig } from './robotConfig'
 
 export type RefinedStage =
   | 'IDLE'
@@ -309,10 +310,24 @@ export function useRefinedDemoMachine() {
     // the capture flow instead of pretending the pose landed.
     const moveWithSafetyCheck = async (commands: ServoCommand[]): Promise<boolean> => {
       dispatch({ safetyChecking: true, orbState: 'thinking', statusText: 'Running safety check…' })
-      const [result] = await Promise.all([
-        move(commands).catch(() => null),
-        sleep(1500),
-      ])
+      const simOnly = getRobotConfig().simOnly
+      let result
+      try {
+        [result] = await Promise.all([
+          move(commands, simOnly),
+          sleep(1500),
+        ])
+      } catch (error) {
+        dispatch({ safetyChecking: false })
+        const detail = error instanceof Error ? error.message : 'move failed'
+        addMsg(agentMsg(
+          simOnly
+            ? `I couldn't move the simulation: ${detail}`
+            : `I moved the simulation, but I couldn't reach the robot server: ${detail}`,
+          ['Try again'],
+        ))
+        return false
+      }
       dispatch({ safetyChecking: false })
       if (result && result.safety.fallBlocked) {
         addMsg(agentMsg(
