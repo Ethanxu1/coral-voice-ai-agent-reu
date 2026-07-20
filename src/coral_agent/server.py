@@ -202,6 +202,7 @@ def _sync_sim_to_hardware() -> None:
 
 
 _router_prompt_cache: str | None = None
+_chat_prompt_cache: str | None = None
 _whisper_prompt_cache: str | None = None
 
 
@@ -210,6 +211,13 @@ def get_router_prompt() -> str:
     if _router_prompt_cache is None:
         _router_prompt_cache = (Path(__file__).parent / "prompts" / "router.md").read_text(encoding="utf-8")
     return _router_prompt_cache
+
+
+def get_chat_prompt() -> str:
+    global _chat_prompt_cache
+    if _chat_prompt_cache is None:
+        _chat_prompt_cache = (Path(__file__).parent / "prompts" / "chat.md").read_text(encoding="utf-8")
+    return _chat_prompt_cache
 
 
 def get_whisper_prompt() -> str:
@@ -1398,6 +1406,80 @@ async def process_chat_message(
         return response_data
 
 
+@observe(name="process_conversation_message")
+async def process_conversation_message(
+    user_message: str,
+    memory: "HierarchicalMemory",
+    recorder: "ConversationRecorder",
+    session_id: str,
+) -> dict:
+    """Handle a conversational message with the chat LLM, not the motion planner."""
+    langfuse = get_client()
+
+    with propagate_attributes(
+        session_id=session_id,
+        user_id="coral-user",
+        tags=["coral-agent", "conversation"],
+    ):
+        langfuse.update_current_span(input=user_message)
+
+        robot_state = _get_robot_state()
+        state_description = describe_joint_state(robot_state)
+        memory_ctx = memory.get_context_for_llm()
+
+        saved_names = list_pose_names()
+        saved_line = f"SAVED_POSES: {json.dumps(saved_names)}\n" if saved_names else ""
+        contextual_message = (
+            saved_line
+            + f"CURRENT_STATE: {json.dumps(convert_state_to_degrees(robot_state))}\n"
+            f"STATE_DESCRIPTION: {state_description}\n\n"
+            f"USER_MESSAGE: {user_message}"
+        )
+
+        @observe(name="chat_llm")
+        def run_chat_llm():
+            prompt = get_chat_prompt()
+            messages = [
+                {"role": "system", "content": prompt},
+                *memory_ctx,
+                {"role": "user", "content": contextual_message},
+            ]
+            response = openai.chat.completions.create(
+                model=LLM_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                name="chat-response",
+            )
+            return response.choices[0].message.content
+
+        response_text = await asyncio.to_thread(run_chat_llm)
+        try:
+            data = json.loads(response_text)
+            response = data.get("verbal_response", "")
+        except Exception:
+            response = "I'm not sure what to say to that."
+
+        memory.add_exchange(user_message, response, [])
+        recorder.log_interaction(
+            user_message=user_message,
+            assistant_response=response,
+            waypoints_extracted=[],
+            waypoints_executed=[],
+            router_response={"verbal_response": response},
+        )
+
+        result = {
+            "type": "chat_response",
+            "role": "assistant",
+            "content": response,
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+            "satisfied": None,
+        }
+        langfuse.update_current_span(output=result)
+        return result
+
+
 _FOLLOW_START_RE = re.compile(
     r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+moves)\b",
     re.IGNORECASE,
@@ -1604,20 +1686,44 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "chat":
                 # Chat message - process with full Langfuse tracing
                 user_message = message_data.get("content", "")
+                intent_type = message_data.get("intent_type")
+                motion_description = message_data.get("description")
                 if save_dialog.stage != _SaveStage.IDLE:
                     if await handle_save_dialog(user_message, save_dialog, websocket):
                         continue
                 if await try_handle_system_intent(user_message, websocket, save_dialog):
                     continue
-                response_data = await process_chat_message(
-                    user_message=user_message,
-                    memory=memory,
-                    state_manager=state_manager,
-                    recorder=recorder,
-                    simulator_instance=simulator,
-                    session_id=session_id,
-                    on_action_started=lambda: websocket.send_json({"type": "action_started"}),
-                )
+
+                # Route conversation/clarification to the chat LLM and finalized
+                # motion descriptions to the motion planner. If no intent_type is
+                # provided, fall back to the legacy motion-planner-only behavior.
+                if intent_type == "conversation":
+                    response_data = await process_conversation_message(
+                        user_message=user_message,
+                        memory=memory,
+                        recorder=recorder,
+                        session_id=session_id,
+                    )
+                elif intent_type == "motion" and motion_description:
+                    response_data = await process_chat_message(
+                        user_message=motion_description,
+                        memory=memory,
+                        state_manager=state_manager,
+                        recorder=recorder,
+                        simulator_instance=simulator,
+                        session_id=session_id,
+                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
+                    )
+                else:
+                    response_data = await process_chat_message(
+                        user_message=user_message,
+                        memory=memory,
+                        state_manager=state_manager,
+                        recorder=recorder,
+                        simulator_instance=simulator,
+                        session_id=session_id,
+                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
+                    )
                 await websocket.send_json(response_data)
 
             elif msg_type == "audio":

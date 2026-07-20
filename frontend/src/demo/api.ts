@@ -468,7 +468,12 @@ export function sendAudioForAction(
 // (and the Langfuse trace) span every turn.
 export interface ActionSession {
   sendAudio(blob: Blob, timeoutMs?: number): Promise<ActionResult>
-  sendText(text: string, timeoutMs?: number): Promise<ActionResult>
+  sendText(
+    text: string,
+    intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
+    description?: string,
+    timeoutMs?: number,
+  ): Promise<ActionResult>
   close(): void
 }
 
@@ -560,10 +565,13 @@ export function openActionSession(sessionId?: string): ActionSession {
       const base64 = await blobToBase64(blob)
       return send({ type: 'audio', data: base64, format: 'webm' }, timeoutMs)
     },
-    async sendText(text, timeoutMs = 30000) {
+    async sendText(text, intentType, description, timeoutMs = 30000) {
       // Server won't emit a 'transcription' frame for text; seed it locally so the
       // caller sees what they typed as the "transcript" for UI parity with audio.
-      return send({ type: 'chat', content: text }, timeoutMs, text)
+      const payload: Record<string, unknown> = { type: 'chat', content: text }
+      if (intentType) payload.intent_type = intentType
+      if (description) payload.description = description
+      return send(payload, timeoutMs, text)
     },
     close() {
       closed = true
@@ -623,11 +631,13 @@ export function sleep(ms: number): Promise<void> {
 // Intent classifier result from /classify-intent.
 // The optional `name` field is populated for the `naming` intent when the user
 // supplies a suggested pose name (e.g. "save this as my cool pose").
+// `classifier` is either 'regex' or 'llm', and `reason` explains why that
+// classifier was chosen (useful for debugging the hybrid routing).
 export type IntentResult =
-  | { type: 'immediate'; intent: string; name?: string }
-  | { type: 'clarification'; question: string }
-  | { type: 'conversation'; text: string }
-  | { type: 'motion'; description: string }
+  | { type: 'immediate'; intent: string; name?: string; classifier: 'regex' | 'llm'; reason: string }
+  | { type: 'clarification'; question: string; classifier: 'regex' | 'llm'; reason: string }
+  | { type: 'conversation'; text: string; classifier: 'regex' | 'llm'; reason: string }
+  | { type: 'motion'; description: string; classifier: 'regex' | 'llm'; reason: string }
 
 export interface ChatMsg {
   role: 'agent' | 'child' | 'system'
@@ -658,13 +668,13 @@ export async function classifyIntent(
   })
   // If the classifier cannot confidently propose a concrete movement, fall back to
   // conversation so the agent chats/asks instead of showing the approve/reject modal.
-  if (!res.ok) return { type: 'conversation', text }
+  if (!res.ok) return { type: 'conversation', text, classifier: 'llm', reason: 'classifier request failed' }
   const data = await res.json()
   if (data.type === 'immediate' && data.intent) return data as IntentResult
   if (data.type === 'clarification' && data.question) return data as IntentResult
   if (data.type === 'conversation' && data.text) return data as IntentResult
   if (data.type === 'motion' && data.description) return data as IntentResult
-  return { type: 'conversation', text }
+  return { type: 'conversation', text, classifier: 'llm', reason: 'unrecognized classifier response' }
 }
 
 export async function listPoses(): Promise<string[]> {

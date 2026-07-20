@@ -154,3 +154,13 @@ class TestNoMatch:
     def test_genuinely_ambiguous(self):
         result = classify_intent_regex("do something cool")
         assert result is None
+
+
+class TestResponseMetadata:
+    def test_regex_response_includes_classifier_and_reason(self):
+        result = classify_intent_regex("follow me")
+        assert result is not None
+        response = result.to_response()
+        assert response["classifier"] == "regex"
+        assert response["reason"]
+        assert response["type"] == "immediate"

@@ -65,16 +65,17 @@ Critical distinction:
 - "Lower your head" → tilt the head down from current.
 - "Raise your arm" → if you can infer which arm from context, use `movement`; otherwise use `clarification`.
 
-Generate a precise, self-contained description that includes:
-1. Which joint(s) move — use plain language (e.g. "left shoulder forward", "right elbow bend", "head turn")
-2. The target angle in degrees — resolve to an absolute angle from CURRENT_STATE:
+Generate a precise, self-contained description that:
+- **Cleans up speech disfluencies** (repeated words, filler words like "and", "um", stutters). For example, "Move your arms and closer to each other" should become "Move arms closer together".
+- Names which joint(s) move — use plain language (e.g. "left shoulder forward", "right elbow bend", "head turn").
+- Resolves the target angle in degrees from CURRENT_STATE:
    - "a bit" ≈ 15–20°, "a lot" ≈ 30–45°
    - explicit deltas: add/subtract from current
    - Example: l_sho_pitch = 30°, "raise it a bit more" → target 50°
    - Example: r_sho_pitch = 60°, "lower by 15 degrees" → target 45°
-3. Direction if relevant — "forward/up" vs "sideways" for arms; "left/right" for head turn; "up/down" for head tilt; "in/out" for elbow rotate
-4. Always name left or right when applicable (infer from history and CURRENT_STATE if unspecified)
-5. Include a specific angle whenever you can resolve one; otherwise use a reasonable default
+- Includes direction if relevant — "forward/up" vs "sideways" for arms; "left/right" for head turn; "up/down" for head tilt; "in/out" for elbow rotate.
+- Always names left or right when applicable (infer from history and CURRENT_STATE if unspecified).
+- Includes a specific angle whenever you can resolve one; otherwise uses a reasonable default.
 
 Good movement descriptions (ready for the approval modal):
 - "Raise the left shoulder forward to 60 degrees"

@@ -37,6 +37,10 @@ export interface RefinedChatMsg {
   text: string
   chips?: string[]
   audioUrl?: string
+  // Intent classification metadata, populated after the user's message is classified.
+  intentType?: string
+  intentClassifier?: 'regex' | 'llm'
+  intentReason?: string
 }
 
 export interface RefinedState {
@@ -88,6 +92,25 @@ function agentMsg(text: string, chips?: string[]): RefinedChatMsg {
 }
 function childMsg(text: string, audioUrl?: string): RefinedChatMsg {
   return { role: 'child', text, audioUrl }
+}
+
+function updateLastChildMsgIntent(
+  msgs: RefinedChatMsg[],
+  intent: { type: string; classifier: 'regex' | 'llm'; reason: string }
+): RefinedChatMsg[] {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'child') {
+      const updated = [...msgs]
+      updated[i] = {
+        ...updated[i],
+        intentType: intent.type,
+        intentClassifier: intent.classifier,
+        intentReason: intent.reason,
+      }
+      return updated
+    }
+  }
+  return msgs
 }
 function sysMsg(text: string): RefinedChatMsg {
   return { role: 'system', text }
@@ -337,6 +360,8 @@ export function useRefinedDemoMachine() {
         dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
         const intentResult = await classifyIntent(transcript, followActive, msgs, sessionId)
         active()
+        msgs = updateLastChildMsgIntent(msgs, intentResult)
+        dispatch({ messages: msgs })
 
         // ── clarification: ask a follow-up, loop back ──
         if (intentResult.type === 'clarification') {
@@ -347,7 +372,7 @@ export function useRefinedDemoMachine() {
         // ── conversation: chat/question — send to router, no approval modal ──
         if (intentResult.type === 'conversation') {
           dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
-          const chatResult = await session.sendText(intentResult.text)
+          const chatResult = await session.sendText(intentResult.text, 'conversation')
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
           dispatch({ orbState: 'listening' })
@@ -366,7 +391,11 @@ export function useRefinedDemoMachine() {
             continue
           }
           dispatch({ orbState: 'thinking', statusText: 'Applying…' })
-          const chatResult = await session.sendText(intentResult.description)
+          const chatResult = await session.sendText(
+            transcript,
+            'motion',
+            intentResult.description,
+          )
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'Save current pose']))
           dispatch({ orbState: 'listening' })
@@ -377,7 +406,7 @@ export function useRefinedDemoMachine() {
         const intent = intentResult.intent
         // ── follow_start ──
         if (intent === 'follow_start') {
-          const result = await session.sendText(transcript)
+          const result = await session.sendText(transcript, 'immediate')
           active()
           addMsg(agentMsg(
             result.content || "I'm now following your movements!",
@@ -390,7 +419,7 @@ export function useRefinedDemoMachine() {
 
         // ── follow_stop ──
         if (intent === 'follow_stop') {
-          const result = await session.sendText(transcript)
+          const result = await session.sendText(transcript, 'immediate')
           active()
           addMsg(agentMsg(
             result.content || 'Stopped following.',
@@ -486,6 +515,8 @@ export function useRefinedDemoMachine() {
             dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
             const liResult = await classifyIntent(lt, false, msgs, sessionId)
             active()
+            msgs = updateLastChildMsgIntent(msgs, liResult)
+            dispatch({ messages: msgs })
 
             if (liResult.type === 'clarification') {
               addMsg(agentMsg(liResult.question, ['Make another', 'Follow my movement']))
@@ -499,7 +530,7 @@ export function useRefinedDemoMachine() {
                 addMsg(agentMsg("Got it — what would you like to do instead?", ['Make another', 'Follow my movement']))
                 continue
               }
-              const lr = await session.sendText(liResult.description)
+              const lr = await session.sendText(lt, 'motion', liResult.description)
               active()
               addMsg(agentMsg(lr.content || ''))
               dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
@@ -567,6 +598,8 @@ export function useRefinedDemoMachine() {
                 addMsg(childMsg(ft, ftAudioUrl))
                 const ftResult = await classifyIntent(ft, false, msgs, sessionId)
                 active()
+                msgs = updateLastChildMsgIntent(msgs, ftResult)
+                dispatch({ messages: msgs })
                 if (ftResult.type === 'clarification') {
                   addMsg(agentMsg(ftResult.question))
                   continue
@@ -590,13 +623,17 @@ export function useRefinedDemoMachine() {
                   continue
                 }
                 dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-                const fr = await session.sendText(ftDesc)
+                const fr = await session.sendText(
+                  ft,
+                  ftResult.type === 'motion' ? 'motion' : 'conversation',
+                  ftResult.type === 'motion' ? ftResult.description : undefined,
+                )
                 active()
                 addMsg(agentMsg(fr.content || ''))
                 if (fr.satisfied === true) satisfied = true
               }
               if (followEscape) {
-                const result = await session.sendText('follow my movement')
+                const result = await session.sendText('follow my movement', 'immediate')
                 active()
                 addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
                 followActive = true
@@ -630,7 +667,10 @@ export function useRefinedDemoMachine() {
               continue
             }
             // General command from library view (childMsg already added above)
-            const lr = await session.sendText(lt)
+            const lr = await session.sendText(
+              lt,
+              liResult.type === 'conversation' ? 'conversation' : 'immediate',
+            )
             active()
             addMsg(agentMsg(lr.content || ''))
             if (li !== 'library') {
@@ -647,7 +687,7 @@ export function useRefinedDemoMachine() {
 
           if (followActive) {
             // Robot already mirrors the user — freeze it in place, skip countdown/camera.
-            await session.sendText('stop following').catch(() => {})
+            await session.sendText('stop following', 'immediate').catch(() => {})
             followActive = false
             dispatch({ followActive: false })
             active()
@@ -714,6 +754,8 @@ export function useRefinedDemoMachine() {
             addMsg(childMsg(ft, ftAudioUrl))
             const ftResult = await classifyIntent(ft, false, msgs, sessionId)
             active()
+            msgs = updateLastChildMsgIntent(msgs, ftResult)
+            dispatch({ messages: msgs })
             if (ftResult.type === 'clarification') {
               addMsg(agentMsg(ftResult.question))
               continue
@@ -737,14 +779,18 @@ export function useRefinedDemoMachine() {
               continue
             }
             dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-            const fr = await session.sendText(ftDesc)
+            const fr = await session.sendText(
+              ft,
+              ftResult.type === 'motion' ? 'motion' : 'conversation',
+              ftResult.type === 'motion' ? ftResult.description : undefined,
+            )
             active()
             addMsg(agentMsg(fr.content || ''))
             if (fr.satisfied === true) satisfied = true
           }
 
           if (followEscape) {
-            const result = await session.sendText('follow my movement')
+            const result = await session.sendText('follow my movement', 'immediate')
             active()
             addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
             followActive = true

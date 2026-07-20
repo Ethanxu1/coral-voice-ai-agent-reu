@@ -616,6 +616,69 @@
   background: rgba(0, 0, 0, 0.15);
 }
 
+/* Intent classification metadata badges (child/user messages only) */
+.rd-intent-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-right: 4px;
+  align-self: flex-end;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.rd-intent-badge {
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition: transform 0.1s ease, opacity 0.15s ease;
+}
+
+.rd-intent-meta:hover .rd-intent-badge {
+  transform: translateY(-1px);
+}
+
+/* Intent type colors */
+.rd-intent-type-motion {
+  background: #E3F2FD;
+  color: #1565C0;
+  border-color: #BBDEFB;
+}
+
+.rd-intent-type-conversation {
+  background: #F3E5F5;
+  color: #7B1FA2;
+  border-color: #E1BEE7;
+}
+
+.rd-intent-type-clarification {
+  background: #FFF3E0;
+  color: #EF6C00;
+  border-color: #FFE0B2;
+}
+
+.rd-intent-type-immediate {
+  background: #E8F5E9;
+  color: #2E7D32;
+  border-color: #C8E6C9;
+}
+
+/* Classifier colors */
+.rd-intent-classifier-regex {
+  background: #E0F7FA;
+  color: #00838F;
+  border-color: #B2EBF2;
+}
+
+.rd-intent-classifier-llm {
+  background: #FBE9E7;
+  color: #D84315;
+  border-color: #FFCCBC;
+}
+
 .rd-msg.agent .rd-bubble {
   background: rgba(23,190,187,0.1);
   color: #2D2926;

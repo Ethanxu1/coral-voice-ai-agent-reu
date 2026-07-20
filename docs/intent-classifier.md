@@ -23,13 +23,13 @@ result = classify_intent(
 )
 ```
 
-Returned shapes match the `/classify-intent` endpoint:
+Returned shapes match the `/classify-intent` endpoint. Every response also includes `classifier` (`"regex"` or `"llm"`) and a `reason` string so the UI can show which classifier handled the message and why:
 
 ```json
-{"type": "immediate", "intent": "follow_start"}
-{"type": "motion", "description": "Turn head left"}
-{"type": "conversation", "text": "what can you do"}
-{"type": "clarification", "question": "Which arm?"}
+{"type": "immediate", "intent": "follow_start", "classifier": "regex", "reason": "High-confidence immediate pattern matched: follow_start"}
+{"type": "motion", "description": "Turn head left", "classifier": "regex", "reason": "Motion pattern matched"}
+{"type": "conversation", "text": "what can you do", "classifier": "regex", "reason": "High-confidence conversational pattern matched"}
+{"type": "clarification", "question": "Which arm?", "classifier": "llm", "reason": "LLM fallback (regex motion confidence 0.15)"}
 ```
 
 ## Matcher order
@@ -167,6 +167,22 @@ To add a new motion pattern, add a tuple to `_MOTION_PATTERNS` and update `_buil
 ```
 
 Make sure confidence penalties are applied for any required missing fields so ambiguous variants reach the LLM.
+
+## Routing in the Refined Demo
+
+The intent classifier is the router: only finalized motion descriptions reach the motion planner.
+
+| Classifier output | Frontend sends to `/ws` | Backend handler |
+|---|---|---|
+| `motion` | `{type: "chat", content: <raw>, intent_type: "motion", description: <clean description>}` | `process_chat_message` (motion planner) |
+| `conversation` | `{type: "chat", content: <raw>, intent_type: "conversation"}` | `process_conversation_message` (chat LLM) |
+| `immediate` | `{type: "chat", content: <raw>, intent_type: "immediate"}` | `try_handle_system_intent` |
+| `clarification` | nothing — frontend asks the follow-up question and loops | — |
+
+This means:
+- "Move your arm up" → classified as `clarification` → no backend call until the user clarifies.
+- "What can you do?" → classified as `conversation` → handled by `prompts/chat.md`, not the motion planner.
+- "Raise your right arm" → classified as `motion` → approval modal → motion planner receives the clean description.
 
 ## Testing
 

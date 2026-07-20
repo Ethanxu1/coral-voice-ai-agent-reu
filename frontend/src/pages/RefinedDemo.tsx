@@ -412,6 +412,20 @@ function TypingIndicator() {
   )
 }
 
+function intentLabel(type: string | undefined): string {
+  switch (type) {
+    case 'motion': return 'motion'
+    case 'conversation': return 'conversation'
+    case 'clarification': return 'clarification'
+    case 'immediate': return 'system command'
+    default: return type ?? 'unknown'
+  }
+}
+
+function classifierLabel(c: 'regex' | 'llm' | undefined): string {
+  return c === 'regex' ? 'regex' : c === 'llm' ? 'LLM' : ''
+}
+
 function ChatMsg({
   msg,
   onChip,
@@ -436,6 +450,19 @@ function ChatMsg({
           </button>
         )}
       </div>
+      {msg.role === 'child' && msg.intentType && (
+        <div
+          className="rd-intent-meta"
+          title={msg.intentReason || 'Intent classification metadata'}
+        >
+          <span className={`rd-intent-badge rd-intent-type-${msg.intentType}`}>
+            {intentLabel(msg.intentType)}
+          </span>
+          <span className={`rd-intent-badge rd-intent-classifier-${msg.intentClassifier}`}>
+            {classifierLabel(msg.intentClassifier)}
+          </span>
+        </div>
+      )}
       {msg.chips && msg.chips.length > 0 && (
         <div className="rd-chips">
           {msg.chips.map((chip) => (

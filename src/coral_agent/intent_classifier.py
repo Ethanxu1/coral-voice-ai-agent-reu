@@ -40,7 +40,7 @@ class ClassifiedIntent:
 
     def to_response(self) -> dict[str, Any]:
         """Convert to the response shape expected by /classify-intent."""
-        return {"type": self.type, **self.data}
+        return {"type": self.type, "classifier": "regex", "reason": self.reason, **self.data}
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +384,7 @@ def _llm_classify(
     state_description: str,
     saved_names: list[str],
     history: list[dict] | None,
+    regex_result: ClassifiedIntent | None = None,
     model: str = LLM_MODEL,
 ) -> dict[str, Any]:
     """Fallback to the LLM classifier when regex confidence is too low."""
@@ -411,7 +412,13 @@ def _llm_classify(
         max_completion_tokens=200,
     )
     content = response.choices[0].message.content or "{}"
-    return json.loads(content)
+    result = json.loads(content)
+    result["classifier"] = "llm"
+    reason = "LLM fallback"
+    if regex_result is not None:
+        reason += f" (regex {regex_result.type} confidence {regex_result.confidence:.2f})"
+    result["reason"] = reason
+    return result
 
 
 def _validate_llm_output(result: dict[str, Any]) -> dict[str, Any] | None:
@@ -490,6 +497,7 @@ def classify_intent(
             state_description=state_description,
             saved_names=saved_names or [],
             history=history,
+            regex_result=regex_result,
             model=model,
         )
         validated = _validate_llm_output(llm_output)
@@ -506,8 +514,15 @@ def classify_intent(
         if regex_result.type == "motion":
             return {
                 "type": "clarification",
+                "classifier": "regex",
+                "reason": f"regex {regex_result.type} low confidence ({regex_result.confidence:.2f}); LLM failed",
                 "question": f"Do you want me to {regex_result.data['description'].lower()}?",
             }
         return regex_result.to_response()
 
-    return {"type": "conversation", "text": text}
+    return {
+        "type": "conversation",
+        "classifier": "llm",
+        "reason": "No regex match; LLM failed",
+        "text": text,
+    }
