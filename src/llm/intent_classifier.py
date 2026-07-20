@@ -17,7 +17,7 @@ from langfuse import observe
 from langfuse.openai import openai
 from loguru import logger
 
-from coral_agent.config import LLM_MODEL
+from llm.config import LLM_MODEL
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 

@@ -16,6 +16,15 @@ from pathlib import Path
 import mujoco
 from loguru import logger
 
+# Geom pairs whose contact is expected/harmless and must never count as a
+# self-collision. The feet's outer pads (l_foot2/r_foot2) touch in normal
+# narrow stances (feet close together) — that's not a real collision, so
+# clamping the motion for it would wrongly block legitimate poses.
+_IGNORED_CONTACT_PAIRS: frozenset[frozenset[str]] = frozenset({
+    frozenset({"l_foot2", "r_foot2"}),
+})
+
+
 class CollisionChecker:
     def __init__(
         self,
@@ -86,7 +95,10 @@ class CollisionChecker:
             c = self.data.contact[i]
             g1 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom1) or f"g{c.geom1}"
             g2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, c.geom2) or f"g{c.geom2}"
-            pairs.add(frozenset((g1, g2)))
+            pair = frozenset((g1, g2))
+            if pair in _IGNORED_CONTACT_PAIRS:
+                continue  # allowed contact — never treat as a collision
+            pairs.add(pair)
         return pairs
 
     def check_trajectory(

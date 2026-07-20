@@ -1,6 +1,6 @@
 """Tests for the hybrid regex + LLM intent classifier."""
 
-from coral_agent.intent_classifier import (
+from llm.intent_classifier import (
     HIGH_CONFIDENCE_THRESHOLD,
     classify_intent_regex,
 )
