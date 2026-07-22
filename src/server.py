@@ -59,6 +59,7 @@ from state import (
 from validation import (
     JOINT_LIMITS,
     ValidationResult,
+    correct_motion_sign,
     describe_joint_state,
     validate_motion_sign,
     validate_waypoint,
@@ -331,14 +332,42 @@ connected_clients: set[WebSocket] = set()
 _whisper_model = None
 
 
+def _get_whisper_model_size() -> str:
+    """Return the configured Whisper model size, defaulting to English 'base.en'."""
+    size = os.getenv("WHISPER_MODEL_SIZE", "base").strip().lower()
+    # Allow plain sizes; default to the English-only variant for short commands.
+    if size in ("tiny", "base", "small"):
+        return f"{size}.en"
+    return size
+
+
 def _get_whisper_model():
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        logger.info("Loading Whisper model (base)...")
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        model_size = _get_whisper_model_size()
+        logger.info(f"Loading Whisper model ({model_size})...")
+        _whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
         logger.info("Whisper model loaded.")
     return _whisper_model
+
+
+# Known Whisper hallucinations that appear on noisy or very short audio.
+_HALLUCINATION_RE = re.compile(
+    r"\b(?:www\.[\w.-]+\.[a-z]{2,}|https?://\S+|\S+@\S+|\S+\.(?:com|info|org|net|gov|edu))\b",
+    re.IGNORECASE,
+)
+
+
+def clean_transcription(text: str) -> str:
+    """Strip common Whisper hallucinations and normalize whitespace."""
+    # Remove URLs/email-like tokens.
+    text = _HALLUCINATION_RE.sub("", text)
+    # Collapse repeated words (e.g. "the the the").
+    text = re.sub(r"\b(\w+)(\s+\1)+", r"\1", text, flags=re.IGNORECASE)
+    # Normalize whitespace.
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
@@ -352,10 +381,15 @@ def transcribe_audio(audio_bytes: bytes) -> str:
             language="en",
             no_speech_threshold=0.6,
             initial_prompt=get_whisper_prompt(),
+            vad_filter=True,
+            condition_on_previous_text=False,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
         )
-        return " ".join(
+        raw_text = " ".join(
             seg.text.strip() for seg in segments if seg.no_speech_prob < 0.6
         ).strip()
+        return clean_transcription(raw_text)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -1381,6 +1415,15 @@ async def process_chat_message(
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
+                    # Auto-correct the most common LLM direction-sign mistakes so the
+                    # demo behaves as the user expects, while still logging the issue.
+                    corrected = correct_motion_sign(user_message, wp.joints)
+                    if corrected != wp.joints:
+                        logger.info(
+                            f"Auto-corrected sign mismatch for '{user_message}': "
+                            f"{wp.joints} → {corrected}"
+                        )
+                        wp.joints = corrected
 
             # Signal that a real motion is about to run, before the (potentially
             # slow) execution blocks. The client uses this to tell "already
@@ -1527,7 +1570,10 @@ async def process_conversation_message(
 
 
 _FOLLOW_START_RE = re.compile(
-    r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+moves)\b",
+    r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+(moves|movements))\b"
+    r"|\bfollow\s+me\b"
+    r"|\bmirror\s+me\b"
+    r"|\bcopy\s+me\b",
     re.IGNORECASE,
 )
 _FOLLOW_STOP_RE = re.compile(
@@ -1535,13 +1581,20 @@ _FOLLOW_STOP_RE = re.compile(
     re.IGNORECASE,
 )
 _CAPTURE_RE = re.compile(
-    r"\b(capture|take|copy)\b.*\b(pose|position)\b",
+    r"\b(capture|take|copy|record)\b.*\b(pose|position|picture|snapshot|photo)\b"
+    r"|\btake\s+a\s+picture\b"
+    r"|\btake\s+a\s+snapshot\b"
+    r"|\bpicture\s+of\s+me\b"
+    r"|\bfreeze\b"
+    r"|\block\s+it\s+in\b"
+    r"|\bi\s+want\s+you\s+to\s+(take|capture|record|copy)\b",
     re.IGNORECASE,
 )
 _SAVE_POSE_RE = re.compile(
-    r"\b(save|remember|store)\b.*(position|pose|this)\b"
+    r"\b(save|remember|store|keep)\b.*(position|pose|this)\b"
     r"|\bremember\s+this\b"
-    r"|\bsave\s+this\b",
+    r"|\bsave\s+this\b"
+    r"|\bkeep\s+this\s+pose\b",
     re.IGNORECASE,
 )
 

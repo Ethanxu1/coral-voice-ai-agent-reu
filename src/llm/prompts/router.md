@@ -67,6 +67,16 @@ If the instruction asks to perform a saved pose, match to the closest name (case
 {"action": "execute_saved_pose", "pose_name": "<exact stored name>", "waypoints": [], "verbal_response": "Executing your saved pose.", "satisfied": null}
 ```
 
+## Direction sign conventions
+
+Natural-language direction maps to the JSON `direction` field and to the sign of the joint value. Getting the sign wrong makes the robot move the opposite way.
+
+- Head turn: `direction: "left"` → negative `head_pan`; `direction: "right"` → positive `head_pan`.
+- Head tilt: `direction: "up"` → positive `head_tilt`; `direction: "down"` → negative `head_tilt`.
+- Left arm out/sideways → positive `l_sho_roll`; right arm out/sideways → negative `r_sho_roll`.
+- Left elbow rotate: `direction: "in"` → negative `l_el_pitch`; `direction: "out"` → positive `l_el_pitch`.
+- Right elbow rotate: `direction: "in"` → positive `r_el_pitch`; `direction: "out"` → negative `r_el_pitch`.
+
 ## Mappings
 
 - "lift arm UP" or "raise arm" → `*_arm_forward` (NOT `*_arm_out`)
@@ -179,6 +189,21 @@ User: "raise both arms forward"
 User: "bend right elbow to 60 degrees"
 ```json
 {"waypoints": [{"primitives": ["right_elbow_bend"], "angle": 60, "direction": null, "speed": 1.0}], "verbal_response": "Bending my right elbow to 60 degrees. How does that look?", "satisfied": null}
+```
+
+User: "rotate left forearm in"
+```json
+{"waypoints": [{"primitives": ["left_elbow_rotate"], "angle": null, "direction": "in", "speed": 1.0}], "verbal_response": "Rotating my left forearm inward. How does that look?", "satisfied": null}
+```
+
+User: "rotate right forearm out"
+```json
+{"waypoints": [{"primitives": ["right_elbow_rotate"], "angle": null, "direction": "out", "speed": 1.0}], "verbal_response": "Rotating my right forearm outward. How does that look?", "satisfied": null}
+```
+
+User: "tilt head up"
+```json
+{"waypoints": [{"primitives": ["head_tilt"], "angle": null, "direction": "up", "speed": 2.0}], "verbal_response": "Tilting my head up. How does that look?", "satisfied": null}
 ```
 
 User: "shake head while raising right arm up and down 3 times"

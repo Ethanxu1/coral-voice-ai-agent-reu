@@ -157,6 +157,22 @@ def validate_motion_sign(motion_description: str, joints: dict[str, float]) -> l
                 f"(got {head_pan:.2f}, should be positive like +1.0)"
             )
 
+    # === HEAD TILT DIRECTION CHECKS ===
+    head_tilt = joints.get("head_tilt")
+    if head_tilt is not None:
+        head_up_patterns = ["tilt up", "head up", "look up"]
+        head_down_patterns = ["tilt down", "head down", "look down"]
+        is_head_up = any(p in motion_lower for p in head_up_patterns)
+        is_head_down = any(p in motion_lower for p in head_down_patterns)
+        if is_head_up and head_tilt < 0:
+            warnings.append(
+                f"SIGN ERROR: HEAD UP should use POSITIVE head_tilt (got {head_tilt:.2f})"
+            )
+        elif is_head_down and head_tilt > 0:
+            warnings.append(
+                f"SIGN ERROR: HEAD DOWN should use NEGATIVE head_tilt (got {head_tilt:.2f})"
+            )
+
     out_motion = any(word in motion_lower for word in ["out", "side", "sideways", "outward"])
 
     if out_motion:
@@ -195,7 +211,92 @@ def validate_motion_sign(motion_description: str, joints: dict[str, float]) -> l
         if "left" in motion_lower and joints.get("l_sho_roll", 0) > 0.1:
             warnings.append("SIGN ERROR: LEFT arm in should use NEGATIVE l_sho_roll")
 
+    # === ELBOW ROTATION DIRECTION CHECKS ===
+    l_el_pitch = joints.get("l_el_pitch")
+    r_el_pitch = joints.get("r_el_pitch")
+    rotate_in = any(p in motion_lower for p in ["rotate in", "twist in", "turn in", "forearm in"])
+    rotate_out = any(p in motion_lower for p in ["rotate out", "twist out", "turn out", "forearm out"])
+
+    if rotate_in:
+        if "left" in motion_lower and l_el_pitch is not None and l_el_pitch > 0:
+            warnings.append(
+                f"SIGN ERROR: LEFT forearm IN should use NEGATIVE l_el_pitch (got {l_el_pitch:.2f})"
+            )
+        if "right" in motion_lower and r_el_pitch is not None and r_el_pitch < 0:
+            warnings.append(
+                f"SIGN ERROR: RIGHT forearm IN should use POSITIVE r_el_pitch (got {r_el_pitch:.2f})"
+            )
+
+    if rotate_out:
+        if "left" in motion_lower and l_el_pitch is not None and l_el_pitch < 0:
+            warnings.append(
+                f"SIGN ERROR: LEFT forearm OUT should use POSITIVE l_el_pitch (got {l_el_pitch:.2f})"
+            )
+        if "right" in motion_lower and r_el_pitch is not None and r_el_pitch > 0:
+            warnings.append(
+                f"SIGN ERROR: RIGHT forearm OUT should use NEGATIVE r_el_pitch (got {r_el_pitch:.2f})"
+            )
+
     return warnings
+
+
+def correct_motion_sign(motion_description: str, joints: dict[str, float]) -> dict[str, float]:
+    """Return a copy of joints with common sign mismatches flipped.
+
+    This is a conservative fix: only the joints flagged by validate_motion_sign
+    are inverted; everything else is left untouched.
+    """
+    corrected = dict(joints)
+    motion_lower = motion_description.lower()
+
+    head_pan = corrected.get("head_pan")
+    if head_pan is not None:
+        head_left = any(p in motion_lower for p in ["head left", "head to the left", "turn left", "look left", "rotate left"])
+        head_right = any(p in motion_lower for p in ["head right", "head to the right", "turn right", "look right", "rotate right"])
+        if head_left and head_pan > 0:
+            corrected["head_pan"] = -head_pan
+        elif head_right and head_pan < 0:
+            corrected["head_pan"] = -head_pan
+
+    head_tilt = corrected.get("head_tilt")
+    if head_tilt is not None:
+        head_up = any(p in motion_lower for p in ["tilt up", "head up", "look up"])
+        head_down = any(p in motion_lower for p in ["tilt down", "head down", "look down"])
+        if head_up and head_tilt < 0:
+            corrected["head_tilt"] = -head_tilt
+        elif head_down and head_tilt > 0:
+            corrected["head_tilt"] = -head_tilt
+
+    out_motion = any(word in motion_lower for word in ["out", "side", "sideways", "outward"])
+    if out_motion:
+        if ("right" in motion_lower or "arms" in motion_lower or "both" in motion_lower) and corrected.get("r_sho_roll", 0) > 0:
+            corrected["r_sho_roll"] = -corrected["r_sho_roll"]
+        if ("left" in motion_lower or "arms" in motion_lower or "both" in motion_lower) and corrected.get("l_sho_roll", 0) < 0:
+            corrected["l_sho_roll"] = -corrected["l_sho_roll"]
+
+    in_motion = any(word in motion_lower for word in [" in", "inward", "toward"])
+    if in_motion:
+        if "right" in motion_lower and corrected.get("r_sho_roll", 0) < -0.1:
+            corrected["r_sho_roll"] = -corrected["r_sho_roll"]
+        if "left" in motion_lower and corrected.get("l_sho_roll", 0) > 0.1:
+            corrected["l_sho_roll"] = -corrected["l_sho_roll"]
+
+    l_el_pitch = corrected.get("l_el_pitch")
+    r_el_pitch = corrected.get("r_el_pitch")
+    rotate_in = any(p in motion_lower for p in ["rotate in", "twist in", "turn in", "forearm in"])
+    rotate_out = any(p in motion_lower for p in ["rotate out", "twist out", "turn out", "forearm out"])
+    if rotate_in:
+        if "left" in motion_lower and l_el_pitch is not None and l_el_pitch > 0:
+            corrected["l_el_pitch"] = -l_el_pitch
+        if "right" in motion_lower and r_el_pitch is not None and r_el_pitch < 0:
+            corrected["r_el_pitch"] = -r_el_pitch
+    if rotate_out:
+        if "left" in motion_lower and l_el_pitch is not None and l_el_pitch < 0:
+            corrected["l_el_pitch"] = -l_el_pitch
+        if "right" in motion_lower and r_el_pitch is not None and r_el_pitch > 0:
+            corrected["r_el_pitch"] = -r_el_pitch
+
+    return corrected
 
 
 def describe_joint_state(joints: dict[str, float]) -> str:
