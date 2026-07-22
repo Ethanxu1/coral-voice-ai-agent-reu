@@ -24,6 +24,21 @@ class TestImmediateIntents:
         assert result is not None
         assert result.data["intent"] == "capture"
 
+    def test_capture_i_want_phrases(self):
+        for phrase in [
+            "i want you to take a picture",
+            "i want you to capture my pose",
+            "i want you to record my pose",
+            "record my pose",
+            "take a picture of me",
+            "picture of me",
+            "freeze",
+            "lock it in",
+        ]:
+            result = classify_intent_regex(phrase)
+            assert result is not None, phrase
+            assert result.data["intent"] == "capture", phrase
+
     def test_library(self):
         result = classify_intent_regex("my poses")
         assert result is not None
@@ -38,6 +53,12 @@ class TestImmediateIntents:
         result = classify_intent_regex("save this pose")
         assert result is not None
         assert result.data["intent"] == "save_robot_pose"
+
+    def test_save_robot_pose_remember_keep(self):
+        for phrase in ["remember this", "keep this pose", "save the current pose"]:
+            result = classify_intent_regex(phrase)
+            assert result is not None, phrase
+            assert result.data["intent"] == "save_robot_pose", phrase
 
     def test_naming(self):
         result = classify_intent_regex("name this pose superhero")

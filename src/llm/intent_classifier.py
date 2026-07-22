@@ -48,12 +48,12 @@ class ClassifiedIntent:
 # ---------------------------------------------------------------------------
 
 _IMMEDIATE_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
-    (_compile(r"\b(follow me|mirror me|copy me|mimic me|start following|follow my moves)\b"), "follow_start", 0.95),
-    (_compile(r"\b(stop following|stop mirroring|stop copying|don't follow me|stop mimicking)\b"), "follow_stop", 0.95),
-    (_compile(r"\b(take a snapshot|take a picture|capture my pose|copy my pose|mimic my pose|snapshot|capture this|freeze|lock it in)\b"), "capture", 0.95),
-    (_compile(r"\b(my poses|show poses|saved poses|list poses|what poses do i have)\b"), "library", 0.90),
-    (_compile(r"\b(exit|quit|goodbye|bye|see you|i'm done|we're done|that['\u2019]s all)\b"), "exit", 0.90),
-    (_compile(r"\b(save this pose|save current position|save the current position|remember this pose|save it as is|save position)\b"), "save_robot_pose", 0.95),
+    (_compile(r"\b(follow me|mirror me|copy me|mimic me|start following|follow my moves|follow my movement|mirror my moves|copy my movements|mimic my movements)\b"), "follow_start", 0.95),
+    (_compile(r"\b(stop following|stop mirroring|stop copying|don't follow me|stop mimicking|quit following)\b"), "follow_stop", 0.95),
+    (_compile(r"\b(take a snapshot|take a picture|capture my pose|copy my pose|mimic my pose|snapshot|capture this|freeze|lock it in|record my pose|picture of me|take a picture of me|i want you to (take a picture|capture my pose|record my pose|copy my pose)|can you (take a picture|capture my pose|record my pose))\b"), "capture", 0.95),
+    (_compile(r"\b(my poses|show poses|saved poses|list poses|what poses do i have|pose library)\b"), "library", 0.90),
+    (_compile(r"\b(exit|quit|goodbye|bye|see you|i'm done|we're done|that['\u2019]s all|all done|done)\b"), "exit", 0.90),
+    (_compile(r"\b(save this pose|save current position|save the current position|remember this pose|save it as is|save position|remember this|keep this pose|save the current pose)\b"), "save_robot_pose", 0.95),
 ]
 
 _NAMING_PATTERNS: list[tuple[re.Pattern[str], float]] = [

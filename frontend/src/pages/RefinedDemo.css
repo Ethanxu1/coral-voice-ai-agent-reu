@@ -77,6 +77,15 @@
   background: #e55c3b;
 }
 
+.rd-topbar-btn.muted {
+  background: #9E9591;
+  color: #fff;
+}
+
+.rd-topbar-btn.muted:hover {
+  background: #8a817d;
+}
+
 /* ── Main layout ────────────────────────────────────────────────────────────── */
 .rd-main {
   flex: 1;
@@ -457,6 +466,12 @@
   animation: rd-orb-breathe-fast 0.6s ease-in-out infinite;
 }
 
+.rd-orb.muted {
+  background: radial-gradient(circle at 38% 35%, #BDB8B3, #9E9591 65%);
+  box-shadow: 0 4px 20px rgba(158, 149, 145, 0.45);
+  animation: rd-orb-breathe 2.4s ease-in-out infinite;
+}
+
 @keyframes rd-orb-breathe {
   0%, 100% { transform: scale(1); box-shadow: 0 4px 20px rgba(23,190,187,0.45); }
   50% { transform: scale(1.06); box-shadow: 0 6px 28px rgba(23,190,187,0.65); }
@@ -511,6 +526,10 @@
   background: #17BEBB;
   border-radius: 2px;
   transition: width 0.05s linear;
+}
+
+.rd-mic-level-fill.muted {
+  background: #9E9591;
 }
 
 /* Captured pose thumbnail — matches the tutorial's inline capture-stage box */
