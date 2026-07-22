@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { setAngleArcsEnabled } from '../demo/api'
+import { setAngleArcsEnabled, setFallCheckEnabled, setMujocoViewerOnLaunch } from '../demo/api'
 import { setRobotConfig, useRobotConfig, type LegMode } from '../demo/robotConfig'
 
 const LEG_MODES: { id: LegMode; label: string }[] = [
@@ -11,18 +11,30 @@ const LEG_MODES: { id: LegMode; label: string }[] = [
 
 /** Choose whether pose moves drive only the simulator or both targets. */
 export default function RobotModeToggle() {
-  const { simOnly, legMode, showAngleArcs } = useRobotConfig()
+  const { simOnly, legMode, showAngleArcs, fallCheckEnabled, mujocoViewerOnLaunch } =
+    useRobotConfig()
 
   const selectSimOnly = (next: boolean) => setRobotConfig({ simOnly: next })
   const selectLegMode = (next: LegMode) => setRobotConfig({ legMode: next })
   const toggleAngleArcs = () => setRobotConfig({ showAngleArcs: !showAngleArcs })
-  // Re-apply the persisted setting to the vision server whenever it changes,
-  // and once on mount — the flag lives in the vision process's memory (not
-  // disk), so a vision-server restart or a fresh page load would otherwise
-  // leave the server out of sync with the UI's remembered toggle state.
+  const toggleFallCheck = () => setRobotConfig({ fallCheckEnabled: !fallCheckEnabled })
+  const toggleMujocoViewer = () =>
+    setRobotConfig({ mujocoViewerOnLaunch: !mujocoViewerOnLaunch })
+  // Re-apply the persisted setting to the vision/robot servers whenever it
+  // changes, and once on mount — the flags live in the server processes'
+  // memory (not disk), so a server restart or a fresh page load would
+  // otherwise leave the server out of sync with the UI's remembered state.
   useEffect(() => {
     setAngleArcsEnabled(showAngleArcs)
   }, [showAngleArcs])
+  useEffect(() => {
+    setFallCheckEnabled(fallCheckEnabled)
+  }, [fallCheckEnabled])
+  // Same sync, except the server only reads this one at startup — pushing it on
+  // every load is what makes the toggle's remembered state the one used next launch.
+  useEffect(() => {
+    setMujocoViewerOnLaunch(mujocoViewerOnLaunch)
+  }, [mujocoViewerOnLaunch])
 
   return (
     <div className="robot-mode-toggle">
@@ -64,6 +76,29 @@ export default function RobotModeToggle() {
             {showAngleArcs ? '📐 On' : 'Off'}
           </button>
         </div>
+      </div>
+      <div className="robot-mode-legmode">
+        <label>Fall check</label>
+        <div className="robot-mode-switch">
+          <button
+            className={`robot-mode-btn ${fallCheckEnabled ? 'active' : ''}`}
+            onClick={toggleFallCheck}
+          >
+            {fallCheckEnabled ? '🛡️ On' : 'Off'}
+          </button>
+        </div>
+      </div>
+      <div className="robot-mode-legmode">
+        <label>MuJoCo window</label>
+        <div className="robot-mode-switch">
+          <button
+            className={`robot-mode-btn ${mujocoViewerOnLaunch ? 'active' : ''}`}
+            onClick={toggleMujocoViewer}
+          >
+            {mujocoViewerOnLaunch ? '🪟 On' : 'Off'}
+          </button>
+        </div>
+        <span className="robot-mode-hint">applies on next server launch</span>
       </div>
     </div>
   )

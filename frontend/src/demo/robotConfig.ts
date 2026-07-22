@@ -9,6 +9,8 @@
 
 import { useSyncExternalStore } from 'react'
 
+export type StreamSource = 'mac' | 'robot'
+
 /** How /map-features drives the legs. Arms always use live retargeting.
  *  - retarget: live pelvis-frame hip pitch/roll + knee bend (default)
  *  - legacy:   old atan2 mapping (hip_yaw ← forward/back swing)
@@ -21,6 +23,8 @@ export type LegMode = 'retarget' | 'legacy' | 'classify' | 'buckets'
 export interface RobotConfig {
   /** True sends /move commands only to the simulator. */
   simOnly: boolean
+  /** Camera stream source shown by the live-stream panels. */
+  streamSource: StreamSource
   /** Pi hostname/IP used by explicit robot-only tools. */
   piHost: string
   /** Leg-retargeting strategy passed to /map-features. */
@@ -29,16 +33,37 @@ export interface RobotConfig {
    *  feed (Mac vision-server only — see POST /settings/angle-arcs). Off by
    *  default so it doesn't clutter the kid-facing demo pages. */
   showAngleArcs: boolean
+  /** Dynamic fall check (StabilityChecker on the robot base server): when true,
+   *  moves that would topple the robot are blocked entirely (0% executed).
+   *  Toggling calls POST /settings/fall-check so both demo variants — safe and
+   *  unchecked — can be shown without restarting the server. */
+  fallCheckEnabled: boolean
+  /** Whether the native MuJoCo window opens when the base server starts.
+   *  Persisted server-side via POST /settings/mujoco-viewer; the window can only
+   *  be opened at process start, so flipping this applies on the next launch.
+   *  Off by default — the browser viewer covers most runs. */
+  mujocoViewerOnLaunch: boolean
 }
 
-const STORAGE_KEY = 'coral.robotConfig'
+// Bump when the defaults below change in a way every browser should pick up.
+// Saved config is merged over the defaults, so without this a machine that ran
+// an earlier build would keep its stale values forever — exactly the case the
+// demo defaults exist to prevent. A bump discards the saved config once.
+const STORAGE_KEY = 'coral.robotConfig.v2'
 const env = import.meta.env as Record<string, string | undefined>
 
+// Defaults are tuned for the simulator walkthrough teammates run when giving
+// feedback (docs/sim-testing-guide.md): sim-only so no Pi is needed, bucketed
+// legs because they read most clearly on screen, and the fall check off so a
+// tester's pose is never silently dropped for being unstable.
 const DEFAULT_CONFIG: RobotConfig = {
   simOnly: true,
+  streamSource: 'mac',
   piHost: env.VITE_ROBOT_HOST ?? '192.168.8.219',
-  legMode: 'retarget',
+  legMode: 'buckets',
   showAngleArcs: false,
+  fallCheckEnabled: false,
+  mujocoViewerOnLaunch: false,
 }
 
 function loadConfig(): RobotConfig {
@@ -85,6 +110,7 @@ export function getRobotBase(): string {
 }
 
 export function getRobotStream(): string {
+  if (config.streamSource === 'robot') return `http://${config.piHost}:9001`
   return env.VITE_ROBOT_STREAM ?? 'http://localhost:8001'
 }
 

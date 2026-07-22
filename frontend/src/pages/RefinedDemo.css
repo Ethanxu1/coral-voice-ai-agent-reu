@@ -45,6 +45,26 @@
   gap: 10px;
 }
 
+.rd-topbar-right .stream-source-toggle {
+  margin-top: 0;
+}
+
+.rd-topbar-right .stream-source-label {
+  color: #6B625D;
+}
+
+.rd-topbar-right .stream-source-switch button {
+  background: rgba(45, 41, 38, 0.08);
+  border-color: rgba(45, 41, 38, 0.12);
+  color: #2D2926;
+}
+
+.rd-topbar-right .stream-source-switch button.active {
+  background: #2D2926;
+  border-color: #2D2926;
+  color: #fff;
+}
+
 .rd-topbar-btn {
   display: flex;
   align-items: center;
