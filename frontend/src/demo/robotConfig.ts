@@ -1,7 +1,6 @@
-// Runtime sim/hardware toggle for the robot endpoints (/motion, /move,
-// /map-features, /video_feed). Previously this was a build-time .env edit
-// (VITE_ROBOT_BASE / VITE_ROBOT_HOST) requiring a dev-server restart to switch;
-// this store lets the UI flip it live, persisted in localStorage.
+// Runtime control for whether pose moves target only the simulator or both the
+// simulator and physical robot. The setting is persisted in localStorage so the
+// demo does not need a restart when switching modes.
 //
 // Not a React context — api.ts calls these getters from plain async functions,
 // not components, so a module-level store + subscriber list is simpler than
@@ -9,8 +8,6 @@
 // change (e.g. the live camera feed) use the useRobotConfig() hook below.
 
 import { useSyncExternalStore } from 'react'
-
-export type RobotMode = 'sim' | 'hardware'
 
 /** How /map-features drives the legs. Arms always use live retargeting.
  *  - retarget: live pelvis-frame hip pitch/roll + knee bend (default)
@@ -22,8 +19,9 @@ export type RobotMode = 'sim' | 'hardware'
 export type LegMode = 'retarget' | 'legacy' | 'classify' | 'buckets'
 
 export interface RobotConfig {
-  mode: RobotMode
-  /** Pi hostname/IP used to build robot + stream URLs in hardware mode. */
+  /** True sends /move commands only to the simulator. */
+  simOnly: boolean
+  /** Pi hostname/IP used by explicit robot-only tools. */
   piHost: string
   /** Leg-retargeting strategy passed to /map-features. */
   legMode: LegMode
@@ -37,7 +35,7 @@ const STORAGE_KEY = 'coral.robotConfig'
 const env = import.meta.env as Record<string, string | undefined>
 
 const DEFAULT_CONFIG: RobotConfig = {
-  mode: 'sim',
+  simOnly: true,
   piHost: env.VITE_ROBOT_HOST ?? '192.168.8.219',
   legMode: 'retarget',
   showAngleArcs: false,
@@ -75,30 +73,22 @@ function subscribe(fn: () => void): () => void {
   return () => listeners.delete(fn)
 }
 
-/** React hook: re-renders the component whenever the sim/hardware mode or Pi host changes. */
+/** React hook: re-renders the component whenever its configuration changes. */
 export function useRobotConfig(): RobotConfig {
   return useSyncExternalStore(subscribe, getRobotConfig)
 }
 
-// SIM MODE: everything runs on the Mac — main server :8000, vision server :8001.
-// HARDWARE MODE: the Pi's robot_server serves both /motion+/move (:9000) and
-// /map-features (:9000, computed from ROS topics), while its camera stream and
-// the Mac's own vision-server stream both sit one port up.
+// The Mac hosts the demo, simulator, and vision server. The main server forwards
+// /move to the Pi itself when sim_only is false.
 export function getRobotBase(): string {
-  const { mode, piHost } = config
-  if (mode === 'hardware') return `http://${piHost}:9000`
   return env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
 }
 
 export function getRobotStream(): string {
-  const { mode, piHost } = config
-  if (mode === 'hardware') return `http://${piHost}:9001`
   return env.VITE_ROBOT_STREAM ?? 'http://localhost:8001'
 }
 
 export function getFeaturesBase(): string {
-  const { mode, piHost } = config
-  if (mode === 'hardware') return `http://${piHost}:9000`
   return env.VITE_FEATURES_BASE ?? 'http://localhost:8001'
 }
 

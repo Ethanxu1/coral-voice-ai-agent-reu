@@ -19,6 +19,7 @@ import {
   sleep,
   type ServoCommand,
 } from './api'
+import { getRobotConfig } from './robotConfig'
 
 export type RefinedStage =
   | 'IDLE'
@@ -50,12 +51,13 @@ export interface RefinedState {
   followActive: boolean
   capturedFrame: string | null
   micLevel: number
-  orbState: 'listening' | 'thinking' | 'countdown'
+  orbState: 'listening' | 'thinking' | 'countdown' | 'muted'
   statusText: string
   savedPoses: string[]
   flash: boolean
   error: string | null
   pendingIntent: string | null
+  muted: boolean
   // Index of the saved pose currently being performed on the end-session
   // replay screen, or null when not replaying.
   replayIdx: number | null
@@ -77,6 +79,7 @@ const INIT: RefinedState = {
   flash: false,
   error: null,
   pendingIntent: null,
+  muted: false,
   replayIdx: null,
   safetyChecking: false,
 }
@@ -129,6 +132,13 @@ export function useRefinedDemoMachine() {
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
   // Object URLs for recorded user utterances; revoked on stop/unmount to avoid leaks.
   const audioUrlsRef = useRef<string[]>([])
+  // Mute state is mirrored in a ref so the async capture loop can read it
+  // without closing over a stale render value. The mic stays hot while muted;
+  // muting only discards transcripts.
+  const mutedRef = useRef(false)
+  // When the user asks to re-capture during fine-tune, inject a synthetic
+  // "capture my pose" turn so the main loop runs the full capture path again.
+  const pendingCaptureRef = useRef(false)
 
   const revokeAudioUrls = useCallback(() => {
     audioUrlsRef.current.forEach((url) => {
@@ -181,6 +191,33 @@ export function useRefinedDemoMachine() {
     dispatch({ pendingIntent: null })
     resolve?.(false)
   }, [])
+
+  const toggleMute = useCallback(() => {
+    const next = !state.muted
+    mutedRef.current = next
+
+    // Update the UI immediately even if the main loop is currently blocked
+    // waiting for audio or a transcription round-trip. Otherwise the orb/status
+    // can lag behind the actual muted state by several seconds.
+    const listeningStages: RefinedStage[] = ['LISTENING', 'FOLLOWING', 'LIBRARY', 'FINETUNE']
+    if (listeningStages.includes(state.stage)) {
+      const listeningStatus =
+        state.stage === 'FINETUNE'
+          ? 'Listening for tweaks…'
+          : state.stage === 'LIBRARY'
+          ? 'Pick a pose or say "make another"'
+          : state.followActive
+          ? 'Following your moves'
+          : "I'm listening…"
+      dispatch({
+        muted: next,
+        orbState: next ? 'muted' : 'listening',
+        statusText: next ? 'Muted — mic is still on' : listeningStatus,
+      })
+    } else {
+      dispatch({ muted: next })
+    }
+  }, [state.muted, state.stage, state.followActive])
 
   // End-session replay: strike every saved pose in turn so the child sees each
   // move they taught. Highlight the move, play it on the robot, hold so it's
@@ -256,6 +293,10 @@ export function useRefinedDemoMachine() {
     // A per-call `settled` flag guards against late resolutions leaking into
     // a subsequent turn (e.g. captureUtterance's .then firing after a chip
     // click already resolved this promise).
+    //
+    // The microphone stays active even while muted so there is no startup delay
+    // when the user unmutes. Muting only discards the transcript before it is
+    // shown or acted on.
     const listenOrInject = async (): Promise<{ text: string; audioUrl?: string }> => {
       return new Promise<{ text: string; audioUrl?: string }>((resolve) => {
         const ctrl = new AbortController()
@@ -271,6 +312,12 @@ export function useRefinedDemoMachine() {
         captureAbortRef.current = ctrl
         chipResolverRef.current = (text: string) => settle(text)
 
+        if (pendingCaptureRef.current) {
+          pendingCaptureRef.current = false
+          settle('capture my pose')
+          return
+        }
+
         captureUtterance({
           onLevel: (rms) => dispatch({ micLevel: rms }),
           signal: ctrl.signal,
@@ -280,7 +327,18 @@ export function useRefinedDemoMachine() {
             const audioUrl = URL.createObjectURL(blob)
             audioUrlsRef.current.push(audioUrl)
             sendAudioForTranscript(blob)
-              .then((t) => settle(t, audioUrl))
+              .then((t) => {
+                if (settled) return
+                if (mutedRef.current) {
+                  // Muted: drop this utterance silently and keep the mic hot.
+                  URL.revokeObjectURL(audioUrl)
+                  const idx = audioUrlsRef.current.indexOf(audioUrl)
+                  if (idx >= 0) audioUrlsRef.current.splice(idx, 1)
+                  settle('')
+                  return
+                }
+                settle(t, audioUrl)
+              })
               .catch(() => settle('', audioUrl))
           })
           .catch(() => {
@@ -309,10 +367,24 @@ export function useRefinedDemoMachine() {
     // the capture flow instead of pretending the pose landed.
     const moveWithSafetyCheck = async (commands: ServoCommand[]): Promise<boolean> => {
       dispatch({ safetyChecking: true, orbState: 'thinking', statusText: 'Running safety check…' })
-      const [result] = await Promise.all([
-        move(commands).catch(() => null),
-        sleep(1500),
-      ])
+      const simOnly = getRobotConfig().simOnly
+      let result
+      try {
+        [result] = await Promise.all([
+          move(commands, simOnly),
+          sleep(1500),
+        ])
+      } catch (error) {
+        dispatch({ safetyChecking: false })
+        const detail = error instanceof Error ? error.message : 'move failed'
+        addMsg(agentMsg(
+          simOnly
+            ? `I couldn't move the simulation: ${detail}`
+            : `I moved the simulation, but I couldn't reach the robot server: ${detail}`,
+          ['Try again'],
+        ))
+        return false
+      }
       dispatch({ safetyChecking: false })
       if (result && result.safety.fallBlocked) {
         addMsg(agentMsg(
@@ -338,8 +410,12 @@ export function useRefinedDemoMachine() {
         const currentStage = followActive ? 'FOLLOWING' : 'LISTENING'
         dispatch({
           stage: currentStage,
-          orbState: 'listening',
-          statusText: followActive ? 'Following your moves' : "I'm listening…",
+          orbState: mutedRef.current ? 'muted' : 'listening',
+          statusText: mutedRef.current
+            ? 'Muted — mic is still on'
+            : followActive
+            ? 'Following your moves'
+            : "I'm listening…",
           micLevel: 0,
           capturedFrame: null,
           followActive,
@@ -381,6 +457,15 @@ export function useRefinedDemoMachine() {
 
         // ── motion: show confirmation modal before executing ──
         if (intentResult.type === 'motion') {
+          if (!intentResult.description?.trim()) {
+            // No concrete movement proposed — fall back to chat instead of a redundant modal.
+            dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
+            const chatResult = await session.sendText(transcript, 'conversation')
+            active()
+            addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
+            dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
+            continue
+          }
           const approved = await awaitApproval(intentResult.description)
           active()
           if (!approved) {
@@ -398,7 +483,7 @@ export function useRefinedDemoMachine() {
           )
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'Save current pose']))
-          dispatch({ orbState: 'listening' })
+          dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
           continue
         }
 
@@ -505,7 +590,7 @@ export function useRefinedDemoMachine() {
           // Library inner loop
           while (true) {
             active()
-            dispatch({ orbState: 'listening', statusText: 'Pick a pose or say "make another"', micLevel: 0 })
+            dispatch({ orbState: mutedRef.current ? 'muted' : 'listening', statusText: mutedRef.current ? 'Muted — mic is still on' : 'Pick a pose or say "make another"', micLevel: 0 })
             const { text: lt, audioUrl: ltAudioUrl } = await listenOrInject()
             active()
             if (!lt.trim()) continue
@@ -524,6 +609,14 @@ export function useRefinedDemoMachine() {
             }
 
             if (liResult.type === 'motion') {
+              if (!liResult.description?.trim()) {
+                // No concrete movement proposed — chat instead of showing the modal.
+                const lr = await session.sendText(lt, 'conversation')
+                active()
+                addMsg(agentMsg(lr.content || ''))
+                dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
+                break
+              }
               const libApproved = await awaitApproval(liResult.description)
               active()
               if (!libApproved) {
@@ -585,13 +678,14 @@ export function useRefinedDemoMachine() {
               }
               addMsg(sysMsg('Pose captured!'))
               addMsg(agentMsg('Awesome pose! Want to fine-tune it, or save it as is?', ['Fine-tune it', 'Save it']))
-              dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: 'listening', statusText: 'Listening for tweaks…' })
+              dispatch({ stage: 'FINETUNE', capturedFrame: mapResult.imageB64, orbState: mutedRef.current ? 'muted' : 'listening', statusText: mutedRef.current ? 'Muted — mic is still on' : 'Listening for tweaks…' })
               let satisfied = false
               let followEscape = false
+              let reCapture = false
               let suggestedName: string | null = null
               while (!satisfied) {
                 active()
-                dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
+                dispatch({ orbState: mutedRef.current ? 'muted' : 'listening', statusText: mutedRef.current ? 'Muted — mic is still on' : 'Listening for tweaks…', micLevel: 0 })
                 const { text: ft, audioUrl: ftAudioUrl } = await listenOrInject()
                 active()
                 if (!ft.trim()) continue
@@ -608,6 +702,10 @@ export function useRefinedDemoMachine() {
                   followEscape = true
                   break
                 }
+                if (ftResult.type === 'immediate' && ftResult.intent === 'capture') {
+                  reCapture = true
+                  break
+                }
                 if (ftResult.type === 'immediate' && (ftResult.intent === 'save_robot_pose' || ftResult.intent === 'naming')) {
                   if (ftResult.intent === 'naming' && ftResult.name?.trim()) {
                     suggestedName = ftResult.name.trim()
@@ -615,22 +713,25 @@ export function useRefinedDemoMachine() {
                   satisfied = true
                   break
                 }
-                const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
-                const ftApproved = await awaitApproval(ftDesc)
-                active()
-                if (!ftApproved) {
-                  addMsg(agentMsg("Got it — how should I tweak the pose instead?"))
-                  continue
+                if (ftResult.type === 'motion' && ftResult.description?.trim()) {
+                  const ftApproved = await awaitApproval(ftResult.description)
+                  active()
+                  if (!ftApproved) {
+                    addMsg(agentMsg("Got it — how should I tweak the pose instead?"))
+                    continue
+                  }
+                  dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
+                  const fr = await session.sendText(ft, 'motion', ftResult.description)
+                  active()
+                  addMsg(agentMsg(fr.content || ''))
+                  if (fr.satisfied === true) satisfied = true
+                } else {
+                  dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
+                  const fr = await session.sendText(ft, 'conversation')
+                  active()
+                  addMsg(agentMsg(fr.content || ''))
+                  if (fr.satisfied === true) satisfied = true
                 }
-                dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-                const fr = await session.sendText(
-                  ft,
-                  ftResult.type === 'motion' ? 'motion' : 'conversation',
-                  ftResult.type === 'motion' ? ftResult.description : undefined,
-                )
-                active()
-                addMsg(agentMsg(fr.content || ''))
-                if (fr.satisfied === true) satisfied = true
               }
               if (followEscape) {
                 const result = await session.sendText('follow my movement', 'immediate')
@@ -639,6 +740,12 @@ export function useRefinedDemoMachine() {
                 followActive = true
                 dispatch({ followActive: true, capturedFrame: null })
                 break  // exit library inner loop → main loop continues
+              }
+              if (reCapture) {
+                addMsg(sysMsg("Let's try a new pose!"))
+                pendingCaptureRef.current = true
+                dispatch({ capturedFrame: null })
+                break  // exit library inner loop; injected capture runs next
               }
               let poseName: string
               if (suggestedName) {
@@ -739,15 +846,16 @@ export function useRefinedDemoMachine() {
           }
 
           addMsg(agentMsg('Awesome pose! Want to fine-tune it, or save it as is?', ['Fine-tune it', 'Save it']))
-          dispatch({ stage: 'FINETUNE', capturedFrame, orbState: 'listening', statusText: 'Listening for tweaks…' })
+          dispatch({ stage: 'FINETUNE', capturedFrame, orbState: mutedRef.current ? 'muted' : 'listening', statusText: mutedRef.current ? 'Muted — mic is still on' : 'Listening for tweaks…' })
 
           // FINETUNE loop
           let satisfied = false
           let followEscape = false
+          let reCapture = false
           let suggestedName: string | null = null
           while (!satisfied) {
             active()
-            dispatch({ orbState: 'listening', statusText: 'Listening for tweaks…', micLevel: 0 })
+            dispatch({ orbState: mutedRef.current ? 'muted' : 'listening', statusText: mutedRef.current ? 'Muted — mic is still on' : 'Listening for tweaks…', micLevel: 0 })
             const { text: ft, audioUrl: ftAudioUrl } = await listenOrInject()
             active()
             if (!ft.trim()) continue
@@ -764,6 +872,10 @@ export function useRefinedDemoMachine() {
               followEscape = true
               break
             }
+            if (ftResult.type === 'immediate' && ftResult.intent === 'capture') {
+              reCapture = true
+              break
+            }
             if (ftResult.type === 'immediate' && (ftResult.intent === 'save_robot_pose' || ftResult.intent === 'naming')) {
               if (ftResult.intent === 'naming' && ftResult.name?.trim()) {
                 suggestedName = ftResult.name.trim()
@@ -771,22 +883,27 @@ export function useRefinedDemoMachine() {
               satisfied = true
               break
             }
-            const ftDesc = ftResult.type === 'motion' ? ftResult.description : ft
-            const ftApproved = await awaitApproval(ftDesc)
-            active()
-            if (!ftApproved) {
-              addMsg(agentMsg("Got it — how should I tweak the pose instead?"))
-              continue
+            if (ftResult.type === 'motion' && ftResult.description?.trim()) {
+              const ftApproved = await awaitApproval(ftResult.description)
+              active()
+              if (!ftApproved) {
+                addMsg(agentMsg("Got it — how should I tweak the pose instead?"))
+                continue
+              }
+              dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
+              const fr = await session.sendText(ft, 'motion', ftResult.description)
+              active()
+              addMsg(agentMsg(fr.content || ''))
+              if (fr.satisfied === true) satisfied = true
+            } else {
+              // Non-motion turns during fine-tune (conversation, remaining immediate)
+              // skip the approval modal entirely.
+              dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
+              const fr = await session.sendText(ft, 'conversation')
+              active()
+              addMsg(agentMsg(fr.content || ''))
+              if (fr.satisfied === true) satisfied = true
             }
-            dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-            const fr = await session.sendText(
-              ft,
-              ftResult.type === 'motion' ? 'motion' : 'conversation',
-              ftResult.type === 'motion' ? ftResult.description : undefined,
-            )
-            active()
-            addMsg(agentMsg(fr.content || ''))
-            if (fr.satisfied === true) satisfied = true
           }
 
           if (followEscape) {
@@ -795,6 +912,13 @@ export function useRefinedDemoMachine() {
             addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
             followActive = true
             dispatch({ followActive: true, capturedFrame: null })
+            continue
+          }
+
+          if (reCapture) {
+            addMsg(sysMsg("Let's try a new pose!"))
+            pendingCaptureRef.current = true
+            dispatch({ capturedFrame: null })
             continue
           }
 
@@ -878,5 +1002,6 @@ export function useRefinedDemoMachine() {
     goToLibrary,
     goToExit,
     startAgain,
+    toggleMute,
   }
 }

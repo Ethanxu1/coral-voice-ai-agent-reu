@@ -135,14 +135,20 @@ const SAFE_MOVE: MoveSafety = {
 // Drive the robot/sim with raw servo commands (from mapFeatures). No-op safe if
 // the command list is empty. Returns the server's safety verdict so callers
 // (the refined demo) can report a blocked move to the user.
-export async function move(commands: ServoCommand[]): Promise<MoveResult> {
+export async function move(
+  commands: ServoCommand[],
+  simOnly = getRobotConfig().simOnly,
+): Promise<MoveResult> {
   if (commands.length === 0) return { executed: false, safety: SAFE_MOVE }
   const res = await fetch(`${getRobotBase()}/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(commands),
+    body: JSON.stringify({ moves: commands, sim_only: simOnly }),
   })
-  if (!res.ok) throw new Error(`move failed: ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(`move failed: ${res.status} ${body?.detail ?? ''}`.trim())
+  }
   const data = await res.json().catch(() => null)
   const s = data?.safety
   return {
@@ -154,7 +160,7 @@ export async function move(commands: ServoCommand[]): Promise<MoveResult> {
           safeFraction: typeof s.safe_fraction === 'number' ? s.safe_fraction : 1,
           badPairs: Array.isArray(s.bad_pairs) ? s.bad_pairs : [],
         }
-      : SAFE_MOVE, // Pi robot_server's /move has no safety block — treat as safe
+      : SAFE_MOVE,
   }
 }
 
@@ -571,6 +577,7 @@ export function openActionSession(sessionId?: string): ActionSession {
       const payload: Record<string, unknown> = { type: 'chat', content: text }
       if (intentType) payload.intent_type = intentType
       if (description) payload.description = description
+      if (intentType === 'motion') payload.sim_only = getRobotConfig().simOnly
       return send(payload, timeoutMs, text)
     },
     close() {

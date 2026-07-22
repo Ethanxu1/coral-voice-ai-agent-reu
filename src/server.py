@@ -59,6 +59,7 @@ from state import (
 from validation import (
     JOINT_LIMITS,
     ValidationResult,
+    correct_motion_sign,
     describe_joint_state,
     validate_motion_sign,
     validate_waypoint,
@@ -85,7 +86,7 @@ stability_checker: StabilityChecker | None = None
 
 def _get_robot_state() -> dict[str, float]:
     """Return current joint states — hardware in robot mode, simulator otherwise."""
-    if hardware_dispatcher is not None:
+    if robot_mode in ("robot", "hardware") and hardware_dispatcher is not None:
         try:
             return hardware_dispatcher.get_joint_states()
         except Exception as e:
@@ -331,14 +332,42 @@ connected_clients: set[WebSocket] = set()
 _whisper_model = None
 
 
+def _get_whisper_model_size() -> str:
+    """Return the configured Whisper model size, defaulting to English 'base.en'."""
+    size = os.getenv("WHISPER_MODEL_SIZE", "base").strip().lower()
+    # Allow plain sizes; default to the English-only variant for short commands.
+    if size in ("tiny", "base", "small"):
+        return f"{size}.en"
+    return size
+
+
 def _get_whisper_model():
     global _whisper_model
     if _whisper_model is None:
         from faster_whisper import WhisperModel
-        logger.info("Loading Whisper model (base)...")
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        model_size = _get_whisper_model_size()
+        logger.info(f"Loading Whisper model ({model_size})...")
+        _whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
         logger.info("Whisper model loaded.")
     return _whisper_model
+
+
+# Known Whisper hallucinations that appear on noisy or very short audio.
+_HALLUCINATION_RE = re.compile(
+    r"\b(?:www\.[\w.-]+\.[a-z]{2,}|https?://\S+|\S+@\S+|\S+\.(?:com|info|org|net|gov|edu))\b",
+    re.IGNORECASE,
+)
+
+
+def clean_transcription(text: str) -> str:
+    """Strip common Whisper hallucinations and normalize whitespace."""
+    # Remove URLs/email-like tokens.
+    text = _HALLUCINATION_RE.sub("", text)
+    # Collapse repeated words (e.g. "the the the").
+    text = re.sub(r"\b(\w+)(\s+\1)+", r"\1", text, flags=re.IGNORECASE)
+    # Normalize whitespace.
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
@@ -352,10 +381,15 @@ def transcribe_audio(audio_bytes: bytes) -> str:
             language="en",
             no_speech_threshold=0.6,
             initial_prompt=get_whisper_prompt(),
+            vad_filter=True,
+            condition_on_previous_text=False,
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
         )
-        return " ".join(
+        raw_text = " ".join(
             seg.text.strip() for seg in segments if seg.no_speech_prob < 0.6
         ).strip()
+        return clean_transcription(raw_text)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -482,25 +516,41 @@ def collision_checked_targets(
     return safe_joints, report
 
 
-async def dispatch_servo_commands(commands: list[ServoCommand]) -> None:
-    """Send a batch of ServoCommands to both sim and hardware dispatchers concurrently.
+class RobotServerUnavailable(RuntimeError):
+    """The requested physical-robot dispatch could not be completed."""
 
-    In sim mode only sim_dispatcher is set; in robot mode both fire concurrently.
-    Shared by the motion planner's execute_waypoints and the vision follow loop.
+
+async def dispatch_servo_commands(
+    commands: list[ServoCommand], sim_only: bool | None = None,
+) -> None:
+    """Send commands to the simulator and, when requested, the physical robot.
+
+    ``sim_only`` is set by an approved frontend motion request. ``None`` keeps
+    the existing server-mode behavior for background flows such as following.
     """
     if not commands:
         return
-    dispatches = []
+    dispatches: list[Awaitable[Any]] = []
     if sim_dispatcher is not None:
         dispatches.append(asyncio.to_thread(sim_dispatcher.send_commands, commands))
-    if hardware_dispatcher is not None:
+    send_to_hardware = sim_only is False or (
+        sim_only is None and robot_mode in ("robot", "hardware")
+    )
+    if send_to_hardware:
+        global hardware_dispatcher
+        if hardware_dispatcher is None:
+            hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
         dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, commands))
     if dispatches:
-        await asyncio.gather(*dispatches)
+        results = await asyncio.gather(*dispatches, return_exceptions=True)
+        if send_to_hardware and isinstance(results[-1], Exception):
+            raise RobotServerUnavailable("robot server could not be reached") from results[-1]
+        if isinstance(results[0], Exception):
+            raise results[0]
 
 
 async def execute_waypoints(
-    simulator: AiNexSimulator, waypoints: list[Waypoint]
+    simulator: AiNexSimulator, waypoints: list[Waypoint], sim_only: bool | None = None,
 ) -> list[dict]:
     """Execute a sequence of waypoints through the hardware abstraction layer.
 
@@ -552,7 +602,7 @@ async def execute_waypoints(
                 duration_ms=duration_ms,
             ))
 
-        await dispatch_servo_commands(commands)
+        await dispatch_servo_commands(commands, sim_only=sim_only)
 
         executed.append(
             {
@@ -574,13 +624,14 @@ async def execute_waypoints(
 async def execute_parallel_tracks(
     simulator: AiNexSimulator,
     tracks: list[list[Waypoint]],
+    sim_only: bool | None = None,
 ) -> list[dict]:
     """Execute multiple waypoint tracks concurrently using asyncio.gather.
 
     Tracks should operate on disjoint joint sets to avoid conflicts.
     """
     results = await asyncio.gather(
-        *[execute_waypoints(simulator, track) for track in tracks]
+        *[execute_waypoints(simulator, track, sim_only=sim_only) for track in tracks]
     )
     return [wp for track_result in results for wp in track_result]
 
@@ -683,6 +734,11 @@ class ServoMove(BaseModel):
     servo_id: int
     position: int
     duration_ms: int
+
+
+class MoveRequest(BaseModel):
+    moves: list[ServoMove]
+    sim_only: bool = True
 
 
 class SetPoseRequest(BaseModel):
@@ -850,8 +906,8 @@ async def joint_set(req: JointSetRequest) -> dict[str, Any]:
 
 
 @app.post("/move")
-async def demo_move(moves: list[ServoMove]) -> dict[str, Any]:
-    """Execute raw servo commands on the sim (and hardware, in robot mode).
+async def demo_move(request: MoveRequest) -> dict[str, Any]:
+    """Execute raw servo commands on the simulator, optionally with hardware.
 
     Used by the demo's pose-mimicry path: the frontend fetches servo commands
     from the vision server's /map-features (landmark retargeting) and posts them
@@ -875,6 +931,7 @@ async def demo_move(moves: list[ServoMove]) -> dict[str, Any]:
     if simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
+    moves = request.moves
     target_joints = {
         joint: servo_units_to_rad(m.position)
         for m in moves
@@ -893,7 +950,29 @@ async def demo_move(moves: list[ServoMove]) -> dict[str, Any]:
         position = rad_to_servo_units(target_joints[joint]) if joint in target_joints else m.position
         commands.append(ServoCommand(servo_id=m.servo_id, position=position, duration_ms=max(100, m.duration_ms)))
 
-    await dispatch_servo_commands(commands)
+    if sim_dispatcher is None:
+        raise HTTPException(status_code=503, detail="simulation server is not initialized")
+
+    if request.sim_only:
+        await asyncio.to_thread(sim_dispatcher.send_commands, commands)
+    else:
+        global hardware_dispatcher
+        if hardware_dispatcher is None:
+            # Keep the physical controller opt-in: the normal simulation
+            # server does not contact the robot until a dual-target move is
+            # explicitly requested from the frontend.
+            hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
+        sim_result, robot_result = await asyncio.gather(
+            asyncio.to_thread(sim_dispatcher.send_commands, commands),
+            asyncio.to_thread(hardware_dispatcher.send_commands, commands),
+            return_exceptions=True,
+        )
+        if isinstance(robot_result, Exception):
+            logger.warning(f"/move: robot server unavailable: {robot_result}")
+            raise HTTPException(status_code=503, detail="robot server could not be reached")
+        if isinstance(sim_result, Exception):
+            logger.error(f"/move: simulation dispatch failed: {sim_result}")
+            raise HTTPException(status_code=500, detail="simulation move failed")
     return {"status": "done", "count": len(commands), "safety": safety}
 
 
@@ -1191,6 +1270,7 @@ async def process_chat_message(
     session_id: str,
     pre_context: tuple[dict, str, list] | None = None,
     on_action_started: Callable[[], Awaitable[None]] | None = None,
+    sim_only: bool | None = None,
 ) -> dict:
     """Process a user message: single LLM call → primitive resolution → joint execution.
 
@@ -1265,7 +1345,7 @@ async def process_chat_message(
                     for joint, rad in joints.items()
                     if joint in SERVO_ID_MAP
                 ]
-                await dispatch_servo_commands(cmds)
+                await dispatch_servo_commands(cmds, sim_only=sim_only)
                 logger.info(f"Executed saved pose '{pose_name}' ({len(cmds)} joints)")
             else:
                 logger.warning(f"Saved pose '{pose_name}' not found in database")
@@ -1335,6 +1415,15 @@ async def process_chat_message(
                     sign_warnings.extend(motion_sign_issues)
                     for warning in motion_sign_issues:
                         logger.warning(f"Sign validation: {warning}")
+                    # Auto-correct the most common LLM direction-sign mistakes so the
+                    # demo behaves as the user expects, while still logging the issue.
+                    corrected = correct_motion_sign(user_message, wp.joints)
+                    if corrected != wp.joints:
+                        logger.info(
+                            f"Auto-corrected sign mismatch for '{user_message}': "
+                            f"{wp.joints} → {corrected}"
+                        )
+                        wp.joints = corrected
 
             # Signal that a real motion is about to run, before the (potentially
             # slow) execution blocks. The client uses this to tell "already
@@ -1349,7 +1438,7 @@ async def process_chat_message(
             while idx < len(motion_steps):
                 step = motion_steps[idx]
                 if isinstance(step, list):
-                    result = await execute_parallel_tracks(simulator_instance, step)
+                    result = await execute_parallel_tracks(simulator_instance, step, sim_only=sim_only)
                     executed_waypoints.extend(result)
                     idx += 1
                 else:
@@ -1357,7 +1446,7 @@ async def process_chat_message(
                     while idx < len(motion_steps) and not isinstance(motion_steps[idx], list):
                         batch.append(motion_steps[idx])
                         idx += 1
-                    result = await execute_waypoints(simulator_instance, batch)
+                    result = await execute_waypoints(simulator_instance, batch, sim_only=sim_only)
                     executed_waypoints.extend(result)
 
         waypoints_data = [
@@ -1481,7 +1570,10 @@ async def process_conversation_message(
 
 
 _FOLLOW_START_RE = re.compile(
-    r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+moves)\b",
+    r"\b(follow|mimic|copy|mirror)\b.*\b(movement|movements|me|my\s+(moves|movements))\b"
+    r"|\bfollow\s+me\b"
+    r"|\bmirror\s+me\b"
+    r"|\bcopy\s+me\b",
     re.IGNORECASE,
 )
 _FOLLOW_STOP_RE = re.compile(
@@ -1489,13 +1581,20 @@ _FOLLOW_STOP_RE = re.compile(
     re.IGNORECASE,
 )
 _CAPTURE_RE = re.compile(
-    r"\b(capture|take|copy)\b.*\b(pose|position)\b",
+    r"\b(capture|take|copy|record)\b.*\b(pose|position|picture|snapshot|photo)\b"
+    r"|\btake\s+a\s+picture\b"
+    r"|\btake\s+a\s+snapshot\b"
+    r"|\bpicture\s+of\s+me\b"
+    r"|\bfreeze\b"
+    r"|\block\s+it\s+in\b"
+    r"|\bi\s+want\s+you\s+to\s+(take|capture|record|copy)\b",
     re.IGNORECASE,
 )
 _SAVE_POSE_RE = re.compile(
-    r"\b(save|remember|store)\b.*(position|pose|this)\b"
+    r"\b(save|remember|store|keep)\b.*(position|pose|this)\b"
     r"|\bremember\s+this\b"
-    r"|\bsave\s+this\b",
+    r"|\bsave\s+this\b"
+    r"|\bkeep\s+this\s+pose\b",
     re.IGNORECASE,
 )
 
@@ -1688,6 +1787,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 user_message = message_data.get("content", "")
                 intent_type = message_data.get("intent_type")
                 motion_description = message_data.get("description")
+                sim_only = message_data.get("sim_only") if isinstance(message_data.get("sim_only"), bool) else None
                 if save_dialog.stage != _SaveStage.IDLE:
                     if await handle_save_dialog(user_message, save_dialog, websocket):
                         continue
@@ -1705,15 +1805,24 @@ async def websocket_endpoint(websocket: WebSocket):
                         session_id=session_id,
                     )
                 elif intent_type == "motion" and motion_description:
-                    response_data = await process_chat_message(
-                        user_message=motion_description,
-                        memory=memory,
-                        state_manager=state_manager,
-                        recorder=recorder,
-                        simulator_instance=simulator,
-                        session_id=session_id,
-                        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
-                    )
+                    try:
+                        response_data = await process_chat_message(
+                            user_message=motion_description,
+                            memory=memory,
+                            state_manager=state_manager,
+                            recorder=recorder,
+                            simulator_instance=simulator,
+                            session_id=session_id,
+                            on_action_started=lambda: websocket.send_json({"type": "action_started"}),
+                            sim_only=sim_only,
+                        )
+                    except RobotServerUnavailable:
+                        response_data = {
+                            "type": "chat_response",
+                            "role": "assistant",
+                            "content": "I moved in the simulation, but I couldn't reach the robot server.",
+                            "waypoints": [],
+                        }
                 else:
                     response_data = await process_chat_message(
                         user_message=user_message,

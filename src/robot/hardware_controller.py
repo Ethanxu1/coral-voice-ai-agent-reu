@@ -68,10 +68,8 @@ class AiNexHardwareController(RobotController):
         if not payload:
             return
 
-        try:
-            self._client.post(f"{self._base}/move", json=payload)
-        except Exception as e:
-            logger.error(f"Failed to send commands to robot: {e}")
+        response = self._client.post(f"{self._base}/move", json=payload)
+        response.raise_for_status()
 
     def read_feedback(self, servo_ids: list[int]) -> list[ServoFeedback]:
         """Request servo feedback from robot agent (temperature + voltage)."""

@@ -28,6 +28,8 @@ Examples:
 - "save this pose"
 - "save the current position"
 - "remember this position"
+- "remember this"
+- "keep this pose"
 - "I like this pose, save it"
 - "save it as is"
 
@@ -43,7 +45,15 @@ Examples:
 - "capture my pose"
 - "copy my pose"
 - "take a picture of me"
+- "take a picture"
+- "i want you to take a picture"
+- "i want you to capture my pose"
+- "i want you to record my pose"
+- "record my pose"
+- "picture of me"
 - "mimic my pose"
+- "freeze"
+- "lock it in"
 
 Important: If the user wants to save the robot's current pose, that is `save_position`, NOT `snapshot`. Snapshot always involves the camera and the user's body.
 
@@ -150,10 +160,11 @@ Output: `{"type": "immediate", "intent": "<one of follow_start|follow_stop|libra
 ## Important decision rules
 
 1. **snapshot vs save_position**: Snapshot involves the camera and the user's body. save_position saves the robot's current pose.
-2. **BY vs TO**: "BY" means relative change. "TO" means absolute target. Compute from CURRENT_STATE.
-3. **movement vs conversation/clarification**: If the user asks for a physical change, classify as `movement`. Infer reasonable defaults from context when needed. Only classify as `conversation` or `clarification` if the request is genuinely ambiguous even after using context.
-4. **Always prefer classification**: Do not explain yourself. Output valid JSON only.
-5. **Kid-friendly tone**: All descriptions and questions should sound friendly and simple.
+2. **Wishes and politeness are still commands**: If the user says "I want you to take a picture", "I want you to capture my pose", "I want you to record my pose", or "can you take a picture", classify as `snapshot`.
+3. **BY vs TO**: "BY" means relative change. "TO" means absolute target. Compute from CURRENT_STATE.
+4. **movement vs conversation/clarification**: If the user asks for a physical change, classify as `movement`. Infer reasonable defaults from context when needed. Only classify as `conversation` or `clarification` if the request is genuinely ambiguous even after using context.
+5. **Always prefer classification**: Do not explain yourself. Output valid JSON only.
+6. **Kid-friendly tone**: All descriptions and questions should sound friendly and simple.
 
 ## Input context
 
