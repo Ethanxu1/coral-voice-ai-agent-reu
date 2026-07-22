@@ -638,6 +638,12 @@ async def execute_parallel_tracks(
     return [wp for track_result in results for wp in track_result]
 
 
+# Hardware travel time for a reset/stand. The sim teleports into the stand
+# keyframe, but a physical robot has to be animated there, and a full-body move
+# needs a longer, gentler interval than a single-joint nudge.
+RESET_TO_STAND_MS = 1000
+
+
 @app.post("/command", response_model=CommandResponse)
 async def execute_manual_command(request: CommandRequest) -> CommandResponse:
     """Execute a manual robot command on the simulator and (in robot mode) the physical robot."""
@@ -659,6 +665,7 @@ async def execute_manual_command(request: CommandRequest) -> CommandResponse:
 
     if hardware_dispatcher is not None:
         after = simulator.get_all_joint_states()
+        duration_ms = RESET_TO_STAND_MS if command in ("reset", "stand") else 400
         servo_cmds = []
         for joint, new_rad in after.items():
             if abs(new_rad - before.get(joint, 0.0)) > 1e-4:
@@ -668,7 +675,7 @@ async def execute_manual_command(request: CommandRequest) -> CommandResponse:
                 servo_cmds.append(ServoCommand(
                     servo_id=sid,
                     position=rad_to_servo_units(new_rad),
-                    duration_ms=400,
+                    duration_ms=duration_ms,
                 ))
         if servo_cmds:
             await asyncio.to_thread(hardware_dispatcher.send_commands, servo_cmds)
@@ -1791,7 +1798,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             ServoCommand(
                                 servo_id=sid,
                                 position=rad_to_servo_units(rad),
-                                duration_ms=1500,
+                                duration_ms=RESET_TO_STAND_MS,
                             )
                             for joint, rad in stand.items()
                             if (sid := SERVO_ID_MAP.get(joint)) is not None
