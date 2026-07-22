@@ -4,12 +4,10 @@ Multimodal AI dialogue agent for child-robot instruction grounding — Hiwonder 
 
 ## Overview
 
-CORAL is a voice-driven demo system that lets a child interact with the AiNex robot through speech. It has two main modes:
+CORAL is a voice-driven demo system that lets a child interact with the AiNex robot through speech. 
 
-- **Director demo** — a guided INTRO → CLASSIFY → RECORD → OUTRO pipeline where the robot poses, classifies the child's pose via camera, and takes voice corrections
-- **Testing mode** — open-ended voice → motion control via Whisper + GPT-4o-mini
+The Mac runs the frontend, LLM server, vision, and TTS. The Pi (inside an `ainex` Docker container with ROS Noetic) controls the physical robot servos.
 
-The Mac runs the frontend, LLM server, and TTS. The Pi (inside an `ainex` Docker container with ROS Noetic) controls the physical robot servos.
 
 ## Prerequisites
 
@@ -54,6 +52,8 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
 ```
 
+Only `OPENAI_API_KEY` is required. Leave the Langfuse keys blank and tracing disables itself.
+
 ## Pi Setup (one-time)
 
 SSH into the Pi and open the Docker container:
@@ -67,7 +67,7 @@ su - ubuntu
 Copy the ROS package into the catkin workspace:
 
 ```bash
-cp -r /path/to/ros/ ~/ros_ws/src/ainex_demo/
+cp -r /path/to/repo/src/robot/pi/ ~/ros_ws/src/ainex_demo/
 chmod +x ~/ros_ws/src/ainex_demo/nodes/*.py
 ```
 
@@ -111,20 +111,32 @@ If you skip this step the capture flow still works — shape calibration is sile
 
 ### Laptop (three terminals)
 
+All three are required — the demo pages wait on the vision server, so a
+missing one looks like the demo hanging rather than a clean error.
+
 ```bash
-# Terminal 1 — voice + LLM server
-uv run server          # simulation mode
+# Terminal 1 — voice + LLM server + MuJoCo simulator          (:8000)
+uv run server                          # simulation mode
 # or
-ROBOT_IP=192.168.8.219 uv run robot   # physical robot mode
+ROBOT_IP=192.168.8.219 uv run robot    # physical robot mode (no MuJoCo)
 
-# Terminal 2 — TTS speaker
-uv run speaker
+# Terminal 2 — vision server: webcam → body pose              (:8001)
+uv run vision
 
-# Terminal 3 — frontend
+# Terminal 3 — frontend                                       (:5173)
 cd frontend && npm run dev
 ```
 
-Open <http://localhost:5173>.
+Open <http://localhost:5173> and click **✨ Start Demo Here**.
+
+On macOS, `uv run vision` opens the webcam from Python, so the camera permission prompt comes from your terminal app. Grant it under System Settings → Privacy & Security → Camera, then restart the vision server.
+
+To cycle the simulator through every motion in `motions.py` without the LLM or frontend:
+
+```bash
+uv run sim-test              # all motions
+uv run sim-test dab wave     # only these
+```
 
 ### Pi (every session)
 
@@ -144,11 +156,12 @@ curl http://192.168.8.219:9000/health
 
 ### Syncing files to Pi
 
-Use the `dump` command to push a file from Mac → Pi → Docker container:
+`dump` is a local shell alias (not checked into this repo) that pushes a file from
+Mac → Pi → Docker container:
 
 ```bash
-dump src/coral_agent/robot/ros/nodes/robot_server.py
-dump src/coral_agent/robot/ros/nodes/motions.py
+dump src/robot/pi/nodes/server.py
+dump src/robot/pi/nodes/body.py
 ```
 
 Files in `nodes/` take effect immediately (no rebuild). Changes to `CMakeLists.txt`, `package.xml`, or `srv/` require `catkin build ainex_demo`.
@@ -158,9 +171,10 @@ Files in `nodes/` take effect immediately (no rebuild). Changes to `CMakeLists.t
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | — | Required for LLM motion planner |
-| `ROBOT_IP` | `192.168.8.219` | Robot's IP on your network |
-| `ROBOT_AGENT_PORT` | `9000` | robot_server port |
-| `AGENT_PORT` | `9000` | Port robot_server binds to (Pi side) |
-| `CLASSIFIER_PATH` | `model/pose_classifier.pt` | Path to MobileNetV3 checkpoint |
+| `ROBOT_IP` | `192.168.8.219` | Robot's IP on your network (hardware mode only) |
+| `ROBOT_AGENT_PORT` | `9000` | Pi server port, as dialed by the Mac |
+| `AGENT_PORT` | `9000` | Port the Pi server binds to (Pi side) |
+| `SPEAKER_PORT` | `5002` | TTS speaker server port |
+| `CLASSIFIER_PATH` | `src/vision/models/pose_classifier.pt` | MobileNetV3 checkpoint, loaded by the Mac vision server |
 | `LANGFUSE_SECRET_KEY` / `LANGFUSE_PUBLIC_KEY` | — | LLM tracing (optional) |
 | `LANGFUSE_BASE_URL` | `https://us.cloud.langfuse.com` | Langfuse endpoint |
