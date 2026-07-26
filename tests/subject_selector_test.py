@@ -227,8 +227,26 @@ def test_selection_and_reacquisition() -> None:
     print("test_selection_and_reacquisition OK")
 
 
+def test_multi_raise_clears_holds() -> None:
+    """Two subjects raising simultaneously must not commit a chimeric anchor."""
+    sel = SubjectSelector()
+    sel.start()
+
+    # A and B both raise hands from frame 0. Ambiguity — no commit should occur.
+    a = {"body_landmarks": _hand_raised_pose(), "face_landmarks": _face(0.0), "head_pose": None}
+    b = {"body_landmarks": _hand_raised_pose(), "face_landmarks": _face(0.5), "head_pose": None}
+
+    now = time.time()
+    for i in range(120):  # >3 s at 30 fps
+        r = sel.process_frame([a, b], now=now + i / 30)
+    assert r.state == "selecting", f"expected still selecting, got {r.state}"
+    assert r.selected_subject_id is None
+    print("test_multi_raise_clears_holds: no commit under simultaneous raise")
+
+
 if __name__ == "__main__":
     test_hand_raised()
     test_face_embedding()
     test_selection_and_reacquisition()
     test_multimodal_selection_and_reacquisition()
+    test_multi_raise_clears_holds()

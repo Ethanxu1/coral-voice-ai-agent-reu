@@ -48,6 +48,16 @@ _HOLD_SECONDS = 3.0
 _LOST_FRAME_THRESHOLD = int(1.5 * 30)  # ~1.5 s at 30 fps
 _MAX_SUBJECTS = 4
 _ANCHOR_SAMPLE_INTERVAL = 0.2
+# Max centroid delta (image-normalized) between a hand-raised subject and an
+# existing hold's stored centroid for the two to be treated as the same
+# person. During a 3-second hold the target subject stays roughly stationary,
+# so centroid tracking is far more reliable than the noisy small-ArcFace
+# face similarity that used to drive hold association.
+_HOLD_CENTROID_MATCH_MAX = 0.15
+# Grace period before a hold is dropped when the hand-raised subject
+# disappears (hand lowered or subject left frame). Buffers 1-2 frame
+# pose-detection flickers without killing hold progress.
+_HOLD_UNRAISE_GRACE = 0.2
 
 # Defaults for the live-tunable thresholds. These are just seed values; the
 # runtime uses whatever's on the SubjectSelector instance so the UI can update
@@ -658,58 +668,90 @@ class SubjectSelector:
         return None
 
     def _update_holds(self, subjects: list[_RawSubject], now: float) -> None:
-        """Update per-subject hand-raised hold timers. Called under lock."""
-        mapping = self._associate_to_holds(subjects, self._holds)
+        """Update per-subject hand-raised hold timers. Called under lock.
+
+        Association is centroid-only during the hold. Face similarity is
+        deliberately skipped here because small ArcFace packs (buffalo_s /
+        MobileFaceNet) can false-positive above 0.55 cosine between two
+        people at similar angles — silently swapping a hold's identity
+        mid-buffer and producing a chimeric anchor at commit time. The
+        centroid of a hand-raising subject barely moves over 3 s, so
+        centroid tracking is both simpler and much more reliable here.
+
+        Ambiguity rule: if two or more subjects have their hand raised in
+        the same frame, we can't tell which one is the target — clear all
+        holds and force a restart. This prevents a bystander's simultaneous
+        raise from contaminating the buffer of the actual target.
+        """
+        raised_indices = [i for i, s in enumerate(subjects) if s.hand_raised]
+
+        if len(raised_indices) > 1:
+            self._holds.clear()
+            return
+
         seen: set[str] = set()
 
-        for sub_idx, sub in enumerate(subjects):
-            hold_id = mapping.get(sub_idx)
-            if hold_id is None and sub.hand_raised:
-                self._hold_counter += 1
-                hold_id = f"hold-{self._hold_counter}"
-            if hold_id is None:
-                continue
-            seen.add(hold_id)
-            if hold_id in self._holds:
-                hold = self._holds[hold_id]
-                if sub.hand_raised:
-                    hold.last_seen_at = now
-                    hold.centroid = sub.centroid
-                    if sub.face_embedding is not None:
-                        hold.face_embedding = sub.face_embedding
-                    if sub.legacy_face_embedding is not None:
-                        hold.legacy_embedding = sub.legacy_face_embedding
-                    if sub.appearance is not None:
-                        hold.appearance = sub.appearance
-                    if now - hold.last_sample_time >= _ANCHOR_SAMPLE_INTERVAL:
-                        if sub.face_embedding is not None:
-                            hold.face_buffer.append(sub.face_embedding)
-                        if sub.legacy_face_embedding is not None:
-                            hold.legacy_buffer.append(sub.legacy_face_embedding)
-                        if sub.appearance is not None:
-                            hold.appearance_buffer.append(sub.appearance)
-                        hold.last_sample_time = now
-                else:
-                    del self._holds[hold_id]
-            else:
-                if sub.hand_raised:
-                    hold = _HoldState(
-                        started_at=now,
-                        legacy_embedding=sub.legacy_face_embedding,
-                        face_embedding=sub.face_embedding,
-                        appearance=sub.appearance,
-                        centroid=sub.centroid,
-                        last_seen_at=now,
-                        last_sample_time=now,
-                    )
-                    if sub.face_embedding is not None:
-                        hold.face_buffer.append(sub.face_embedding)
-                    if sub.legacy_face_embedding is not None:
-                        hold.legacy_buffer.append(sub.legacy_face_embedding)
-                    if sub.appearance is not None:
-                        hold.appearance_buffer.append(sub.appearance)
-                    self._holds[hold_id] = hold
+        if raised_indices:
+            sub = subjects[raised_indices[0]]
+            nearest_id: Optional[str] = None
+            nearest_dist = float("inf")
+            for hold_id, hold in self._holds.items():
+                dist = math.hypot(
+                    sub.centroid[0] - hold.centroid[0],
+                    sub.centroid[1] - hold.centroid[1],
+                )
+                if dist < nearest_dist:
+                    nearest_dist = dist
+                    nearest_id = hold_id
 
-        stale = [hid for hid, h in self._holds.items() if hid not in seen and now - h.last_seen_at > 0.5]
+            if nearest_id is not None and nearest_dist < _HOLD_CENTROID_MATCH_MAX:
+                self._touch_hold(self._holds[nearest_id], sub, now)
+                seen.add(nearest_id)
+            else:
+                self._hold_counter += 1
+                new_id = f"hold-{self._hold_counter}"
+                self._holds[new_id] = self._new_hold(sub, now)
+                seen.add(new_id)
+
+        stale = [
+            hid for hid, h in self._holds.items()
+            if hid not in seen and now - h.last_seen_at > _HOLD_UNRAISE_GRACE
+        ]
         for hid in stale:
             del self._holds[hid]
+
+    def _new_hold(self, sub: _RawSubject, now: float) -> _HoldState:
+        hold = _HoldState(
+            started_at=now,
+            legacy_embedding=sub.legacy_face_embedding,
+            face_embedding=sub.face_embedding,
+            appearance=sub.appearance,
+            centroid=sub.centroid,
+            last_seen_at=now,
+            last_sample_time=now,
+        )
+        if sub.face_embedding is not None:
+            hold.face_buffer.append(sub.face_embedding)
+        if sub.legacy_face_embedding is not None:
+            hold.legacy_buffer.append(sub.legacy_face_embedding)
+        if sub.appearance is not None:
+            hold.appearance_buffer.append(sub.appearance)
+        return hold
+
+    def _touch_hold(self, hold: _HoldState, sub: _RawSubject, now: float) -> None:
+        hold.last_seen_at = now
+        hold.centroid = sub.centroid
+        if sub.face_embedding is not None:
+            hold.face_embedding = sub.face_embedding
+        if sub.legacy_face_embedding is not None:
+            hold.legacy_embedding = sub.legacy_face_embedding
+        if sub.appearance is not None:
+            hold.appearance = sub.appearance
+        if now - hold.last_sample_time >= _ANCHOR_SAMPLE_INTERVAL:
+            if sub.face_embedding is not None:
+                hold.face_buffer.append(sub.face_embedding)
+            if sub.legacy_face_embedding is not None:
+                hold.legacy_buffer.append(sub.legacy_face_embedding)
+            if sub.appearance is not None:
+                hold.appearance_buffer.append(sub.appearance)
+            hold.last_sample_time = now
