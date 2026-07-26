@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { Landmark, FaceLandmark, HeadPose, CalibrationStatus, StabilityStatus } from '../types/pose'
+import type { Landmark, FaceLandmark, HeadPose, CalibrationStatus, StabilityStatus, DetectedSubject, SelectionState } from '../types/pose'
 
 const VISION_BASE = 'http://localhost:8001'
 const VISION_WS = 'ws://localhost:8001/ws/pose'
@@ -22,6 +22,9 @@ export function usePoseWebSocket() {
   const [stabilityStatus, setStabilityStatus] = useState<StabilityStatus>(INITIAL_STABILITY)
   const [isConnected, setIsConnected] = useState(false)
   const [trackingLost, setTrackingLost] = useState(false)
+  const [selectionState, setSelectionState] = useState<SelectionState>('idle')
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null)
+  const [subjects, setSubjects] = useState<DetectedSubject[]>([])
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectRef = useRef<number | null>(null)
   const genRef = useRef(0)
@@ -61,6 +64,9 @@ export function usePoseWebSocket() {
         setHeadPose(data.head_pose)
         if (data.calibration) setCalibrationStatus(data.calibration)
         if (data.stability) setStabilityStatus(data.stability)
+        if (data.selection_state) setSelectionState(data.selection_state)
+        setSelectedSubjectId(data.selected_subject_id ?? null)
+        if (data.subjects) setSubjects(data.subjects)
       } else if (data.type === 'tracking_lost') {
         setTrackingLost(true)
       } else if (data.type === 'calibration_status') {
@@ -99,6 +105,34 @@ export function usePoseWebSocket() {
     await fetch(`${VISION_BASE}/capture/stable_position/continue`, { method: 'POST' })
   }, [])
 
+  const startSelection = useCallback(async () => {
+    await fetch(`${VISION_BASE}/subject-selection/start`, { method: 'POST' })
+  }, [])
+
+  const resetSelection = useCallback(async () => {
+    await fetch(`${VISION_BASE}/subject-selection/reset`, { method: 'POST' })
+  }, [])
+
+  const stopSelection = useCallback(async () => {
+    await fetch(`${VISION_BASE}/subject-selection/stop`, { method: 'POST' })
+  }, [])
+
+  const fetchTuning = useCallback(async () => {
+    const res = await fetch(`${VISION_BASE}/subject-selection/tuning`)
+    if (!res.ok) throw new Error(`tuning fetch failed: ${res.status}`)
+    return res.json()
+  }, [])
+
+  const updateTuning = useCallback(async (updates: Record<string, number>) => {
+    const res = await fetch(`${VISION_BASE}/subject-selection/tuning`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    })
+    if (!res.ok) throw new Error(`tuning update failed: ${res.status}`)
+    return res.json()
+  }, [])
+
   return {
     bodyLandmarks,
     faceLandmarks,
@@ -107,9 +141,17 @@ export function usePoseWebSocket() {
     stabilityStatus,
     isConnected,
     trackingLost,
+    selectionState,
+    selectedSubjectId,
+    subjects,
     startCalibration,
     resetCalibration,
     captureStablePosition,
     continueLive,
+    startSelection,
+    resetSelection,
+    stopSelection,
+    fetchTuning,
+    updateTuning,
   }
 }
