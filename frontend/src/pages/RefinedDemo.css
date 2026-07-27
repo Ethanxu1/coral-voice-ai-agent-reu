@@ -1106,3 +1106,186 @@
 .rd-freeze-badge {
   background: rgba(60, 55, 75, 0.85) !important;
 }
+
+/* ── Subject-select modal ───────────────────────────────────────────────────── */
+/* Full-viewport takeover shown at the very start of a session. Once the vision
+   server locks on to a subject, this unmounts and the demo drops back to the
+   normal layout with the live feed in the top-right PIP. */
+.rd-subject-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(38, 35, 47, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 40px 32px 32px;
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.rd-subject-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  max-width: 720px;
+}
+
+.rd-subject-tag {
+  display: inline-block;
+  background: rgba(23, 190, 187, 0.15);
+  color: #17BEBB;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  padding: 6px 14px;
+  border-radius: 50px;
+}
+
+.rd-subject-title {
+  margin: 0;
+  font-family: 'Baloo 2', cursive;
+  font-size: 34px;
+  font-weight: 800;
+  color: #FFFDF8;
+  line-height: 1.15;
+}
+
+.rd-subject-subtitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(255, 253, 248, 0.72);
+  line-height: 1.5;
+}
+
+.rd-subject-camera {
+  position: relative;
+  width: min(88vw, 1080px);
+  aspect-ratio: 16 / 9;
+  max-height: 60vh;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #15151a;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rd-subject-camera .tui-stream {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+.rd-subject-camera .tui-stream img {
+  border-radius: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.rd-subject-camera-live {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 50px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  background: rgba(220, 38, 38, 0.88);
+  color: #fff;
+  z-index: 3;
+}
+
+.rd-subject-camera-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.85);
+}
+
+.rd-subject-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #FFFDF8;
+  font-size: 17px;
+  font-weight: 700;
+  min-height: 26px;
+}
+
+.rd-subject-status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #F0A93A;
+  box-shadow: 0 0 12px rgba(240, 169, 58, 0.7);
+  animation: rd-pulse 1.2s ease-in-out infinite;
+}
+
+.rd-subject-status-dot.selected {
+  background: #17BEBB;
+  box-shadow: 0 0 14px rgba(23, 190, 187, 0.8);
+}
+
+.rd-subject-status-dot.searching {
+  background: #FF6B4A;
+  box-shadow: 0 0 12px rgba(255, 107, 74, 0.7);
+}
+
+.rd-subject-status-dot.idle {
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: none;
+  animation: none;
+}
+
+.rd-subject-status-text {
+  font-family: 'Nunito', sans-serif;
+}
+
+.rd-subject-progress {
+  width: min(360px, 70vw);
+  height: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.rd-subject-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #17BEBB, #6EE7B7);
+  border-radius: 4px;
+  transition: width 0.12s ease-out;
+}
+
+.rd-subject-skip {
+  margin-top: 4px;
+  padding: 8px 18px;
+  border-radius: 50px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: rgba(255, 253, 248, 0.68);
+  font-family: 'Nunito', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rd-subject-skip:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.28);
+}
