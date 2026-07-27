@@ -23,6 +23,7 @@ export default function RefinedDemo() {
     goToExit,
     startAgain,
     toggleMute,
+    skipSubjectSelect,
   } = useRefinedDemoMachine()
 
   const handleExit = useCallback(() => {
@@ -215,6 +216,52 @@ export default function RefinedDemo() {
           )}
         </div>
       </main>
+
+      {/* Subject-select modal — locks the demo to one person at session start */}
+      {state.stage === 'SUBJECT_SELECT' && (
+        <div className="rd-subject-modal">
+          <div className="rd-subject-header">
+            <div className="rd-subject-tag">STEP 1 · WHO AM I FOLLOWING?</div>
+            <h2 className="rd-subject-title">Raise one hand for 3 seconds</h2>
+            <div className="rd-subject-subtitle">
+              I'll lock on to you so I don't get confused if other people walk by.
+            </div>
+          </div>
+          <div className="rd-subject-camera">
+            <LiveStream badge={false} />
+            <div className="rd-subject-camera-live">
+              <span className="rd-subject-camera-live-dot" />
+              <span>LIVE</span>
+            </div>
+          </div>
+          <div className="rd-subject-status-row">
+            <span
+              className={`rd-subject-status-dot ${state.selectionState}`}
+              aria-hidden
+            />
+            <span className="rd-subject-status-text">
+              {state.selectionState === 'selected'
+                ? 'Got you!'
+                : state.selectionSubjectsCount === 0
+                ? 'Waiting for someone to appear in the frame…'
+                : state.selectionHoldProgress > 0
+                ? `Hold it there… ${Math.round(state.selectionHoldProgress * 100)}%`
+                : `Raise a hand above your head (${state.selectionSubjectsCount} ${
+                    state.selectionSubjectsCount === 1 ? 'person' : 'people'
+                  } in view)`}
+            </span>
+          </div>
+          <div className="rd-subject-progress">
+            <div
+              className="rd-subject-progress-fill"
+              style={{ width: `${Math.min(100, state.selectionHoldProgress * 100)}%` }}
+            />
+          </div>
+          <button className="rd-subject-skip" onClick={skipSubjectSelect}>
+            Skip — continue without locking on
+          </button>
+        </div>
+      )}
 
       {/* Countdown modal */}
       {state.stage === 'COUNTDOWN' && state.countdown != null && (
