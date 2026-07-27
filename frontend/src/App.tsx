@@ -13,6 +13,7 @@ import PoseTester from './pages/PoseTester'
 import RobotViewer from './pages/RobotViewer'
 import SubjectSelect from './pages/SubjectSelect'
 import RobotModeToggle from './components/RobotModeToggle'
+import StreamSourceToggle from './components/StreamSourceToggle'
 
 interface JointStates {
   [key: string]: number
@@ -168,6 +169,12 @@ function App() {
         />
       </div>
       <div className="controls-panel">
+        {/* Entry point for teammates running the feedback walkthrough — the demo
+            lives behind /welcome, which is not otherwise obvious from this page. */}
+        <Link to="/welcome" className="start-demo-banner">
+          ✨ Start Demo Here
+        </Link>
+
         <SimulatorControls
           onCommand={sendCommand}
           isConnected={isConnected}
@@ -197,6 +204,7 @@ function App() {
           </Link>
         </div>
         <RobotModeToggle />
+        <StreamSourceToggle />
       </div>
     </div>
   )

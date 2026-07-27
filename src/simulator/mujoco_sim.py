@@ -520,7 +520,9 @@ class AiNexSimulator:
             buf[n * 7:n * 7 + 3] = self.data.subtree_com[0]
         return buf.tobytes()
 
-    def start_viewer(self, on_close: Callable[[], None] | None = None) -> None:
+    def start_viewer(
+        self, on_close: Callable[[], None] | None = None, open_window: bool = True
+    ) -> None:
         """Start the simulation loop (physics + native viewer) in one thread.
 
         Stepping and rendering run in the SAME thread so they never touch mjData
@@ -529,6 +531,9 @@ class AiNexSimulator:
         corruption / hard exit). Physics keeps stepping even if the native window
         is closed or never opens (headless), so command handling and the browser
         pose stream (/ws/sim) stay live regardless.
+
+        Pass open_window=False to run headless on purpose — same physics loop, no
+        native window (the browser viewer is unaffected).
         """
         if self._running:
             logger.warning("Simulator already running")
@@ -536,11 +541,13 @@ class AiNexSimulator:
 
         self._running = True
         self._viewer_thread = threading.Thread(
-            target=self._run, args=(on_close,), daemon=True
+            target=self._run, args=(on_close, open_window), daemon=True
         )
         self._viewer_thread.start()
 
-    def _run(self, on_close: Callable[[], None] | None = None) -> None:
+    def _run(
+        self, on_close: Callable[[], None] | None = None, open_window: bool = True
+    ) -> None:
         # timestep 0.002s × 5 steps = 0.01s sim per 0.01s sleep ≈ real-time.
         steps_per_frame = 5
 
@@ -551,11 +558,14 @@ class AiNexSimulator:
         # mjData reads in its setup. Failure (e.g. no mjpython) is non-fatal — we
         # still run physics headlessly for the browser stream.
         viewer = None
-        try:
-            viewer = mujoco.viewer.launch_passive(self.model, self.data)
-            logger.info("MuJoCo viewer window opened")
-        except Exception as e:
-            logger.warning(f"Native viewer unavailable ({e}); running headless")
+        if not open_window:
+            logger.info("MuJoCo viewer window disabled; running headless")
+        else:
+            try:
+                viewer = mujoco.viewer.launch_passive(self.model, self.data)
+                logger.info("MuJoCo viewer window opened")
+            except Exception as e:
+                logger.warning(f"Native viewer unavailable ({e}); running headless")
 
         logger.info("Starting MuJoCo physics loop")
         try:

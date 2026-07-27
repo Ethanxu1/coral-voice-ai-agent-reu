@@ -109,6 +109,34 @@ export async function setAngleArcsEnabled(enabled: boolean): Promise<void> {
   }
 }
 
+// Toggle the dynamic fall check on the robot base server (StabilityChecker —
+// see collision_checked_targets in server.py). Applies immediately, no
+// restart needed. Best-effort like setAngleArcsEnabled: a failure here
+// shouldn't block the UI toggle from flipping locally.
+export async function setFallCheckEnabled(enabled: boolean): Promise<void> {
+  try {
+    await fetch(`${getRobotBase()}/settings/fall-check?enabled=${enabled}`, {
+      method: 'POST',
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
+// Persist whether the native MuJoCo window opens the next time the base server
+// starts (POST /settings/mujoco-viewer). Unlike the toggles above this cannot
+// apply now — the window has to be opened at process start — so it only writes
+// the preference. Best-effort all the same.
+export async function setMujocoViewerOnLaunch(enabled: boolean): Promise<void> {
+  try {
+    await fetch(`${getRobotBase()}/settings/mujoco-viewer?enabled=${enabled}`, {
+      method: 'POST',
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
 // Safety-check outcome attached to /move responses. `fallBlocked` means the
 // dynamics shadow-check saw the robot topple, so the server executed 0% of
 // the move; `collisionClamped` means the kinematic checker pulled the motion

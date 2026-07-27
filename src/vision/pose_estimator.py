@@ -840,6 +840,9 @@ class PoseEstimator:
         if not ret:
             return None
 
+        # Mirror the frame across the vertical axis so it reads like a reflection.
+        frame = cv2.flip(frame, 1)
+
         if self.stability.is_frozen:
             frozen = self.stability.frozen_result()
             if frozen is not None:

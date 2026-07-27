@@ -242,7 +242,9 @@ async def lifespan(app: FastAPI):
     # of what the code wants the robot to do, so we can compare to the physical motion.
     logger.info("Starting AiNex MuJoCo simulator...")
     simulator = AiNexSimulator()
-    simulator.start_viewer()
+    # Physics always runs; the native window is opt-in via the frontend toggle
+    # (POST /settings/mujoco-viewer). The browser viewer works either way.
+    simulator.start_viewer(open_window=_viewer_opens_on_launch())
     sim_dispatcher = SimController(simulator)
 
     if robot_mode in ("robot", "hardware"):
@@ -636,6 +638,12 @@ async def execute_parallel_tracks(
     return [wp for track_result in results for wp in track_result]
 
 
+# Hardware travel time for a reset/stand. The sim teleports into the stand
+# keyframe, but a physical robot has to be animated there, and a full-body move
+# needs a longer, gentler interval than a single-joint nudge.
+RESET_TO_STAND_MS = 1000
+
+
 @app.post("/command", response_model=CommandResponse)
 async def execute_manual_command(request: CommandRequest) -> CommandResponse:
     """Execute a manual robot command on the simulator and (in robot mode) the physical robot."""
@@ -657,6 +665,7 @@ async def execute_manual_command(request: CommandRequest) -> CommandResponse:
 
     if hardware_dispatcher is not None:
         after = simulator.get_all_joint_states()
+        duration_ms = RESET_TO_STAND_MS if command in ("reset", "stand") else 400
         servo_cmds = []
         for joint, new_rad in after.items():
             if abs(new_rad - before.get(joint, 0.0)) > 1e-4:
@@ -666,7 +675,7 @@ async def execute_manual_command(request: CommandRequest) -> CommandResponse:
                 servo_cmds.append(ServoCommand(
                     servo_id=sid,
                     position=rad_to_servo_units(new_rad),
-                    duration_ms=400,
+                    duration_ms=duration_ms,
                 ))
         if servo_cmds:
             await asyncio.to_thread(hardware_dispatcher.send_commands, servo_cmds)
@@ -819,6 +828,57 @@ async def demo_set_state(req: StateRequest) -> dict[str, str]:
     global _demo_state
     _demo_state = req.mode
     return {"state": _demo_state}
+
+
+@app.post("/settings/fall-check")
+async def set_fall_check(enabled: bool = True) -> dict[str, bool]:
+    """Toggle the dynamic fall check at runtime (see collision_checked_targets).
+
+    Lets the demo show both behaviors — moves blocked when they'd topple the
+    robot vs. executed unchecked — without restarting the server.
+    """
+    global stability_checker
+    stability_checker = StabilityChecker() if enabled else None
+    logger.info("fall-check: enabled=%s", enabled)
+    return {"fall_check_enabled": enabled}
+
+
+# Persisted outside the repo so it survives a `git clean` and needs no gitignore
+# entry. The native window can only be opened at process start (on macOS the
+# whole server has to be re-exec'd under mjpython first), so the UI writes this
+# now and the *next* launch reads it.
+VIEWER_SETTING_PATH = Path.home() / ".coral" / "settings.json"
+
+
+def _viewer_opens_on_launch() -> bool:
+    """Read the persisted 'open the MuJoCo window at startup' preference.
+
+    Off by default: most runs drive the browser viewer (/ws/sim), where the
+    native window adds nothing and steals focus on every start.
+    """
+    try:
+        raw = json.loads(VIEWER_SETTING_PATH.read_text(encoding="utf-8"))
+        return bool(raw.get("mujoco_viewer_on_launch", False))
+    except (OSError, ValueError):
+        return False
+
+
+@app.post("/settings/mujoco-viewer")
+async def set_mujoco_viewer(enabled: bool = False) -> dict[str, bool]:
+    """Persist whether the native MuJoCo window opens on the next server launch.
+
+    Deliberately not applied to the running process: reopening the window would
+    mean tearing down and restarting the physics loop, and on macOS it can't be
+    opened at all unless the process was started under mjpython. The frontend
+    re-posts its stored value on every page load, which keeps this file in sync
+    with the toggle.
+    """
+    VIEWER_SETTING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    VIEWER_SETTING_PATH.write_text(
+        json.dumps({"mujoco_viewer_on_launch": enabled}), encoding="utf-8"
+    )
+    logger.info("mujoco-viewer: open_on_launch=%s (applies on next server start)", enabled)
+    return {"mujoco_viewer_on_launch": enabled}
 
 
 @app.post("/classify")
@@ -1738,7 +1798,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             ServoCommand(
                                 servo_id=sid,
                                 position=rad_to_servo_units(rad),
-                                duration_ms=1500,
+                                duration_ms=RESET_TO_STAND_MS,
                             )
                             for joint, rad in stand.items()
                             if (sid := SERVO_ID_MAP.get(joint)) is not None
@@ -1947,7 +2007,7 @@ async def sim_stream_endpoint(websocket: WebSocket):
         logger.info("Sim viewer client disconnected")
 
 
-def _reexec_under_mjpython_if_needed() -> None:
+def _reexec_under_mjpython_if_needed(want_window: bool = True) -> None:
     """Re-exec under `mjpython` on macOS so the MuJoCo viewer window can open.
 
     MuJoCo's interactive viewer (`launch_passive`) raises on macOS unless the
@@ -1958,9 +2018,13 @@ def _reexec_under_mjpython_if_needed() -> None:
     and no window appears (the server itself keeps running). Re-exec the current
     entry point under mjpython so `uv run server` / `uv run robot` show the robot.
 
-    No-op off macOS, once already re-exec'd, or when CORAL_NO_VIEWER=1 — set that
-    for headless/CI runs that should stay on plain python (no window).
+    No-op off macOS, once already re-exec'd, when CORAL_NO_VIEWER=1 (set that for
+    headless/CI runs that should stay on plain python), or when the caller says
+    no window is wanted — then there is nothing to re-exec for.
     """
+    if not want_window:
+        logger.info("MuJoCo window off for this launch — staying on plain python")
+        return
     if sys.platform != "darwin":
         return
     if os.environ.get("CORAL_MJPYTHON") == "1" or os.environ.get("CORAL_NO_VIEWER") == "1":
@@ -1982,7 +2046,7 @@ def _reexec_under_mjpython_if_needed() -> None:
 
 def main():
     """Entry point for simulation mode (default — starts MuJoCo)."""
-    _reexec_under_mjpython_if_needed()
+    _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
     logger.info("Starting Coral AI Agent server (sim mode)...")
     uvicorn.run(
         "server:app",
@@ -2001,7 +2065,7 @@ def main_robot():
       - robot_server.py running on the robot (uv run robot-server)
       - Laptop on the same network as the robot
     """
-    _reexec_under_mjpython_if_needed()
+    _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
     os.environ.setdefault("ROBOT_MODE", "robot")
     robot_ip = os.getenv("ROBOT_IP", "192.168.8.219")
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {robot_ip})")

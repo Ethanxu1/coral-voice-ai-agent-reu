@@ -17,6 +17,7 @@ Publishes:  /annotated_frame, /clean_frame, /landmarks
 """
 import os
 import json
+import math
 import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +40,43 @@ MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           'model', 'pose_landmarker_lite.task')
 
 STREAM_PORT = 9001
+
+
+class OneEuroFilter:
+    """Adaptive low-pass filter: low cutoff when still (kills jitter), high cutoff when moving (preserves responsiveness).
+
+    Mirrors src/vision/pose_estimator.py's filter — IMAGE mode gives MediaPipe
+    no temporal smoothing of its own, so without this every per-frame detection
+    jitter goes straight through to the servo commands.
+    """
+
+    def __init__(self, min_cutoff: float = 1.0, beta: float = 0.1, d_cutoff: float = 1.0):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self._x_prev = None
+        self._dx_hat = 0.0
+        self._t_prev = None
+
+    def _alpha(self, cutoff, dt):
+        tau = 1.0 / (2 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def filter(self, x: float, t: float) -> float:
+        if self._t_prev is None:
+            self._t_prev = t
+            self._x_prev = x
+            return x
+        dt = max(t - self._t_prev, 1e-6)
+        dx = (x - self._x_prev) / dt
+        alpha_d = self._alpha(self.d_cutoff, dt)
+        self._dx_hat = alpha_d * dx + (1 - alpha_d) * self._dx_hat
+        cutoff = self.min_cutoff + self.beta * abs(self._dx_hat)
+        alpha = self._alpha(cutoff, dt)
+        x_hat = alpha * x + (1 - alpha) * self._x_prev
+        self._x_prev = x_hat
+        self._t_prev = t
+        return x_hat
 
 
 class _FrameStore:
@@ -98,7 +136,9 @@ class PosePublisher:
     def __init__(self):
         rospy.init_node('pose_publisher', anonymous=False)
 
-        # IMAGE mode: no temporal smoothing — each frame independent.
+        # IMAGE mode: MediaPipe applies no temporal smoothing of its own (each
+        # frame is detected independently), so the OneEuroFilter banks below
+        # do the smoothing instead.
         base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
         self.detector = mp_vision.PoseLandmarker.create_from_options(
             mp_vision.PoseLandmarkerOptions(
@@ -111,6 +151,13 @@ class PosePublisher:
         )
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
+
+        # Per-landmark, per-axis filters — separate banks for normalized (image)
+        # and world coords since they're on different scales/distributions.
+        self._norm_filters = [[OneEuroFilter(min_cutoff=0.5, beta=0.05) for _ in range(3)]
+                               for _ in range(33)]
+        self._world_filters = [[OneEuroFilter(min_cutoff=0.5, beta=0.05) for _ in range(3)]
+                                for _ in range(33)]
 
         self.latest_image = None
         self.running = True
@@ -143,11 +190,11 @@ class PosePublisher:
             dtype=np.uint8, buffer=ros_image.data,
         )
 
-    def _draw_landmarks(self, bgr, norm_lm):
+    def _draw_landmarks(self, bgr, norm_filtered):
         proto = landmark_pb2.NormalizedLandmarkList()
         proto.landmark.extend([
-            landmark_pb2.NormalizedLandmark(x=lm.x, y=lm.y, z=lm.z)
-            for lm in norm_lm
+            landmark_pb2.NormalizedLandmark(x=fx, y=fy, z=fz)
+            for fx, fy, fz in norm_filtered
         ])
         self.mp_drawing.draw_landmarks(bgr, proto, self.mp_pose.POSE_CONNECTIONS)
 
@@ -181,18 +228,32 @@ class PosePublisher:
             if detected:
                 norm_lm = result.pose_landmarks[0]
                 world_lm = result.pose_world_landmarks[0]
+                t_lm = time.time()
 
-                self._draw_landmarks(bgr, norm_lm)
+                norm_filtered = [
+                    (self._norm_filters[i][0].filter(lm.x, t_lm),
+                     self._norm_filters[i][1].filter(lm.y, t_lm),
+                     self._norm_filters[i][2].filter(lm.z, t_lm))
+                    for i, lm in enumerate(norm_lm)
+                ]
+                world_filtered = [
+                    (self._world_filters[i][0].filter(lm.x, t_lm),
+                     self._world_filters[i][1].filter(lm.y, t_lm),
+                     self._world_filters[i][2].filter(lm.z, t_lm))
+                    for i, lm in enumerate(world_lm)
+                ]
+
+                self._draw_landmarks(bgr, norm_filtered)
 
                 payload['norm_landmarks'] = [
-                    {'x': lm.x, 'y': lm.y, 'z': lm.z,
+                    {'x': fx, 'y': fy, 'z': fz,
                      'presence': lm.presence, 'visibility': lm.visibility}
-                    for lm in norm_lm
+                    for lm, (fx, fy, fz) in zip(norm_lm, norm_filtered)
                 ]
                 payload['world_landmarks'] = [
-                    {'x': lm.x, 'y': lm.y, 'z': lm.z,
+                    {'x': fx, 'y': fy, 'z': fz,
                      'presence': lm.presence, 'visibility': lm.visibility}
-                    for lm in world_lm
+                    for lm, (fx, fy, fz) in zip(world_lm, world_filtered)
                 ]
             else:
                 cv2.putText(bgr, 'no person', (10, 30),

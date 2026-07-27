@@ -101,16 +101,16 @@ HW_DIRECTION: dict[str, int] = {
 HW_SERVO_LIMITS: dict[str, tuple[int, int]] = {
     "l_ank_roll":  (400, 600),   # servo 1
     "r_ank_roll":  (400, 600),   # servo 2
-    "l_ank_pitch": (620, 720),   # servo 3 — stand=640; 720 = crouch lean (dab/stand_low)
-    "r_ank_pitch": (280, 380),   # servo 4 — stand=360; 280 = crouch lean (dab/stand_low)
-    "l_sho_pitch": (333, 835),   # servo 13 — stand=835 (at ceiling)
-    "r_sho_pitch": (165, 773),   # servo 14 — widened from 200 to include stand=165
+    "l_ank_pitch": (0, 720),   # servo 3 — stand=640; 720 = crouch lean (dab/stand_low)
+    "r_ank_pitch": (80, 380),   # servo 4 — stand=360; 280 = crouch lean (dab/stand_low)
+    "l_sho_pitch": (150, 1000),   # servo 13 — stand=835 (at ceiling)
+    "r_sho_pitch": (0, 830),   # servo 14 — widened from 200 to include stand=165
     "l_sho_roll":  (440, 830),   # servo 15 — widened from 800 to include stand=830
     "r_sho_roll":  (170, 613),   # servo 16 — widened from 213 to include stand=170
     "l_el_pitch":  (440, 653),   # servo 17
     "r_el_pitch":  (320, 560),   # servo 18
-    "l_el_yaw":    (90, 360),    # servo 19
-    "r_el_yaw":    (573, 880),   # servo 20 DAMAGED — never command below 360
+    "l_el_yaw":    (150, 550),    # servo 19
+    "r_el_yaw":    (450, 850),   # servo 20 DAMAGED — never command below 360
     "l_knee":      (440, 760),   # servo 5  — conservative, stand=500
     "r_knee":      (240, 560),   # servo 6  — conservative, stand=500
     "l_hip_pitch": (150, 450),   # servo 7  — conservative, stand=350
@@ -119,6 +119,7 @@ HW_SERVO_LIMITS: dict[str, tuple[int, int]] = {
     "r_hip_roll":  (400, 600),   # servo 10 — user-tested: 400=inward 20°, 600=outward 30°
     "l_hip_yaw":   (428, 515),   # servo 11 — tightened to the bucket-stance span (out=428, in=512)
     "r_hip_yaw":   (485, 572),   # servo 12 — mirror of servo 11 about stand=500 (in=488, out=572)
+
 }
 
 _CENTER = 500
