@@ -1,0 +1,231 @@
+/* Joint-angle experiment mode. Deliberately plain: this is a lab data-entry
+   tool, not the child-facing demo, so legibility of numbers beats styling. */
+
+.jx-root {
+  min-height: 100vh;
+  background: #14131a;
+  color: #e9e6f0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.jx-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #2b2836;
+  flex-wrap: wrap;
+}
+
+.jx-topbar h1 { font-size: 16px; font-weight: 700; margin: 0; }
+.jx-back { color: #9b93ad; text-decoration: none; font-size: 14px; }
+.jx-back:hover { color: #e9e6f0; }
+.jx-session-tag { font-family: ui-monospace, monospace; font-size: 13px; color: #9b93ad; }
+.jx-progress { font-size: 13px; color: #7ad0a8; margin-left: auto; }
+.jx-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #9b93ad; }
+
+/* ── setup ── */
+
+.jx-setup {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  padding: 24px;
+  max-width: 1000px;
+}
+
+.jx-card {
+  background: #1c1a24;
+  border: 1px solid #2b2836;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.jx-card h2 { font-size: 15px; margin: 0 0 8px; }
+.jx-hint { font-size: 13px; color: #9b93ad; line-height: 1.5; margin: 0 0 16px; }
+.jx-hint code { background: #14131a; padding: 1px 5px; border-radius: 4px; }
+
+.jx-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #9b93ad;
+  margin-bottom: 12px;
+}
+
+.jx-card input,
+.jx-input,
+.jx-notes input {
+  background: #14131a;
+  border: 1px solid #35313f;
+  border-radius: 6px;
+  color: #e9e6f0;
+  padding: 7px 9px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.jx-card input:focus,
+.jx-input:focus,
+.jx-notes input:focus { outline: 2px solid #6c5ce7; outline-offset: -1px; }
+
+.jx-card .jx-primary {
+  background: #6c5ce7;
+  border: 1px solid #6c5ce7;
+  color: #fff;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.jx-session-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  background: #14131a;
+  border: 1px solid #2b2836;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.jx-session-row:hover { border-color: #6c5ce7; }
+.jx-session-id { font-family: ui-monospace, monospace; font-size: 13px; }
+.jx-session-meta { font-size: 12px; color: #9b93ad; }
+
+/* ── main layout ── */
+
+.jx-main {
+  display: grid;
+  grid-template-columns: minmax(360px, 44%) 1fr;
+  gap: 20px;
+  padding: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .jx-main { grid-template-columns: 1fr; }
+}
+
+.jx-camera {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 4 / 3;
+}
+
+.jx-stream, .jx-stream img { width: 100%; height: 100%; object-fit: cover; }
+
+.jx-live-badge {
+  position: absolute; top: 10px; left: 10px;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(0,0,0,0.55); border-radius: 999px;
+  padding: 4px 10px; font-size: 11px; letter-spacing: 1px;
+}
+
+.jx-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff5a5a; }
+
+.jx-captured {
+  position: absolute; right: 10px; bottom: 10px;
+  width: 34%; border-radius: 8px;
+  border: 2px solid rgba(255,255,255,0.7);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+}
+
+.jx-flash {
+  position: absolute; inset: 0; background: #fff;
+  animation: jx-flash 0.35s ease-out forwards;
+}
+
+@keyframes jx-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+.jx-countdown {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20,19,26,0.6);
+  backdrop-filter: blur(4px);
+}
+
+.jx-countdown-card {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: #1c1a24; border-radius: 20px; padding: 28px 48px;
+}
+
+.jx-countdown-label {
+  font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: #9b93ad;
+}
+
+.jx-countdown-num {
+  font-size: 84px; font-weight: 800; line-height: 1; color: #ff8a5a;
+  animation: jx-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes jx-pop {
+  0% { transform: scale(0.5); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ── panel ── */
+
+.jx-panel {
+  background: #1c1a24;
+  border: 1px solid #2b2836;
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.jx-trial-title { font-size: 16px; font-weight: 700; }
+.jx-cue { font-size: 13px; color: #c9c3d6; margin-top: 4px; }
+.jx-nominal { font-size: 12px; color: #9b93ad; margin-top: 4px; }
+
+.jx-actions { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+
+.jx-actions button {
+  background: #262232; border: 1px solid #35313f; color: #e9e6f0;
+  border-radius: 8px; padding: 8px 14px; font-size: 14px; cursor: pointer;
+  font-family: inherit;
+}
+
+.jx-actions button:hover:not(:disabled) { border-color: #6c5ce7; }
+.jx-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+.jx-actions .jx-primary { background: #6c5ce7; border-color: #6c5ce7; font-weight: 600; }
+
+.jx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.jx-table th { font-weight: 600; color: #c9c3d6; padding: 6px 4px; }
+.jx-table .jx-subhead th { font-size: 11px; color: #9b93ad; font-weight: 500; }
+.jx-table td { padding: 5px 4px; text-align: center; }
+.jx-measure { text-align: left !important; white-space: nowrap; padding-right: 10px !important; }
+.jx-num { font-family: ui-monospace, monospace; color: #c9c3d6; }
+.jx-clamped { color: #ffab5a; }
+.jx-input { width: 72px; text-align: right; }
+
+.jx-legend { font-size: 11px; color: #7d7590; line-height: 1.6; margin-top: 10px; }
+
+.jx-notes {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: #9b93ad; margin-top: 12px;
+}
+
+.jx-notes input { flex: 1; }
+
+.jx-mode-line { font-size: 12px; color: #7d7590; margin-top: 10px; }
+
+.jx-status {
+  margin: 12px 20px; padding: 9px 12px; border-radius: 8px;
+  font-size: 13px; line-height: 1.5;
+}
+
+.jx-panel .jx-status { margin: 12px 0 0; }
+
+.jx-ok { background: rgba(52,168,120,0.15); color: #7ad0a8; }
+.jx-warn { background: rgba(255,171,90,0.15); color: #ffab5a; }
+.jx-bad { background: rgba(255,90,90,0.15); color: #ff8a8a; }

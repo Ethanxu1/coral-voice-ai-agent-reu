@@ -4,11 +4,24 @@ import {
   useRefinedDemoMachine,
   type RefinedChatMsg,
 } from '../demo/useRefinedDemoMachine'
-import { resetPose } from '../demo/api'
+import { motion, resetPose } from '../demo/api'
 import { LiveStream } from './DummyStream'
 import RobotViewer from './RobotViewer'
 import StreamSourceToggle from '../components/StreamSourceToggle'
 import './RefinedDemo.css'
+
+// The 7 original classifier poses (server /motion plays these on the sim and, in
+// robot mode, the hardware; stand has its own "Return to stand" button and wave
+// is a motion, so neither is here).
+const ORIGINAL_POSES: { name: string; label: string }[] = [
+  { name: 'dab', label: 'Dab' },
+  { name: 'muscles', label: 'Muscles' },
+  { name: 'superhero', label: 'Superhero' },
+  { name: 'thinker', label: 'Thinker' },
+  { name: 'warrior2', label: 'Warrior II' },
+  { name: 't-pose', label: 'T-Pose' },
+  { name: 'hand-raised', label: 'Hand raised' },
+]
 
 export default function RefinedDemo() {
   const location = useLocation()
@@ -61,6 +74,20 @@ export default function RefinedDemo() {
           >
             Return to stand
           </button>
+          <select
+            className="rd-topbar-btn ghost rd-pose-select"
+            value=""
+            onChange={(e) => {
+              const name = e.target.value
+              if (name) motion(name, 1000).catch(() => {})
+              e.target.value = ''
+            }}
+          >
+            <option value="" disabled>Do a pose…</option>
+            {ORIGINAL_POSES.map((p) => (
+              <option key={p.name} value={p.name}>{p.label}</option>
+            ))}
+          </select>
           <button
             className="rd-topbar-btn ghost"
             onClick={() => navigate('/tutorial')}

@@ -88,6 +88,17 @@
   background: rgba(45, 41, 38, 0.14);
 }
 
+/* Native <select> styled to sit alongside the ghost topbar buttons. */
+.rd-pose-select {
+  padding-right: 34px;
+  color: #2D2926;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%232D2926' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
 .rd-topbar-btn.danger {
   background: #FF6B4A;
   color: #fff;

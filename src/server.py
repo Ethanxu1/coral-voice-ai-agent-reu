@@ -29,6 +29,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from llm.config import LLM_MODEL
+from experiments import joint_angle
 from follow_controller import FollowController
 from llm.intent_classifier import classify_intent
 from llm.primitives import (
@@ -777,43 +778,65 @@ def _get_pi_motions():
     return _pi_motions
 
 
-async def _play_sim_motion(name: str) -> bool:
-    """Play a named pose/sequence from nodes/motions.py on the MuJoCo sim.
+# Default move/hold time for named poses driven through /motion (sim + hardware).
+_MOTION_DURATION_MS = 1000
 
-    Motion frames are hardware servo pulses (0–1000); convert each to sim radians
-    with hardware_units_to_rad and set the joint targets, holding each frame for
-    its duration so multi-frame motions (e.g. wave) animate. Returns False if the
-    name is unknown so the caller can fall back to single-step commands.
+
+async def _play_motion(name: str, duration_ms: int = _MOTION_DURATION_MS) -> bool:
+    """Play a named pose/sequence from nodes/motions.py on the sim and, in robot
+    mode, the physical robot.
+
+    Motion frames are hardware servo pulses (0–1000); encode each to a
+    ServoCommand via hardware_units_to_rad -> rad_to_servo_units (the uniform
+    sim-unit map dispatch_servo_commands expects, converted back to hardware units
+    by the hardware controller) and send to both surfaces with `duration_ms`.
+    Multi-frame motions (e.g. wave) hold each frame for that duration. Returns
+    False if the name is unknown so the caller can fall back to single-step
+    commands.
     """
     sequence = _get_pi_motions().get_motion(name)
-    if sequence is None or simulator is None:
+    if sequence is None:
         return False
-    for pulse, duration_ms in sequence:
+    for i, (pulse, _frame_dur) in enumerate(sequence):
+        cmds: list[ServoCommand] = []
         for joint, units in pulse.items():
-            try:
-                simulator.set_joint_position(joint, hardware_units_to_rad(int(units), joint))
-            except Exception as e:  # unknown joint / out-of-range — skip, keep going
-                logger.debug(f"/motion: skip joint {joint}: {e}")
-        await asyncio.sleep(max(0.0, float(duration_ms) / 1000.0))
+            sid = SERVO_ID_MAP.get(joint)
+            if sid is None:  # unknown joint — skip, keep going
+                continue
+            rad = hardware_units_to_rad(int(units), joint)
+            cmds.append(ServoCommand(
+                servo_id=sid,
+                position=rad_to_servo_units(rad),
+                duration_ms=duration_ms,
+            ))
+        if cmds:
+            await dispatch_servo_commands(cmds)
+        # Space multi-frame motions; no need to wait after the final frame.
+        if i < len(sequence) - 1:
+            await asyncio.sleep(duration_ms / 1000.0)
     return True
 
 
 @app.post("/motion")
 async def demo_motion(req: MotionRequest) -> dict[str, Any]:
-    """Run a named motion on the simulator (demo). Drives the sim from the shared
-    nodes/motions.py pose library (wave, stand, and the 7 classifier poses), with
-    a fall-back to single-step COMMAND_MAP primitives. Always 200 so an unmapped
-    name never aborts the demo pipeline."""
-    if simulator is None:
-        return {"status": "error", "motion": req.name, "detail": "simulator not initialized"}
+    """Run a named motion on the sim and, in robot mode, the physical robot.
+    Drives from the shared nodes/motions.py pose library (wave, stand, and the 7
+    classifier poses), with a fall-back to single-step COMMAND_MAP primitives
+    (sim only). Always 200 so an unmapped name never aborts the demo pipeline."""
     name = req.name.strip()
-    if await _play_sim_motion(name):
-        return {"status": "done", "motion": name}
-    # Fall back to single-step primitives (e.g. legacy COMMAND_MAP names).
-    command = DEMO_MOTION_ALIASES.get(name.lower(), name.lower())
-    if execute_command(simulator, command):
-        return {"status": "done", "motion": name}
-    logger.warning(f"/motion: no sim motion or command for '{name}' — skipped")
+    duration_ms = int(req.global_duration) if req.global_duration else _MOTION_DURATION_MS
+    try:
+        if await _play_motion(name, duration_ms):
+            return {"status": "done", "motion": name}
+    except RobotServerUnavailable as e:
+        logger.warning(f"/motion '{name}': robot server unreachable — {e}")
+        return {"status": "error", "motion": name, "detail": "robot server unreachable"}
+    # Fall back to single-step primitives (sim only).
+    if simulator is not None:
+        command = DEMO_MOTION_ALIASES.get(name.lower(), name.lower())
+        if execute_command(simulator, command):
+            return {"status": "done", "motion": name}
+    logger.warning(f"/motion: no motion or command for '{name}' — skipped")
     return {"status": "skipped", "motion": name}
 
 
@@ -1048,6 +1071,175 @@ async def demo_watch_for_action(timeout: float = 30.0) -> dict[str, Any]:
         # Don't break the demo's intro gate if vision is down — report "not detected".
         logger.warning(f"/watch-for-action proxy failed: {e}")
         return {"detected": False, "timeout": True}
+
+
+# ---------------------------------------------------------------------------
+# Joint-angle accuracy experiment (frontend mode: /experiment)
+#
+# Capture runs the demo's own path — /map-features on the vision server, then
+# the same demo_move() the RefinedDemo posts to — so the pose being measured is
+# the pose a child would get, safety layer included. Going straight to the Pi
+# instead would characterize a pipeline the demo never uses. Protocol logic and
+# the on-disk session format live in experiments/joint_angle.py.
+# ---------------------------------------------------------------------------
+
+EXPERIMENT_ROOT = Path(os.getenv("EXPERIMENT_ROOT", "data/experiments/joint_angle"))
+
+# Seconds to let the robot settle before reading back the applied joint state.
+_EXPERIMENT_SETTLE_S = 1.5
+
+
+class ExperimentSessionRequest(BaseModel):
+    seed: int = 0
+    demonstrator: str = ""
+    camera_height_cm: str = ""
+    camera_distance_cm: str = ""
+    lighting: str = ""
+
+
+class ExperimentCaptureRequest(BaseModel):
+    session_id: str
+    order_index: int
+    leg_mode: str = "buckets"
+    # Mirrors the demo's sim/hardware toggle. sim_only=False drives the robot.
+    sim_only: bool = True
+    # False records the capture without moving anything — useful for a dry run.
+    dispatch: bool = True
+
+
+class ExperimentRecordRequest(BaseModel):
+    session_id: str
+    order_index: int
+    # {"robot_left": {"elbow_bend": 12.0, ...}, "robot_right": {...}}
+    readings: dict[str, dict[str, float]]
+    notes: str = ""
+
+
+@app.get("/experiment/sessions")
+async def experiment_sessions() -> dict[str, Any]:
+    return {"sessions": joint_angle.list_sessions(EXPERIMENT_ROOT)}
+
+
+@app.post("/experiment/session")
+async def experiment_create_session(req: ExperimentSessionRequest) -> dict[str, Any]:
+    session = joint_angle.Session.create(
+        EXPERIMENT_ROOT,
+        seed=req.seed,
+        meta_extra={
+            "demonstrator": req.demonstrator,
+            "camera_height_cm": req.camera_height_cm,
+            "camera_distance_cm": req.camera_distance_cm,
+            "lighting": req.lighting,
+            "vision_base": VISION_BASE,
+        },
+    )
+    logger.info(f"experiment: created session {session.session_id}")
+    return session.to_dict()
+
+
+@app.get("/experiment/session/{session_id}")
+async def experiment_get_session(session_id: str) -> dict[str, Any]:
+    try:
+        return joint_angle.Session.load(EXPERIMENT_ROOT, session_id).to_dict()
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(status_code=404, detail=f"no session {session_id}")
+
+
+@app.post("/experiment/capture")
+async def experiment_capture(req: ExperimentCaptureRequest) -> dict[str, Any]:
+    """Capture one trial: map-features, dispatch through the safety layer, read back.
+
+    Returns the three angle sets (estimator's view of the human, retargeting
+    output, applied pose) plus the frame and the safety verdict, so the operator
+    can see what to measure before typing the protractor readings.
+    """
+    try:
+        session = joint_angle.Session.load(EXPERIMENT_ROOT, req.session_id)
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(status_code=404, detail=f"no session {req.session_id}")
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{VISION_BASE}/map-features", params={"leg_mode": req.leg_mode}
+            )
+        resp.raise_for_status()
+        payload = resp.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"vision server unreachable: {e}")
+
+    if not payload.get("pose_detected"):
+        return {
+            "captured": False,
+            "detail": payload.get("detail", "No pose detected — reframe and recapture."),
+        }
+
+    body = payload.get("body_landmarks") or []
+    est = joint_angle.estimated_human_angles(body)
+    if est is None:
+        return {
+            "captured": False,
+            "detail": "Torso frame unavailable (hips not visible) — recapture.",
+        }
+
+    targets = payload.get("targets") or {}
+    safety: dict[str, Any] = {}
+    blocked = False
+    joint_states: dict[str, float] | None = None
+
+    if req.dispatch:
+        moves = [ServoMove(**c) for c in (payload.get("commands") or [])]
+        move_result = await demo_move(MoveRequest(moves=moves, sim_only=req.sim_only))
+        if move_result.get("status") == "error":
+            raise HTTPException(status_code=503, detail=move_result.get("detail", "move failed"))
+        safety = move_result.get("safety") or {}
+        blocked = move_result.get("status") == "blocked"
+        await asyncio.sleep(_EXPERIMENT_SETTLE_S)
+        joint_states = _get_robot_state()
+
+    try:
+        trial = session.store_capture(
+            req.order_index,
+            image_bytes=base64.b64decode(payload["image_b64"]),
+            body_landmarks=body,
+            targets=targets,
+            joint_states=joint_states,
+            est=est,
+            safety=safety,
+            leg_mode=req.leg_mode,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "captured": True,
+        "blocked": blocked,
+        "trial": trial.to_dict(),
+        "safety": safety,
+        "image_b64": payload["image_b64"],
+        "leg_mode": payload.get("leg_mode", req.leg_mode),
+    }
+
+
+@app.post("/experiment/record")
+async def experiment_record(req: ExperimentRecordRequest) -> dict[str, Any]:
+    """Store the six protractor readings for a trial and rewrite trials.csv."""
+    try:
+        session = joint_angle.Session.load(EXPERIMENT_ROOT, req.session_id)
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(status_code=404, detail=f"no session {req.session_id}")
+
+    try:
+        session.record(req.order_index, req.readings, req.notes)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    state = session.to_dict()
+    logger.info(
+        f"experiment: recorded trial {req.order_index} "
+        f"({state['recorded_count']}/{state['total']})"
+    )
+    return state
 
 
 class IntentRequest(BaseModel):

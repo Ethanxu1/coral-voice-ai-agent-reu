@@ -10,6 +10,7 @@ import Welcome from './pages/Welcome'
 import Tutorial from './pages/Tutorial'
 import MoveMate from './pages/MoveMate'
 import PoseTester from './pages/PoseTester'
+import JointAngleExperiment from './pages/JointAngleExperiment'
 import RobotViewer from './pages/RobotViewer'
 import RobotModeToggle from './components/RobotModeToggle'
 import StreamSourceToggle from './components/StreamSourceToggle'
@@ -198,6 +199,9 @@ function App() {
           <Link to="/viewer" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🕹️ 3D Viewer</button>
           </Link>
+          <Link to="/experiment" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">📐 Joint Angle Experiment</button>
+          </Link>
         </div>
         <RobotModeToggle />
         <StreamSourceToggle />
@@ -215,6 +219,7 @@ function App() {
       <Route path="/tutorial" element={<Tutorial />} />
       <Route path="/movemate" element={<MoveMate />} />
       <Route path="/pose-tester" element={<PoseTester />} />
+      <Route path="/experiment" element={<JointAngleExperiment />} />
       <Route path="/viewer" element={<RobotViewer />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
