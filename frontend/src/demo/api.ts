@@ -109,6 +109,34 @@ export async function setAngleArcsEnabled(enabled: boolean): Promise<void> {
   }
 }
 
+// Toggle the dynamic fall check on the robot base server (StabilityChecker —
+// see collision_checked_targets in server.py). Applies immediately, no
+// restart needed. Best-effort like setAngleArcsEnabled: a failure here
+// shouldn't block the UI toggle from flipping locally.
+export async function setFallCheckEnabled(enabled: boolean): Promise<void> {
+  try {
+    await fetch(`${getRobotBase()}/settings/fall-check?enabled=${enabled}`, {
+      method: 'POST',
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
+// Persist whether the native MuJoCo window opens the next time the base server
+// starts (POST /settings/mujoco-viewer). Unlike the toggles above this cannot
+// apply now — the window has to be opened at process start — so it only writes
+// the preference. Best-effort all the same.
+export async function setMujocoViewerOnLaunch(enabled: boolean): Promise<void> {
+  try {
+    await fetch(`${getRobotBase()}/settings/mujoco-viewer?enabled=${enabled}`, {
+      method: 'POST',
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
 // Safety-check outcome attached to /move responses. `fallBlocked` means the
 // dynamics shadow-check saw the robot topple, so the server executed 0% of
 // the move; `collisionClamped` means the kinematic checker pulled the motion
@@ -248,6 +276,95 @@ export async function setRobotState(mode: string): Promise<void> {
     })
   } catch {
     /* ignore */
+  }
+}
+
+// ── Vision subject selection (multi-person re-ID lock) ───────────────────────
+export type SubjectSelectionState = 'idle' | 'selecting' | 'selected' | 'searching'
+
+export interface SubjectSelectionUpdate {
+  state: SubjectSelectionState
+  selectedSubjectId: string | null
+  subjectsCount: number
+  // Max hold_progress (0-1) across all current candidates — drives the modal's
+  // "raise-and-hold" progress bar.
+  holdProgress: number
+}
+
+export async function startSubjectSelection(): Promise<void> {
+  await fetch(`${getFeaturesBase()}/subject-selection/start`, { method: 'POST' })
+}
+
+// Best-effort — teardown must not block. keepalive lets the request survive a
+// page unload so leaving the demo still returns the vision server to single-
+// person mode.
+export async function stopSubjectSelection(): Promise<void> {
+  try {
+    await fetch(`${getFeaturesBase()}/subject-selection/stop`, {
+      method: 'POST',
+      keepalive: true,
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function resetSubjectSelection(): Promise<void> {
+  try {
+    await fetch(`${getFeaturesBase()}/subject-selection/reset`, { method: 'POST' })
+  } catch {
+    /* ignore */
+  }
+}
+
+// Subscribe to pose updates from the vision server and surface only the
+// subject-selection fields. Auto-reconnects on drop until the returned cleanup
+// is called.
+export function subscribeSubjectSelection(
+  onUpdate: (u: SubjectSelectionUpdate) => void,
+): () => void {
+  const wsUrl = getFeaturesBase().replace(/^http/, 'ws') + '/ws/pose'
+  let ws: WebSocket | null = null
+  let retry: ReturnType<typeof setTimeout> | null = null
+  let closed = false
+
+  const open = () => {
+    if (closed) return
+    ws = new WebSocket(wsUrl)
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type !== 'pose_update') return
+        const subjects = Array.isArray(data.subjects) ? data.subjects : []
+        let hold = 0
+        for (const s of subjects) {
+          const p = typeof s?.hold_progress === 'number' ? s.hold_progress : 0
+          if (p > hold) hold = p
+        }
+        onUpdate({
+          state: (data.selection_state ?? 'idle') as SubjectSelectionState,
+          selectedSubjectId: data.selected_subject_id ?? null,
+          subjectsCount: subjects.length,
+          holdProgress: hold,
+        })
+      } catch {
+        /* ignore malformed frames */
+      }
+    }
+    ws.onclose = () => {
+      if (closed) return
+      retry = setTimeout(open, 1500)
+    }
+    ws.onerror = () => {
+      try { ws?.close() } catch { /* ignore */ }
+    }
+  }
+
+  open()
+  return () => {
+    closed = true
+    if (retry) clearTimeout(retry)
+    try { ws?.close() } catch { /* ignore */ }
   }
 }
 

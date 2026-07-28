@@ -44,6 +44,16 @@ smpl = [
     "trimesh>=4.0",  # debug visualization only
 ]
 
+# Multi-modal subject re-identification. InsightFace ArcFace embeddings for
+# face identity + HSV torso/legs histograms for appearance fallback. Install:
+#   uv sync --extra reid
+# First run of multi-person mode downloads ~50MB (buffalo_s pack) to
+# ~/.insightface/models/.
+reid = [
+    "insightface>=0.7.3",
+    "onnxruntime>=1.17.0",
+]
+
 [project.scripts]
 server = "server:main"
 robot = "server:main_robot"

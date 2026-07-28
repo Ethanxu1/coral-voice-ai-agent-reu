@@ -17,12 +17,17 @@ import {
   sendAudioForTranscript,
   setRobotState,
   sleep,
+  startSubjectSelection,
+  stopSubjectSelection,
+  subscribeSubjectSelection,
   type ServoCommand,
+  type SubjectSelectionState,
 } from './api'
 import { getRobotConfig } from './robotConfig'
 
 export type RefinedStage =
   | 'IDLE'
+  | 'SUBJECT_SELECT'
   | 'LISTENING'
   | 'FOLLOWING'
   | 'COUNTDOWN'
@@ -64,6 +69,11 @@ export interface RefinedState {
   // True while the backend collision + fall checks run on a captured pose —
   // drives the "Safety check…" badge over the sim panel.
   safetyChecking: boolean
+  // Live vision-server subject-selection state, published every frame during
+  // the SUBJECT_SELECT stage so the modal can show progress + status.
+  selectionState: SubjectSelectionState
+  selectionSubjectsCount: number
+  selectionHoldProgress: number
 }
 
 const INIT: RefinedState = {
@@ -82,6 +92,9 @@ const INIT: RefinedState = {
   muted: false,
   replayIdx: null,
   safetyChecking: false,
+  selectionState: 'idle',
+  selectionSubjectsCount: 0,
+  selectionHoldProgress: 0,
 }
 
 function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
@@ -139,6 +152,24 @@ export function useRefinedDemoMachine() {
   // When the user asks to re-capture during fine-tune, inject a synthetic
   // "capture my pose" turn so the main loop runs the full capture path again.
   const pendingCaptureRef = useRef(false)
+  // Cleanup for the vision-server subject-selection WS subscription — held on
+  // a ref so run() can tear it down early (cancel/stop) and unmount can
+  // guarantee it's released.
+  const selectionUnsubRef = useRef<(() => void) | null>(null)
+  // Set while run() is blocked in the SUBJECT_SELECT stage; calling it
+  // resolves the wait so the demo proceeds into LISTENING without a lock.
+  const skipSelectionRef = useRef<(() => void) | null>(null)
+
+  // Wrapped in a plain helper because TypeScript's control-flow narrowing
+  // insists selectionUnsubRef.current is `null` at the finally/stop call sites
+  // (it observes the `.current = null` inside the promise-resolve closure and
+  // carries that narrowing out). Going through a function parameter forces
+  // the type back to the ref's declared union.
+  const releaseSelectionSubscription = useCallback(() => {
+    const fn = selectionUnsubRef.current
+    selectionUnsubRef.current = null
+    if (typeof fn === 'function') fn()
+  }, [])
 
   const revokeAudioUrls = useCallback(() => {
     audioUrlsRef.current.forEach((url) => {
@@ -168,8 +199,10 @@ export function useRefinedDemoMachine() {
       killSpeech()
       abortCurrentCapture()
       revokeAudioUrls()
+      releaseSelectionSubscription()
+      stopSubjectSelection()
     }
-  }, [abortCurrentCapture])
+  }, [abortCurrentCapture, revokeAudioUrls])
 
   const injectText = useCallback((text: string) => {
     const resolve = chipResolverRef.current
@@ -262,6 +295,10 @@ export function useRefinedDemoMachine() {
     // Kill any capture left over from a prior run() invocation (strict-mode
     // double-mount, "Start Session" from ERROR/EXIT, etc.) before starting.
     abortCurrentCapture()
+    // Any previous selection subscription is dead now — drop it before this
+    // run opens its own.
+    selectionUnsubRef.current?.()
+    selectionUnsubRef.current = null
 
     const token = ++tokenRef.current
     const active = () => {
@@ -277,7 +314,52 @@ export function useRefinedDemoMachine() {
     let followActive = false
     let savedPoses: string[] = []
 
-    dispatch({ ...INIT, stage: 'LISTENING', messages: msgs, statusText: "I'm listening…" })
+    // ── Subject selection (raise-hand lock) ─────────────────────────────────
+    // Start the session by locking on to one person so the rest of the demo
+    // tracks only them, even when bystanders wander into frame.
+    dispatch({
+      ...INIT,
+      stage: 'SUBJECT_SELECT',
+      statusText: 'Raise your hand for 3 seconds to be selected',
+      selectionState: 'selecting',
+    })
+    try {
+      await startSubjectSelection()
+    } catch {
+      // If the vision server is unreachable we can't gate the session on it;
+      // fall through and let the normal loop run without a locked subject.
+    }
+    active()
+
+    await new Promise<void>((resolve, reject) => {
+      const finish = () => {
+        unsub()
+        if (selectionUnsubRef.current === cleanup) selectionUnsubRef.current = null
+        skipSelectionRef.current = null
+        resolve()
+      }
+      const unsub = subscribeSubjectSelection((u) => {
+        dispatch({
+          selectionState: u.state,
+          selectionSubjectsCount: u.subjectsCount,
+          // Force 100% when selected — the backend resets hold_progress to 0
+          // the moment state transitions out of "selecting", so the last frame
+          // always carries 0 even though the hold completed.
+          selectionHoldProgress: u.state === 'selected' ? 1 : u.holdProgress,
+        })
+        if (u.state === 'selected') finish()
+      })
+      const cleanup = () => {
+        unsub()
+        skipSelectionRef.current = null
+        reject(CANCELLED)
+      }
+      selectionUnsubRef.current = cleanup
+      skipSelectionRef.current = finish
+    })
+    active()
+
+    dispatch({ ...INIT, stage: 'LISTENING', messages: msgs, statusText: "I'm listening…", selectionState: 'selected' })
 
     // Stable session ID shared by the intent classifier HTTP calls and the
     // persistent action websocket so Langfuse groups everything in one trace.
@@ -958,6 +1040,7 @@ export function useRefinedDemoMachine() {
     } finally {
       chipResolverRef.current = null
       abortCurrentCapture()
+      releaseSelectionSubscription()
       session.close()
     }
   }, [abortCurrentCapture, runExitReplay])
@@ -966,8 +1049,11 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    selectionUnsubRef.current?.()
+    selectionUnsubRef.current = null
     revokeAudioUrls()
     setRobotState('IDLE')
+    stopSubjectSelection()
     dispatch({ ...INIT })
   }, [abortCurrentCapture, revokeAudioUrls])
 
@@ -992,6 +1078,13 @@ export function useRefinedDemoMachine() {
     run()
   }, [run])
 
+  // Skip the raise-hand lock and enter the listening loop without a locked
+  // subject. Best-effort — resolves the pending wait if run() is blocked in
+  // SUBJECT_SELECT; a no-op otherwise.
+  const skipSubjectSelect = useCallback(() => {
+    skipSelectionRef.current?.()
+  }, [])
+
   return {
     state,
     start: run,
@@ -1003,5 +1096,6 @@ export function useRefinedDemoMachine() {
     goToExit,
     startAgain,
     toggleMute,
+    skipSubjectSelect,
   }
 }

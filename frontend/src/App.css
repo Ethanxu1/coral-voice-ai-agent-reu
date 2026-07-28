@@ -19,6 +19,25 @@ body {
   min-height: 100vh;
 }
 
+.start-demo-banner {
+  display: block;
+  padding: 1.1rem 1rem;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #00d4ff, #0077ff);
+  color: #06121f;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-align: center;
+  text-decoration: none;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.start-demo-banner:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
 .home-vision-panel {
   grid-column: 1;
   grid-row: 1;
@@ -423,6 +442,13 @@ body {
   border-color: #7b4bb9;
 }
 
+.robot-mode-hint {
+  display: block;
+  margin-top: 4px;
+  color: #9ca3af;
+  font-size: 0.7rem;
+}
+
 .robot-mode-host {
   display: flex;
   align-items: center;
@@ -449,4 +475,39 @@ body {
 .robot-mode-host input:focus {
   outline: none;
   border-color: #7b4bb9;
+}
+
+.stream-source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stream-source-label {
+  color: #9ca3af;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.stream-source-switch {
+  display: flex;
+  gap: 4px;
+}
+
+.stream-source-switch button {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgba(123, 75, 185, 0.4);
+  border-radius: 6px;
+  background: rgba(15, 52, 96, 0.5);
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stream-source-switch button.active {
+  background: linear-gradient(135deg, #533483, #0f3460);
+  border-color: #7b4bb9;
+  color: #fff;
 }

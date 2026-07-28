@@ -42,7 +42,9 @@ SERVO_ID = {
     'l_gripper': 21,   'r_gripper': 22,
     'head_pan': 23,    'head_tilt': 24,
 }
-EMPTY_SERVOS = {'head_pan', 'head_tilt'}
+
+# set to none, we want all servos to move
+EMPTY_SERVOS = {}
 
 MIN_FRAME_MS = 100  # floor for any single move duration
 
