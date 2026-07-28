@@ -12,6 +12,7 @@ import MoveMate from './pages/MoveMate'
 import PoseTester from './pages/PoseTester'
 import JointAngleExperiment from './pages/JointAngleExperiment'
 import RobotViewer from './pages/RobotViewer'
+import SubjectSelect from './pages/SubjectSelect'
 import RobotModeToggle from './components/RobotModeToggle'
 import StreamSourceToggle from './components/StreamSourceToggle'
 
@@ -193,6 +194,9 @@ function App() {
           <Link to="/welcome" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">✨ Refined Demo</button>
           </Link>
+          <Link to="/subject-select" style={{ textDecoration: 'none' }}>
+            <button className="primitives-test-btn">🔒 Subject Select</button>
+          </Link>
           <Link to="/pose-tester" style={{ textDecoration: 'none' }}>
             <button className="primitives-test-btn">🦿 Pose Tester</button>
           </Link>
@@ -220,6 +224,7 @@ function App() {
       <Route path="/movemate" element={<MoveMate />} />
       <Route path="/pose-tester" element={<PoseTester />} />
       <Route path="/experiment" element={<JointAngleExperiment />} />
+      <Route path="/subject-select" element={<SubjectSelect />} />
       <Route path="/viewer" element={<RobotViewer />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

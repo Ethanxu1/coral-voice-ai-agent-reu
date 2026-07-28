@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -46,6 +46,10 @@ _latest_landmarks: list = []
 # Latest head pose (dict with yaw/pitch/roll), consumed by /features so the
 # pose→robot retargeting can drive head_pan/head_tilt. None when no face solve.
 _latest_head_pose: Optional[dict] = None
+# Subject-selection metadata published with pose updates.
+_latest_selection_state: str = "idle"
+_latest_selected_subject_id: Optional[str] = None
+_latest_subjects: list = []
 
 # MobileNetV3 pose classifier — lazily loaded on first /classify (keeps torch off
 # the startup path and optional unless the demo actually classifies).
@@ -65,6 +69,7 @@ def _vision_loop():
     _estimator.open()
     logger.info("Vision thread ready — publishing frames")
     global _last_pose_time, _latest_jpeg, _latest_clean_frame, _latest_landmarks, _latest_head_pose
+    global _latest_selection_state, _latest_selected_subject_id, _latest_subjects
     while _estimator.is_running:
         result = _estimator.process_frame()
         if result is None:
@@ -77,13 +82,16 @@ def _vision_loop():
         _latest_clean_frame = result.clean_frame
         _latest_landmarks = result.body_landmarks
         _latest_head_pose = result.head_pose.to_dict() if result.head_pose else None
+        _latest_selection_state = result.selection_state
+        _latest_selected_subject_id = result.selected_subject_id
+        _latest_subjects = result.subjects
 
         now = time.time()
         if now - _last_pose_time >= 1.0 / _pose_throttle_fps:
             _last_pose_time = now
             pose_dict = result.to_pose_dict()
             pose_dict["stability"] = _estimator.stability.status_dict()
-            if _estimator.pnp_fail_count > 10:
+            if _estimator.pnp_fail_count > 10 and _estimator._pose_detector is _estimator._pose_detector_single:
                 pose_dict["type"] = "tracking_lost"
                 pose_dict["reason"] = "no_person_detected"
             _broadcaster.publish_pose(pose_dict)
@@ -404,6 +412,72 @@ async def set_angle_arcs(enabled: bool = True):
 async def health():
     cal = _estimator.calibration.to_dict() if _estimator else {}
     return {"status": "ok", "calibrated": cal.get("state") == "calibrated", "calibration": cal}
+
+
+# ── Subject selection endpoints ───────────────────────────────────────────────
+
+@app.post("/subject-selection/start")
+async def subject_selection_start():
+    """Enable multi-person detection and start selecting a subject."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    _estimator.set_multi_person_mode(True)
+    _estimator.subject_selector.start()
+    logger.info("Subject selection started (multi-person mode)")
+    return _estimator.subject_selector.status()
+
+
+@app.post("/subject-selection/reset")
+async def subject_selection_reset():
+    """Clear the current selection and return to selecting mode."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    _estimator.subject_selector.reset()
+    logger.info("Subject selection reset")
+    return _estimator.subject_selector.status()
+
+
+@app.post("/subject-selection/stop")
+async def subject_selection_stop():
+    """Exit selection mode and return to single-person tracking."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    _estimator.set_multi_person_mode(False)
+    _estimator.subject_selector.reset()
+    logger.info("Subject selection stopped (single-person mode)")
+    return {"state": "idle", "selected_subject_id": None}
+
+
+@app.get("/subject-selection/status")
+async def subject_selection_status():
+    """Return current selection state and any detected subjects."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    status = _estimator.subject_selector.status()
+    status["subjects"] = _latest_subjects
+    return status
+
+
+@app.get("/subject-selection/tuning")
+async def subject_selection_tuning_get():
+    """Return live-tunable re-ID parameters + their allowed ranges."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    from .subject_selector import TUNABLE_PARAMS
+    return {
+        "values": _estimator.subject_selector.get_tuning(),
+        "params": TUNABLE_PARAMS,
+    }
+
+
+@app.post("/subject-selection/tuning")
+async def subject_selection_tuning_set(updates: dict = Body(...)):
+    """Apply a partial update to the tunable re-ID parameters (unknown keys ignored)."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    values = _estimator.subject_selector.update_tuning(updates or {})
+    logger.info("subject-selection tuning updated: %s", {k: v for k, v in (updates or {}).items()})
+    return {"values": values}
 
 
 def main():

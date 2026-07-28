@@ -14,12 +14,14 @@ import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
-from mediapipe.tasks.python.vision import drawing_utils as mp_drawing
 
 from . import geometry
+from .appearance_embedder import AppearanceEmbedder
 from .calibration import CalibrationManager, CalibrationState
+from .face_embedder import FaceEmbedder
 from .leg_modes import raw_bucket_readouts
 from .smpl_fit import UserShape
+from .subject_selector import SubjectSelector
 
 # Model asset paths (downloaded on first run)
 _MODELS_DIR = Path(__file__).parent / "models"
@@ -133,6 +135,10 @@ class FrameResult:
     # trained on clean photos, so the drawn overlay is a train/test mismatch.
     # Mirrors the Pi vision node's separate /clean_frame topic.
     clean_frame: Optional["np.ndarray"] = None
+    # Subject-selection enrichment.
+    subjects: list[dict] = field(default_factory=list)
+    selection_state: str = "idle"
+    selected_subject_id: Optional[str] = None
 
     def to_pose_dict(self) -> dict:
         return {
@@ -142,6 +148,9 @@ class FrameResult:
             "face_landmarks": self.face_landmarks,
             "head_pose": self.head_pose.to_dict() if self.head_pose else None,
             "calibration": self.calibration,
+            "subjects": self.subjects,
+            "selection_state": self.selection_state,
+            "selected_subject_id": self.selected_subject_id,
         }
 
 
@@ -583,7 +592,20 @@ class PoseEstimator:
         self._cap: Optional[cv2.VideoCapture] = None
         self._pose_detector: Optional[mp_vision.PoseLandmarker] = None
         self._face_detector: Optional[mp_vision.FaceLandmarker] = None
+        self._pose_detector_single: Optional[mp_vision.PoseLandmarker] = None
+        self._face_detector_single: Optional[mp_vision.FaceLandmarker] = None
+        self._pose_detector_multi: Optional[mp_vision.PoseLandmarker] = None
+        self._face_detector_multi: Optional[mp_vision.FaceLandmarker] = None
         self.calibration = CalibrationManager()
+        # Face + appearance embedders for multi-modal re-ID. FaceEmbedder is
+        # lazy-loaded on first use so environments without the `reid` extra
+        # installed still start; on first call it logs a warning and returns
+        # None, and SubjectSelector falls back to its legacy geometric path.
+        self.subject_selector = SubjectSelector(
+            max_subjects=4,
+            face_embedder=FaceEmbedder(),
+            appearance_embedder=AppearanceEmbedder(),
+        )
         self._yaw_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
         self._pitch_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
         self._roll_f = OneEuroFilter(min_cutoff=1.0, beta=0.1)
@@ -632,8 +654,8 @@ class PoseEstimator:
         _download_model(_FACE_MODEL_URL, face_model)
         log.info("Models ready")
 
-        log.info("Loading pose landmarker...")
-        pose_opts = mp_vision.PoseLandmarkerOptions(
+        log.info("Loading pose landmarkers (single + multi)...")
+        single_pose_opts = mp_vision.PoseLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(pose_model)),
             running_mode=mp_vision.RunningMode.IMAGE,
             num_poses=1,
@@ -641,11 +663,21 @@ class PoseEstimator:
             min_pose_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        self._pose_detector = mp_vision.PoseLandmarker.create_from_options(pose_opts)
-        log.info("Pose landmarker loaded")
+        multi_pose_opts = mp_vision.PoseLandmarkerOptions(
+            base_options=mp_python.BaseOptions(model_asset_path=str(pose_model)),
+            running_mode=mp_vision.RunningMode.IMAGE,
+            num_poses=4,
+            min_pose_detection_confidence=0.5,
+            min_pose_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+        self._pose_detector_single = mp_vision.PoseLandmarker.create_from_options(single_pose_opts)
+        self._pose_detector_multi = mp_vision.PoseLandmarker.create_from_options(multi_pose_opts)
+        self._pose_detector = self._pose_detector_single
+        log.info("Pose landmarkers loaded")
 
-        log.info("Loading face landmarker...")
-        face_opts = mp_vision.FaceLandmarkerOptions(
+        log.info("Loading face landmarkers (single + multi)...")
+        single_face_opts = mp_vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(face_model)),
             running_mode=mp_vision.RunningMode.IMAGE,
             num_faces=1,
@@ -655,8 +687,20 @@ class PoseEstimator:
             output_face_blendshapes=False,
             output_facial_transformation_matrixes=False,
         )
-        self._face_detector = mp_vision.FaceLandmarker.create_from_options(face_opts)
-        log.info("Face landmarker loaded")
+        multi_face_opts = mp_vision.FaceLandmarkerOptions(
+            base_options=mp_python.BaseOptions(model_asset_path=str(face_model)),
+            running_mode=mp_vision.RunningMode.IMAGE,
+            num_faces=4,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+            output_face_blendshapes=False,
+            output_facial_transformation_matrixes=False,
+        )
+        self._face_detector_single = mp_vision.FaceLandmarker.create_from_options(single_face_opts)
+        self._face_detector_multi = mp_vision.FaceLandmarker.create_from_options(multi_face_opts)
+        self._face_detector = self._face_detector_single
+        log.info("Face landmarkers loaded")
 
         log.info("Opening camera %d...", self._camera_index)
         self._cap = cv2.VideoCapture(self._camera_index)
@@ -673,16 +717,38 @@ class PoseEstimator:
         if self._cap:
             self._cap.release()
             self._cap = None
-        if self._pose_detector:
-            self._pose_detector.close()
-            self._pose_detector = None
-        if self._face_detector:
-            self._face_detector.close()
-            self._face_detector = None
+        for det in (
+            self._pose_detector_single,
+            self._pose_detector_multi,
+            self._face_detector_single,
+            self._face_detector_multi,
+        ):
+            if det:
+                det.close()
+        self._pose_detector_single = None
+        self._pose_detector_multi = None
+        self._face_detector_single = None
+        self._face_detector_multi = None
+        self._pose_detector = None
+        self._face_detector = None
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def set_multi_person_mode(self, enabled: bool) -> None:
+        """Switch between single-person (default) and multi-person detection.
+
+        Multi-person mode is used by the subject-selection feature; it enables
+        up to 4 poses/faces and keeps the detectors cached to avoid recreation
+        latency.
+        """
+        if enabled:
+            self._pose_detector = self._pose_detector_multi
+            self._face_detector = self._face_detector_multi
+        else:
+            self._pose_detector = self._pose_detector_single
+            self._face_detector = self._face_detector_single
 
     def _camera_matrix(self) -> np.ndarray:
         fx = fy = float(self._frame_width)
@@ -790,8 +856,22 @@ class PoseEstimator:
         face_result = self._face_detector.detect(mp_image)
 
         overlay = frame.copy()
+        cal = self.calibration.to_dict()
+        t_now = time.time()
 
-        # Draw body skeleton
+        # ── Multi-person path (subject selection / re-ID) ─────────────────────
+        if self._pose_detector is self._pose_detector_multi:
+            return self._process_multi_person(
+                frame=frame,
+                overlay=overlay,
+                clean_frame=clean_frame,
+                pose_result=pose_result,
+                face_result=face_result,
+                calibration=cal,
+                t_now=t_now,
+            )
+
+        # ── Single-person path (existing behaviour, unchanged) ────────────────
         body_landmarks: list[dict] = []
         raw_pose_lms = None
         if pose_result.pose_landmarks:
@@ -825,13 +905,9 @@ class PoseEstimator:
             if self.show_angle_arcs:
                 _draw_bucket_angle_arcs(overlay, body_landmarks)
 
-        # Solve head pose: prefer torso-relative from world landmarks (decouples
-        # head from torso rotation); fall back to face-PnP when shoulders/hips
-        # are not visible.
         head_pose: Optional[HeadPose] = None
         face_landmarks_out: list[dict] = []
         raw_face_lms = None
-        t_now = time.time()
 
         world_head = self._world_head_pose(body_landmarks)
         if world_head is not None:
@@ -855,7 +931,6 @@ class PoseEstimator:
                 raw_pitch_p = self._pitch_f.filter(raw_pitch_p, t_now)
                 raw_roll_p = self._roll_f.filter(raw_roll_p, t_now)
 
-                # Use PnP only when the world-landmark path wasn't available.
                 if head_pose is None:
                     self._pnp_fail_count = 0
                     if self.calibration.state == CalibrationState.COLLECTING:
@@ -863,38 +938,12 @@ class PoseEstimator:
                     yaw, pitch, roll = self.calibration.apply(raw_yaw_p, raw_pitch_p, raw_roll_p)
                     head_pose = HeadPose(yaw, pitch, roll, raw_yaw_p, raw_pitch_p, raw_roll_p)
 
-                # Extract face landmark data and draw (always, for overlay/FE)
-                for idx, name in zip(_FACE_LM_INDICES, _FACE_LM_NAMES):
-                    lm = raw_face_lms[idx]
-                    px = int(lm.x * self._frame_width)
-                    py = int(lm.y * self._frame_height)
-                    cv2.circle(overlay, (px, py), 6, (255, 0, 255), -1)
-                    face_landmarks_out.append({
-                        "index": idx,
-                        "name": name,
-                        "x": round(lm.x, 4),
-                        "y": round(lm.y, 4),
-                    })
-
-                # Draw 3D orientation axes (PnP-derived, for visualization only)
-                cam_matrix = self._camera_matrix()
-                dist_coeffs = np.zeros((4, 1), dtype=np.float64)
-                axis_pts = np.float32([[50, 0, 0], [0, 50, 0], [0, 0, -50], [0, 0, 0]])
-                proj_pts, _ = cv2.projectPoints(axis_pts, rvec, tvec, cam_matrix, dist_coeffs)
-                origin = tuple(proj_pts[3].ravel().astype(int))
-                def clamp_pt(pt):
-                    x = int(np.clip(pt[0], -5000, 5000))
-                    y = int(np.clip(pt[1], -5000, 5000))
-                    return (x, y)
-                cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[0].ravel()), (0, 0, 255), 2, tipLength=0.3)
-                cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[1].ravel()), (0, 255, 0), 2, tipLength=0.3)
-                cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[2].ravel()), (255, 0, 0), 2, tipLength=0.3)
+                face_landmarks_out = self._extract_named_face_landmarks(raw_face_lms)
+                self._draw_face_axes(overlay, rvec, tvec)
             elif head_pose is None:
                 self._pnp_fail_count += 1
         elif head_pose is None:
             self._pnp_fail_count += 1
-
-        cal = self.calibration.to_dict()
 
         self.stability.tick(
             body_landmarks=body_landmarks,
@@ -919,6 +968,300 @@ class PoseEstimator:
             calibration=cal,
             clean_frame=clean_frame,
         )
+
+    def _process_multi_person(
+        self,
+        frame: np.ndarray,
+        overlay: np.ndarray,
+        clean_frame: np.ndarray,
+        pose_result,
+        face_result,
+        calibration: dict,
+        t_now: float,
+    ) -> Optional[FrameResult]:
+        """Process a frame in multi-person mode for subject selection/re-ID."""
+        raw_pose_lists = pose_result.pose_landmarks or []
+        raw_world_lists = pose_result.pose_world_landmarks or []
+        raw_face_lists = face_result.face_landmarks or []
+
+        # Build per-subject data.
+        detected_subjects: list[dict] = []
+        for pose_idx, raw_pose_lms in enumerate(raw_pose_lists):
+            world_lms = raw_world_lists[pose_idx] if pose_idx < len(raw_world_lists) else None
+            body_landmarks = self._extract_body_landmarks(raw_pose_lms, world_lms)
+            raw_face_lms = self._find_face_for_pose(body_landmarks, raw_face_lists)
+            face_landmarks_out, head_pose = self._process_subject_face(
+                raw_face_lms, body_landmarks, t_now
+            )
+            detected_subjects.append({
+                "body_landmarks": body_landmarks,
+                "face_landmarks": face_landmarks_out,
+                "head_pose": head_pose,
+            })
+
+        # Run selection / re-ID logic. Pass the un-annotated clean frame so
+        # the selector can compute ArcFace + appearance embeddings from pixels.
+        selection = self.subject_selector.process_frame(
+            detected_subjects, now=t_now, frame_bgr=clean_frame,
+        )
+
+        # Draw all detected subjects with selection-specific highlights.
+        # Green means the subject's identity is confirmed (state == "selected");
+        # otherwise we draw candidates in amber and everyone else in blue.
+        confirmed = selection.state == "selected"
+        for info in selection.subjects:
+            is_selected = confirmed and info.id == selection.selected_subject_id
+            self._draw_subject_skeleton(
+                overlay,
+                info.body_landmarks,
+                is_candidate=info.is_candidate,
+                hold_progress=info.hold_progress,
+                is_selected=is_selected,
+            )
+            if info.is_candidate or is_selected:
+                self._draw_subject_bbox(overlay, info.bbox, info.is_candidate, info.hold_progress)
+            if info.is_candidate:
+                self._draw_hold_progress(overlay, info.bbox, info.hold_progress)
+
+        # Status label.
+        status_text = {
+            "idle": "",
+            "selecting": "Raise your hand for 3s to select",
+            "selected": "Subject locked",
+            "searching": "Searching for subject...",
+        }.get(selection.state, "")
+        if status_text:
+            h, w = overlay.shape[:2]
+            cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
+
+        # Stable-position capture still runs on the primary subject (best effort).
+        self.stability.tick(
+            body_landmarks=selection.primary_body_landmarks,
+            face_landmarks=selection.primary_face_landmarks,
+            head_pose=selection.primary_head_pose,
+            overlay=overlay,
+            clean_frame=clean_frame,
+            calibration=calibration,
+        )
+        if self.stability.is_frozen:
+            frozen = self.stability.frozen_result()
+            if frozen is not None:
+                return frozen
+
+        _, jpeg = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 70])
+
+        # Convert SubjectInfo dataclasses to plain dicts for JSON serialization.
+        subjects_json = [
+            {
+                "id": info.id,
+                "bbox": info.bbox,
+                "is_candidate": info.is_candidate,
+                "hold_progress": round(info.hold_progress, 2),
+                "depth": round(info.depth, 4),
+                "metrics": info.metrics.to_dict() if info.metrics is not None else None,
+            }
+            for info in selection.subjects
+        ]
+
+        return FrameResult(
+            body_landmarks=selection.primary_body_landmarks,
+            face_landmarks=selection.primary_face_landmarks,
+            head_pose=selection.primary_head_pose,
+            jpeg_bytes=jpeg.tobytes(),
+            calibration=calibration,
+            clean_frame=clean_frame,
+            subjects=subjects_json,
+            selection_state=selection.state,
+            selected_subject_id=selection.selected_subject_id,
+        )
+
+    def _extract_body_landmarks(
+        self,
+        raw_pose_lms: list,
+        world_lms: Optional[list],
+    ) -> list[dict]:
+        """Convert MediaPipe pose landmarks to the dict format used downstream."""
+        body_landmarks: list[dict] = []
+        for i, lm in enumerate(raw_pose_lms):
+            entry = {
+                "x": round(lm.x, 4),
+                "y": round(lm.y, 4),
+                "z": round(lm.z, 4),
+                "visibility": round(lm.visibility or 0.0, 3),
+            }
+            if world_lms is not None and i < len(world_lms):
+                wlm = world_lms[i]
+                entry["xw"] = round(wlm.x, 5)
+                entry["yw"] = round(wlm.y, 5)
+                entry["zw"] = round(wlm.z, 5)
+            body_landmarks.append(entry)
+        return body_landmarks
+
+    def _find_face_for_pose(
+        self,
+        body_landmarks: list[dict],
+        raw_face_lists: list,
+    ) -> Optional[list]:
+        """Match the face whose nose tip is closest to the pose's nose landmark."""
+        if not raw_face_lists or len(body_landmarks) <= geometry.NOSE:
+            return None
+        nose = body_landmarks[geometry.NOSE]
+        best_face = None
+        best_dist = float("inf")
+        for face_lms in raw_face_lists:
+            if len(face_lms) <= _FACE_LM_INDICES[0]:
+                continue
+            face_nose = face_lms[_FACE_LM_INDICES[0]]
+            dist = math.hypot(face_nose.x - nose["x"], face_nose.y - nose["y"])
+            if dist < best_dist:
+                best_dist = dist
+                best_face = face_lms
+        # Reject matches that are clearly on a different person (e.g. > 30% of frame).
+        if best_face is not None and best_dist > 0.30:
+            return None
+        return best_face
+
+    def _process_subject_face(
+        self,
+        raw_face_lms: Optional[list],
+        body_landmarks: list[dict],
+        t_now: float,
+    ) -> tuple[list[dict], Optional[HeadPose]]:
+        """Return named face landmarks + head pose for one subject."""
+        face_landmarks_out: list[dict] = []
+        head_pose: Optional[HeadPose] = None
+
+        world_head = self._world_head_pose(body_landmarks)
+        if world_head is not None:
+            raw_yaw, raw_pitch, raw_roll = world_head
+            raw_yaw = self._yaw_w_f.filter(raw_yaw, t_now)
+            raw_pitch = self._pitch_w_f.filter(raw_pitch, t_now)
+            raw_roll = self._roll_w_f.filter(raw_roll, t_now)
+            if self.calibration.state == CalibrationState.COLLECTING:
+                self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
+            yaw, pitch, roll = self.calibration.apply(raw_yaw, raw_pitch, raw_roll)
+            head_pose = HeadPose(yaw, pitch, roll, raw_yaw, raw_pitch, raw_roll)
+
+        if raw_face_lms is not None:
+            face_landmarks_out = self._extract_named_face_landmarks(raw_face_lms)
+            pnp_result = self._solve_pnp(raw_face_lms)
+            if pnp_result is not None:
+                raw_yaw_p, raw_pitch_p, raw_roll_p, rvec, tvec = pnp_result
+                raw_yaw_p = self._yaw_f.filter(raw_yaw_p, t_now)
+                raw_pitch_p = self._pitch_f.filter(raw_pitch_p, t_now)
+                raw_roll_p = self._roll_f.filter(raw_roll_p, t_now)
+                if head_pose is None:
+                    if self.calibration.state == CalibrationState.COLLECTING:
+                        self.calibration.add_frame(raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    yaw, pitch, roll = self.calibration.apply(raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    head_pose = HeadPose(yaw, pitch, roll, raw_yaw_p, raw_pitch_p, raw_roll_p)
+
+        return face_landmarks_out, head_pose
+
+    def _extract_named_face_landmarks(self, raw_face_lms: list) -> list[dict]:
+        """Extract the named subset of face landmarks used elsewhere."""
+        result: list[dict] = []
+        for idx, name in zip(_FACE_LM_INDICES, _FACE_LM_NAMES):
+            if idx >= len(raw_face_lms):
+                continue
+            lm = raw_face_lms[idx]
+            result.append({"index": idx, "name": name, "x": round(lm.x, 4), "y": round(lm.y, 4)})
+        return result
+
+    def _draw_face_axes(self, overlay: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> None:
+        """Draw PnP-derived 3D orientation axes on the overlay."""
+        cam_matrix = self._camera_matrix()
+        dist_coeffs = np.zeros((4, 1), dtype=np.float64)
+        axis_pts = np.float32([[50, 0, 0], [0, 50, 0], [0, 0, -50], [0, 0, 0]])
+        proj_pts, _ = cv2.projectPoints(axis_pts, rvec, tvec, cam_matrix, dist_coeffs)
+        origin = tuple(proj_pts[3].ravel().astype(int))
+        def clamp_pt(pt):
+            x = int(np.clip(pt[0], -5000, 5000))
+            y = int(np.clip(pt[1], -5000, 5000))
+            return (x, y)
+        cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[0].ravel()), (0, 0, 255), 2, tipLength=0.3)
+        cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[1].ravel()), (0, 255, 0), 2, tipLength=0.3)
+        cv2.arrowedLine(overlay, origin, clamp_pt(proj_pts[2].ravel()), (255, 0, 0), 2, tipLength=0.3)
+
+    def _draw_subject_skeleton(
+        self,
+        frame: np.ndarray,
+        landmarks: list[dict],
+        is_candidate: bool,
+        hold_progress: float,
+        is_selected: bool,
+    ) -> None:
+        """Draw one subject's skeleton with selection-aware colors."""
+        h, w = frame.shape[:2]
+        pts = [(int(lm["x"] * w), int(lm["y"] * h)) for lm in landmarks]
+        vis = [lm.get("visibility", 0.0) for lm in landmarks]
+
+        if is_selected:
+            line_color = (0, 255, 0)  # green
+            joint_color = (0, 255, 0)
+        elif is_candidate:
+            # amber → green as hold progresses
+            prog = max(0.0, min(1.0, hold_progress))
+            line_color = (
+                int(255 * (1 - prog)),
+                int(200 + 55 * prog),
+                int(50 * (1 - prog)),
+            )
+            joint_color = line_color
+        else:
+            line_color = (120, 180, 255)
+            joint_color = (0, 204, 255)
+
+        for a, b in _POSE_CONNECTIONS:
+            if a >= len(pts) or b >= len(pts):
+                continue
+            if vis[a] < 0.2 or vis[b] < 0.2:
+                continue
+            alpha = max(0.2, (vis[a] + vis[b]) / 2)
+            color = tuple(int(c * alpha) for c in line_color)
+            cv2.line(frame, pts[a], pts[b], color, 2)
+
+        for i, (px, py) in enumerate(pts):
+            if vis[i] < 0.2:
+                continue
+            radius = 8 if i in (_NOSE_IDX, _LEFT_EAR_IDX, _RIGHT_EAR_IDX) else 5
+            cv2.circle(frame, (px, py), radius, joint_color, -1)
+
+    def _draw_subject_bbox(
+        self,
+        frame: np.ndarray,
+        bbox: dict,
+        is_candidate: bool,
+        hold_progress: float,
+    ) -> None:
+        """Draw a bounding box around a subject."""
+        h, w = frame.shape[:2]
+        x1 = int(bbox["x"] * w)
+        y1 = int(bbox["y"] * h)
+        x2 = int((bbox["x"] + bbox["width"]) * w)
+        y2 = int((bbox["y"] + bbox["height"]) * h)
+        if is_candidate:
+            prog = max(0.0, min(1.0, hold_progress))
+            color = (
+                int(255 * (1 - prog)),
+                int(200 + 55 * prog),
+                int(50 * (1 - prog)),
+            )
+        else:
+            color = (0, 255, 0)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+    def _draw_hold_progress(self, frame: np.ndarray, bbox: dict, hold_progress: float) -> None:
+        """Render a progress bar under the subject's bounding box."""
+        h, w = frame.shape[:2]
+        x1 = int(bbox["x"] * w)
+        y2 = int((bbox["y"] + bbox["height"]) * h)
+        bar_w = int(bbox["width"] * w)
+        bar_h = 8
+        prog = max(0.0, min(1.0, hold_progress))
+        cv2.rectangle(frame, (x1, y2 + 6), (x1 + bar_w, y2 + 6 + bar_h), (50, 50, 50), -1)
+        cv2.rectangle(frame, (x1, y2 + 6), (x1 + int(bar_w * prog), y2 + 6 + bar_h), (0, 255, 100), -1)
 
     def _draw_pose_skeleton(self, frame: np.ndarray, landmarks: list):
         h, w = frame.shape[:2]
