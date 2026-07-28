@@ -342,7 +342,10 @@ export function useRefinedDemoMachine() {
         dispatch({
           selectionState: u.state,
           selectionSubjectsCount: u.subjectsCount,
-          selectionHoldProgress: u.holdProgress,
+          // Force 100% when selected — the backend resets hold_progress to 0
+          // the moment state transitions out of "selecting", so the last frame
+          // always carries 0 even though the hold completed.
+          selectionHoldProgress: u.state === 'selected' ? 1 : u.holdProgress,
         })
         if (u.state === 'selected') finish()
       })
