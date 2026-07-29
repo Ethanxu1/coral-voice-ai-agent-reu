@@ -1,6 +1,6 @@
 # CORAL Intent Classifier — Regex/Hybrid Matching
 
-The intent classifier in `src/coral_agent/intent_classifier.py` uses a hybrid architecture:
+The intent classifier in [`src/llm/intent_classifier.py`](../src/llm/intent_classifier.py) uses a hybrid architecture:
 
 1. **Regex/template matchers** run first and classify deterministic commands instantly.
 2. If a matcher is uncertain (confidence below `INTENT_HIGH_CONFIDENCE_THRESHOLD`, default `0.85`), the classifier falls back to the LLM.
@@ -8,10 +8,12 @@ The intent classifier in `src/coral_agent/intent_classifier.py` uses a hybrid ar
 
 This gives the common, unambiguous commands (`"follow me"`, `"turn your head left"`, `"what can you do"`) a fast, reliable path while preserving the LLM for ambiguous or open-ended input.
 
+The classifier sits between transcription and the motion planner — see [code-flow.md](code-flow.md) for the full voice-to-motion path, and [overview.md](overview.md) for how the pieces fit together. The fallback model is `LLM_MODEL` from [`src/llm/config.py`](../src/llm/config.py), overridable per call via the `model` argument.
+
 ## Entry point
 
 ```python
-from coral_agent.intent_classifier import classify_intent
+from llm.intent_classifier import classify_intent
 
 result = classify_intent(
     text="turn your head left",
@@ -116,6 +118,12 @@ Explicit angles are captured and included in the description:
 
 - `"raise your right arm to 45 degrees"` → `"Raise right arm forward and up to 45 degrees"`
 
+Relative modifiers (`a little`, `a bit`, `a lot`, `more`, `less`, `slightly`) are also captured and appended when no explicit angle is present, for head turn, head tilt, and elbow bend:
+
+- `"turn your head left a little"` → `"Turn head left a little"`
+
+Two defaults worth knowing: a bare arm command with no direction assumes forward/up (because "raise" implies it), and `both` counts as a specified side, so `"raise both arms"` does not take the missing-side penalty.
+
 ## 5. Conversation patterns
 
 Fires on greetings, questions, compliments, and meta phrases:
@@ -133,7 +141,7 @@ Returns `conversation` at 0.85 confidence.
 The environment variable `INTENT_HIGH_CONFIDENCE_THRESHOLD` controls how confident the regex result must be before it is returned directly. Default is `0.85`.
 
 ```bash
-INTENT_HIGH_CONFIDENCE_THRESHOLD=0.9 python main.py
+INTENT_HIGH_CONFIDENCE_THRESHOLD=0.9 uv run server
 ```
 
 Raising the threshold makes the classifier more conservative and sends more input to the LLM. Lowering it makes more input take the fast regex path.
@@ -146,7 +154,7 @@ Regex falls back to the LLM when:
 2. No regex matcher fires.
 3. A correction or retry pattern matched but there is no assistant history.
 
-The LLM receives the same prompt as before (`prompts/intent_classifier.md`) with `CURRENT_STATE`, `STATE_DESCRIPTION`, `follow_active`, saved poses, and conversation history.
+The LLM receives the same prompt as before ([`src/llm/prompts/intent_classifier.md`](../src/llm/prompts/intent_classifier.md)) with `CURRENT_STATE`, `STATE_DESCRIPTION`, `follow_active`, saved poses, and conversation history.
 
 If the LLM fails and regex had a low-confidence motion, the classifier emits a clarification question using the motion description instead of falling back to conversation. For example:
 
@@ -181,7 +189,7 @@ The intent classifier is the router: only finalized motion descriptions reach th
 
 This means:
 - "Move your arm up" → classified as `clarification` → no backend call until the user clarifies.
-- "What can you do?" → classified as `conversation` → handled by `prompts/chat.md`, not the motion planner.
+- "What can you do?" → classified as `conversation` → handled by [`src/llm/prompts/chat.md`](../src/llm/prompts/chat.md), not the motion planner.
 - "Raise your right arm" → classified as `motion` → approval modal → motion planner receives the clean description.
 
 ## Testing
@@ -189,7 +197,7 @@ This means:
 Tests live in `tests/test_intent_classifier.py`. Run them with:
 
 ```bash
-python -m pytest tests/test_intent_classifier.py -v
+uv run pytest tests/test_intent_classifier.py -v
 ```
 
 The tests cover immediate intents, undo/reset, motion commands with and without ambiguity, conversation patterns, corrections with/without history, retry with/without history, and no-match fallback.
