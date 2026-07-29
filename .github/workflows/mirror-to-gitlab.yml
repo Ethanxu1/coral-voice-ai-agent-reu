@@ -1,0 +1,14 @@
+name: Mirror to GitLab
+on: [push]
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to GitLab
+        run: |
+          git remote add gitlab https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/peng-lab/coral-robot.git
+          git push gitlab --all
+          git push gitlab --tags
