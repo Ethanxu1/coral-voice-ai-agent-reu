@@ -1,5 +1,3 @@
-import { useEffect } from 'react'
-import { setAngleArcsEnabled, setFallCheckEnabled, setMujocoViewerOnLaunch } from '../demo/api'
 import { setRobotConfig, useRobotConfig, type LegMode } from '../demo/robotConfig'
 
 const LEG_MODES: { id: LegMode; label: string }[] = [
@@ -20,21 +18,9 @@ export default function RobotModeToggle() {
   const toggleFallCheck = () => setRobotConfig({ fallCheckEnabled: !fallCheckEnabled })
   const toggleMujocoViewer = () =>
     setRobotConfig({ mujocoViewerOnLaunch: !mujocoViewerOnLaunch })
-  // Re-apply the persisted setting to the vision/robot servers whenever it
-  // changes, and once on mount — the flags live in the server processes'
-  // memory (not disk), so a server restart or a fresh page load would
-  // otherwise leave the server out of sync with the UI's remembered state.
-  useEffect(() => {
-    setAngleArcsEnabled(showAngleArcs)
-  }, [showAngleArcs])
-  useEffect(() => {
-    setFallCheckEnabled(fallCheckEnabled)
-  }, [fallCheckEnabled])
-  // Same sync, except the server only reads this one at startup — pushing it on
-  // every load is what makes the toggle's remembered state the one used next launch.
-  useEffect(() => {
-    setMujocoViewerOnLaunch(mujocoViewerOnLaunch)
-  }, [mujocoViewerOnLaunch])
+  // Pushing these settings to the vision/robot servers is useServerSettingsSync's
+  // job, mounted at the app root — this component renders on "/" only, so syncing
+  // from here left every other route (the refined demo especially) unsynced.
 
   return (
     <div className="robot-mode-toggle">
