@@ -104,6 +104,10 @@ function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
 
 const CANCELLED = Symbol('cancelled')
 
+// Exit-replay pacing: each saved pose is played over this long, then the loop
+// waits the same again before the next one so the moves never overlap.
+const REPLAY_POSE_MS = 1000
+
 function agentMsg(text: string, chips?: string[]): RefinedChatMsg {
   return { role: 'agent', text, chips }
 }
@@ -280,12 +284,16 @@ export function useRefinedDemoMachine() {
       try {
         // Transition straight from the current sim pose into the next move —
         // no reset to stand in between.
-        await playPose(names[i], 1200)
+        await playPose(names[i], REPLAY_POSE_MS)
       } catch {
         // A pose that fails to play (e.g. deleted) shouldn't stall the show.
       }
       if (!alive()) return
-      await sleep(2400) // hold the pose so it's clearly visible
+      // The sim dispatch blocks for the full duration, but the hardware POST
+      // returns as soon as the robot server accepts it — the servos are still
+      // travelling. Waiting the pose duration again keeps consecutive poses from
+      // overlapping on hardware, and holds the pose long enough to be seen.
+      await sleep(REPLAY_POSE_MS)
     }
 
     if (!alive()) return

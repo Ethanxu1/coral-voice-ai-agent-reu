@@ -1164,6 +1164,9 @@ async def save_current_pose_endpoint(req: SaveCurrentPoseRequest) -> dict[str, s
 class PlayPoseRequest(BaseModel):
     name: str
     duration_ms: int = 1000
+    # None keeps the server-mode default; the frontend sends its sim/hardware
+    # toggle so the exit replay reaches the robot on the same terms as /move.
+    sim_only: bool | None = None
 
 
 @app.post("/poses/play")
@@ -1191,7 +1194,7 @@ async def play_pose_endpoint(req: PlayPoseRequest) -> dict[str, Any]:
         for joint, rad in joints.items()
         if joint in SERVO_ID_MAP
     ]
-    await dispatch_servo_commands(commands)
+    await dispatch_servo_commands(commands, sim_only=req.sim_only)
     logger.info(f"Played saved pose '{clean_name}' ({len(commands)} joints)")
     return {"name": clean_name, "joints_played": len(commands), "status": "played"}
 

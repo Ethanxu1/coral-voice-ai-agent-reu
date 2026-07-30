@@ -833,11 +833,17 @@ export async function saveCurrentPose(name: string): Promise<void> {
 }
 
 // Strike a saved pose directly by name (no LLM). Used by the end-session replay.
+// sim_only follows the sim/hardware toggle, same as /move, so the replay drives
+// the physical robot whenever the rest of the demo does.
 export async function playPose(name: string, durationMs = 1000): Promise<void> {
   const res = await fetch('http://localhost:8000/poses/play', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, duration_ms: durationMs }),
+    body: JSON.stringify({
+      name,
+      duration_ms: durationMs,
+      sim_only: getRobotConfig().simOnly,
+    }),
   })
   if (!res.ok) throw new Error(`play pose failed: ${res.status}`)
 }
