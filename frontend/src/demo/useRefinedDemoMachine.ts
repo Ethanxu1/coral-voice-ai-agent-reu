@@ -64,6 +64,9 @@ export interface RefinedState {
   error: string | null
   pendingIntent: string | null
   muted: boolean
+  // When false, intent approval pop-ups are skipped and every classified
+  // intent is auto-approved. Useful for demos where the modal interrupts flow.
+  approvalsEnabled: boolean
   // Index of the saved pose currently being performed on the end-session
   // replay screen, or null when not replaying.
   replayIdx: number | null
@@ -91,6 +94,7 @@ const INIT: RefinedState = {
   error: null,
   pendingIntent: null,
   muted: false,
+  approvalsEnabled: false,
   replayIdx: null,
   safetyChecking: false,
   selectionState: 'idle',
@@ -148,6 +152,9 @@ export function useRefinedDemoMachine() {
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
+  // Mirrors state.approvalsEnabled so the async run() loop reads the current
+  // setting rather than the value captured when the run started.
+  const approvalsEnabledRef = useRef(false)
   // Object URLs for recorded user utterances; revoked on stop/unmount to avoid leaks.
   const audioUrlsRef = useRef<string[]>([])
   // Mute state is mirrored in a ref so the async capture loop can read it
@@ -228,6 +235,22 @@ export function useRefinedDemoMachine() {
     approvalResolverRef.current = null
     dispatch({ pendingIntent: null })
     resolve?.(false)
+  }, [])
+
+  // Turn the intent approval pop-ups on/off. Switching them off while a modal
+  // is already up auto-approves that pending intent so the loop isn't left
+  // blocked on a resolver no one can reach anymore.
+  const toggleApprovals = useCallback(() => {
+    const next = !approvalsEnabledRef.current
+    approvalsEnabledRef.current = next
+    if (!next) {
+      const resolve = approvalResolverRef.current
+      approvalResolverRef.current = null
+      dispatch({ approvalsEnabled: next, pendingIntent: null })
+      resolve?.(true)
+    } else {
+      dispatch({ approvalsEnabled: next })
+    }
   }, [])
 
   const toggleMute = useCallback(() => {
@@ -444,11 +467,14 @@ export function useRefinedDemoMachine() {
       })
     }
 
-    const awaitApproval = (description: string): Promise<boolean> =>
-      new Promise<boolean>((resolve) => {
+    const awaitApproval = (description: string): Promise<boolean> => {
+      // Pop-ups toggled off: auto-approve without ever showing the modal.
+      if (!approvalsEnabledRef.current) return Promise.resolve(true)
+      return new Promise<boolean>((resolve) => {
         approvalResolverRef.current = resolve
         dispatch({ pendingIntent: description })
       })
+    }
 
     // Report a fine-tuning adjustment's safety verdict into the chat. The
     // adjustment moves run server-side through the motion planner (not our own
@@ -1122,6 +1148,7 @@ export function useRefinedDemoMachine() {
     injectText,
     approveIntent,
     rejectIntent,
+    toggleApprovals,
     goToLibrary,
     goToExit,
     startAgain,
