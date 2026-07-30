@@ -36,6 +36,8 @@ export interface ActionResult {
   content: string
   hasAction: boolean
   satisfied?: boolean | null
+  /** Safety verdict for the motion this turn executed; null when nothing moved. */
+  safety?: MoveSafety | null
 }
 
 // ── Speaker (Mac :5002) — resolves only after speech finishes ─────────────────
@@ -160,6 +162,21 @@ const SAFE_MOVE: MoveSafety = {
   badPairs: [],
 }
 
+// Parse the server's snake_case safety report. The /move endpoint and the /ws
+// chat_response (see aggregate_safety in server.py) emit the same shape, so
+// captured poses and fine-tuning adjustments report identically. Returns null
+// when the field is absent — for chat that means the turn moved nothing.
+export function parseSafety(raw: unknown): MoveSafety | null {
+  if (!raw || typeof raw !== 'object') return null
+  const s = raw as Record<string, unknown>
+  return {
+    fallBlocked: s.fall_blocked === true,
+    collisionClamped: s.collision_clamped === true,
+    safeFraction: typeof s.safe_fraction === 'number' ? s.safe_fraction : 1,
+    badPairs: Array.isArray(s.bad_pairs) ? (s.bad_pairs as string[]) : [],
+  }
+}
+
 // Drive the robot/sim with raw servo commands (from mapFeatures). No-op safe if
 // the command list is empty. Returns the server's safety verdict so callers
 // (the refined demo) can report a blocked move to the user.
@@ -178,17 +195,9 @@ export async function move(
     throw new Error(`move failed: ${res.status} ${body?.detail ?? ''}`.trim())
   }
   const data = await res.json().catch(() => null)
-  const s = data?.safety
   return {
     executed: data?.status !== 'blocked',
-    safety: s
-      ? {
-          fallBlocked: s.fall_blocked === true,
-          collisionClamped: s.collision_clamped === true,
-          safeFraction: typeof s.safe_fraction === 'number' ? s.safe_fraction : 1,
-          badPairs: Array.isArray(s.bad_pairs) ? s.bad_pairs : [],
-        }
-      : SAFE_MOVE,
+    safety: parseSafety(data?.safety) ?? SAFE_MOVE,
   }
 }
 
@@ -582,7 +591,7 @@ export function sendAudioForAction(
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
-        resolve({ transcript, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null })
+        resolve({ transcript, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null, safety: parseSafety(data.safety) })
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('audio-to-action ws error')) }
@@ -653,6 +662,7 @@ export function openActionSession(sessionId?: string): ActionSession {
         content: data.content ?? '',
         hasAction: waypoints.length > 0,
         satisfied: data.satisfied ?? null,
+        safety: parseSafety(data.safety),
       })
     }
   })
@@ -746,7 +756,7 @@ export function sendTextForAction(
         clearTimeout(timer)
         ws.close()
         const waypoints = Array.isArray(data.waypoints) ? data.waypoints : []
-        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null })
+        resolve({ transcript: text, content: data.content ?? '', hasAction: waypoints.length > 0, satisfied: data.satisfied ?? null, safety: parseSafety(data.safety) })
       }
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('text-to-action ws error')) }

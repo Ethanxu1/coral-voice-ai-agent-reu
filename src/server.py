@@ -560,12 +560,20 @@ async def execute_waypoints(
     and dispatched to the controller, which handles concurrent joint interpolation.
     Sequential waypoints run one after the other.
 
-    Returns a list of executed waypoint info.
+    Returns a list of executed waypoint info. Each entry carries a per-waypoint
+    ``safety`` report in the same JSON shape as collision_checked_targets, so the
+    caller can tell the user what the checks did (see aggregate_safety).
     """
     executed = []
 
     for i, waypoint in enumerate(waypoints):
         duration_ms = speed_to_duration_ms(waypoint.speed)
+        safety: dict[str, Any] = {
+            "fall_blocked": False,
+            "collision_clamped": False,
+            "safe_fraction": 1.0,
+            "bad_pairs": [],
+        }
 
         if collision_checker is not None:
             current = simulator.get_all_joint_states()
@@ -578,6 +586,9 @@ async def execute_waypoints(
                     f"reduced to {safe_frac:.0%} of target"
                 )
                 waypoint.joints = safe_joints
+                safety.update(
+                    collision_clamped=True, safe_fraction=safe_frac, bad_pairs=bad_pairs
+                )
 
         # Fall check: if this waypoint would topple the robot, skip it entirely
         # (0% — hold the current pose) rather than clamping; there's no safe
@@ -591,6 +602,7 @@ async def execute_waypoints(
                     f"threshold {fall['threshold_z']}; waypoint blocked entirely (0%)"
                 )
                 waypoint.joints = dict(current)
+                safety.update(fall_blocked=True, safe_fraction=0.0)
 
         commands = []
         for joint_name, rad in waypoint.joints.items():
@@ -613,6 +625,7 @@ async def execute_waypoints(
                 "angle": waypoint.angle,
                 "joints": waypoint.joints,
                 "speed": waypoint.speed,
+                "safety": safety,
             }
         )
         logger.info(
@@ -621,6 +634,36 @@ async def execute_waypoints(
         )
 
     return executed
+
+
+def aggregate_safety(executed: list[dict]) -> dict[str, Any]:
+    """Collapse per-waypoint safety reports into one verdict for the whole move.
+
+    A multi-waypoint plan is a single action from the user's point of view, so
+    the strictest outcome wins: blocked if any waypoint toppled the robot,
+    clamped if any was pulled back, and the reported fraction is the tightest
+    clamp applied. Same JSON shape as collision_checked_targets' report, so the
+    frontend parses /move responses and chat responses with one code path.
+    """
+    merged: dict[str, Any] = {
+        "fall_blocked": False,
+        "collision_clamped": False,
+        "safe_fraction": 1.0,
+        "bad_pairs": [],
+    }
+    for entry in executed:
+        safety = entry.get("safety")
+        if not safety:
+            continue
+        merged["fall_blocked"] |= bool(safety.get("fall_blocked"))
+        merged["collision_clamped"] |= bool(safety.get("collision_clamped"))
+        merged["safe_fraction"] = min(
+            merged["safe_fraction"], float(safety.get("safe_fraction", 1.0))
+        )
+        for pair in safety.get("bad_pairs") or []:
+            if pair not in merged["bad_pairs"]:
+                merged["bad_pairs"].append(pair)
+    return merged
 
 
 async def execute_parallel_tracks(
@@ -1545,6 +1588,12 @@ async def process_chat_message(
             "joint_states": _get_robot_state() or None,
             "satisfied": satisfied,
         }
+
+        # Only when a motion actually ran: the refined demo reports this verdict
+        # to the user during pose fine-tuning, the same way it does for a
+        # captured pose's /move. Absent means "no move, nothing to report".
+        if executed_waypoints:
+            response_data["safety"] = aggregate_safety(executed_waypoints)
 
         if validation_warnings:
             response_data["validation_warnings"] = validation_warnings

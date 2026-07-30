@@ -20,6 +20,7 @@ import {
   startSubjectSelection,
   stopSubjectSelection,
   subscribeSubjectSelection,
+  type MoveSafety,
   type ServoCommand,
   type SubjectSelectionState,
 } from './api'
@@ -441,6 +442,25 @@ export function useRefinedDemoMachine() {
         dispatch({ pendingIntent: description })
       })
 
+    // Report a fine-tuning adjustment's safety verdict into the chat. The
+    // adjustment moves run server-side through the motion planner (not our own
+    // /move call), so the checks that ran there come back on the chat response
+    // — without this the child sees a clamped or blocked tweak silently do
+    // nothing, while a captured pose explains itself. `null` means the turn
+    // executed no motion (pure conversation), so there's nothing to report.
+    const reportMotionSafety = (safety: MoveSafety | null | undefined): void => {
+      if (!safety) return
+      if (safety.fallBlocked) {
+        addMsg(sysMsg("Safety check: that tweak would tip me over, so I stayed put."))
+      } else if (safety.collisionClamped) {
+        addMsg(sysMsg(
+          `Safety check: pulled the move back to ${Math.round(safety.safeFraction * 100)}% to avoid a collision.`,
+        ))
+      } else {
+        addMsg(sysMsg('Safety check passed!'))
+      }
+    }
+
     // Execute a captured pose's servo commands behind the backend safety
     // checks (kinematic collision clamp + dynamics fall check), holding a
     // visible "Safety check…" state for 1.5s while they run, then reporting
@@ -805,6 +825,7 @@ export function useRefinedDemoMachine() {
                   dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
                   const fr = await session.sendText(ft, 'motion', ftResult.description)
                   active()
+                  reportMotionSafety(fr.safety)
                   addMsg(agentMsg(fr.content || ''))
                   if (fr.satisfied === true) satisfied = true
                 } else {
@@ -975,6 +996,7 @@ export function useRefinedDemoMachine() {
               dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
               const fr = await session.sendText(ft, 'motion', ftResult.description)
               active()
+              reportMotionSafety(fr.safety)
               addMsg(agentMsg(fr.content || ''))
               if (fr.satisfied === true) satisfied = true
             } else {
