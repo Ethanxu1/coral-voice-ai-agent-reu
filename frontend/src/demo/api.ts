@@ -527,7 +527,14 @@ export function sendAudioForTranscript(blob: Blob, timeoutMs = 30000): Promise<s
       const reader = new FileReader()
       reader.onloadend = () => {
         const base64 = (reader.result as string).split(',')[1]
-        ws.send(JSON.stringify({ type: 'audio', data: base64, format: 'webm' }))
+        // `transcribe_only` stops the server after Whisper. Without it the /ws
+        // audio handler runs the full system-intent + motion-planner pipeline on
+        // this utterance and moves the robot — on top of the move the caller
+        // makes itself (e.g. the refined demo's map-features capture), so a
+        // single "capture my pose" drove the robot twice. Closing the socket on
+        // the transcription frame doesn't help: the server work is already
+        // in flight and its hardware dispatch isn't cancelled.
+        ws.send(JSON.stringify({ type: 'audio', data: base64, format: 'webm', transcribe_only: true }))
       }
       reader.readAsDataURL(blob)
     }
@@ -538,7 +545,6 @@ export function sendAudioForTranscript(blob: Blob, timeoutMs = 30000): Promise<s
         ws.close()
         resolve(data.text ?? '')
       }
-      // chat_response intentionally ignored
     }
     ws.onerror = () => { clearTimeout(timer); reject(new Error('transcription ws error')) }
   })

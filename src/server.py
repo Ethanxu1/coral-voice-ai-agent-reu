@@ -1851,8 +1851,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 if save_dialog.stage != _SaveStage.IDLE:
                     if await handle_save_dialog(user_message, save_dialog, websocket):
                         continue
-                if await try_handle_system_intent(user_message, websocket, save_dialog):
-                    continue
+                # The regex system-intent matcher is for clients that hand us raw
+                # speech and let us decide what it means. A client that sends an
+                # explicit intent_type has already classified this turn and owns
+                # the flow, so re-matching here would fight it: "copy my arm
+                # position" during pose fine-tuning hits _CAPTURE_RE and would run
+                # a whole second capture-and-mimic instead of the approved tweak,
+                # and "mirror me" would silently start the follow loop streaming
+                # poses underneath the demo. "immediate" is the exception — that's
+                # the refined demo explicitly asking for follow start/stop.
+                
+                # TLDR: Stops "copy your left arm closer to your chest" from triggering a second capture mid-adjustment.
+                if intent_type in (None, "immediate"):
+                    if await try_handle_system_intent(user_message, websocket, save_dialog):
+                        continue
 
                 # Route conversation/clarification to the chat LLM and finalized
                 # motion descriptions to the motion planner. If no intent_type is
@@ -1898,6 +1910,16 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "audio":
                 audio_b64 = message_data.get("data", "")
                 audio_bytes = base64.b64decode(audio_b64)
+                # Speech-to-text only: the caller (the refined demo's listen loop,
+                # pose naming, the tutorial) owns what happens next and drives the
+                # robot itself. Running the intent/motion pipeline here too would
+                # move the robot a second time off the same utterance, so stop
+                # after the transcription frame.
+                transcribe_only = message_data.get("transcribe_only") is True
+                if transcribe_only:
+                    transcribed_text = await asyncio.to_thread(transcribe_audio, audio_bytes)
+                    await websocket.send_json({"type": "transcription", "text": transcribed_text})
+                    continue
                 transcribed_text, pre_context = await asyncio.gather(
                     asyncio.to_thread(transcribe_audio, audio_bytes),
                     _build_pre_context(simulator, memory),
