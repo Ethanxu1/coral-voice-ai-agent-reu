@@ -7,9 +7,10 @@ for why. Built with: `uv run pyinstaller packaging/backend.spec --clean --noconf
 so torch and friends are never on the import path for Analysis to find).
 
 Relies on `pyinstaller-hooks-contrib` (dev dependency group) for mediapipe/
-opencv/uvicorn hidden-import coverage. If a hidden-import or missing-data
-error surfaces at runtime that contrib hooks don't cover, add a custom hook
-under packaging/hooks/ and point hookspath at it below.
+opencv/uvicorn hidden-import coverage, plus a hand-written hook for `glfw`
+(packaging/hooks/hook-glfw.py — mujoco.viewer imports it, but its native
+lib is loaded via custom runtime logic contrib hooks don't cover). If
+another hidden-import or missing-data error surfaces, add a hook here too.
 """
 
 import glob
@@ -25,7 +26,10 @@ datas += [(f, "llm/prompts") for f in glob.glob(os.path.join(SRC, "llm", "prompt
 
 # Whole AiNex MuJoCo asset tree (xml + meshes/), bundled at a location the
 # sys.frozen branch in src/simulator/mujoco_sim.py knows to look for.
-datas += Tree(os.path.join(ROOT, "assets", "ainex"), prefix="assets/ainex")
+# NOTE: Tree() returns 3-tuples (dest, src, typecode), not the 2-tuples
+# (src, dest) Analysis(datas=...) expects — it must be added in COLLECT()
+# below instead, not merged into this list.
+ainex_tree = Tree(os.path.join(ROOT, "assets", "ainex"), prefix="assets/ainex")
 
 a = Analysis(
     [os.path.join(ROOT, "packaging", "backend_entry.py")],
@@ -33,7 +37,7 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[],
-    hookspath=[],
+    hookspath=[os.path.join(ROOT, "packaging", "hooks")],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
@@ -59,6 +63,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    ainex_tree,
     strip=False,
     upx=False,
     name="backend",

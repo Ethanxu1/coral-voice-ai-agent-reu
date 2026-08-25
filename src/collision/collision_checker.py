@@ -11,10 +11,10 @@ Uses mj_forward (kinematics + collision detection, no integration) so a
 20-step rollout costs well under a millisecond on AiNex.
 """
 
-from pathlib import Path
-
 import mujoco
 from loguru import logger
+
+import resource_path
 
 # Geom pairs whose contact is expected/harmless and must never count as a
 # self-collision. The feet's outer pads (l_foot2/r_foot2) touch in normal
@@ -33,10 +33,7 @@ class CollisionChecker:
         buffer_steps: int = 2,
     ):
         if model_path is None:
-            # collision_checker.py lives at src/coral_agent/collision/ — four
-            # levels up from the project root.
-            project_root = Path(__file__).parent.parent.parent
-            model_path = str(project_root / "assets" / "ainex" / "ainex.xml")
+            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)

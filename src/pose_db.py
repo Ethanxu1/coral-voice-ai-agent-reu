@@ -3,9 +3,10 @@
 import json
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 
-_DB_PATH = Path(__file__).parent.parent / "data" / "poses.db"
+import resource_path
+
+_DB_PATH = resource_path.user_data_dir() / "data" / "poses.db"
 
 
 def _connect() -> sqlite3.Connection:
