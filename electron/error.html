@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>CORAL — Startup problem</title>
+<link rel="stylesheet" href="onboarding/onboarding.css" />
+</head>
+<body>
+<main>
+  <h1>CORAL couldn't start</h1>
+  <p id="message">Something went wrong starting the backend.</p>
+  <p id="detail" style="font-family: monospace; font-size: 0.8rem; color: #6c6c74;"></p>
+  <button id="retry">Retry</button>
+  <button id="quit" style="background: #34343c; margin-top: 0.5rem;">Quit</button>
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  const failed = params.get("failed");
+  const reason = params.get("reason");
+  const exitCode = params.get("exitCode");
+
+  const messages = {
+    exited: `The ${failed} process exited before it was ready` + (exitCode ? ` (exit code ${exitCode})` : "") + ". This often means the port is already in use by another program, or the API key was rejected.",
+    timeout: `The ${failed} process didn't respond in time. It may still be starting up, or it's stuck.`,
+  };
+  document.getElementById("message").textContent = messages[reason] || "Something went wrong starting the backend.";
+  document.getElementById("detail").textContent = `component: ${failed || "unknown"}, reason: ${reason || "unknown"}`;
+
+  document.getElementById("retry").addEventListener("click", () => window.coral.retry());
+  document.getElementById("quit").addEventListener("click", () => window.coral.quit());
+</script>
+</body>
+</html>
