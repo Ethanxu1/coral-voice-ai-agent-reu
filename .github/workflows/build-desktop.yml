@@ -1,0 +1,63 @@
+name: Build desktop installer
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+          - os: macos-14 # arm64
+            target: --mac --arm64
+          - os: macos-13 # x64
+            target: --mac --x64
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install backend dependencies (base only, no extras)
+        run: uv sync
+
+      - name: Build backend binary
+        run: uv run pyinstaller packaging/backend.spec --clean --noconfirm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Electron dependencies
+        working-directory: electron
+        run: npm ci
+
+      - name: Package installer
+        working-directory: electron
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder ${{ matrix.target }} --publish=never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coral-desktop-${{ matrix.os }}
+          path: |
+            electron/dist/*.dmg
+            electron/dist/*.exe
+            electron/dist/*.AppImage
+          if-no-files-found: error

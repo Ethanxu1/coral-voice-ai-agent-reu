@@ -730,6 +730,11 @@ async def execute_manual_command(request: CommandRequest) -> CommandResponse:
     )
 
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/commands")
 async def list_commands() -> dict[str, list[str]]:
     """List all available commands."""

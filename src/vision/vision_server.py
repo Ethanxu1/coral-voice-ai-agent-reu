@@ -181,8 +181,11 @@ def _ensure_classifier() -> None:
         model_path = os.getenv("CLASSIFIER_PATH", _DEFAULT_CLASSIFIER_PATH)
         if not os.path.exists(model_path):
             raise HTTPException(status_code=503, detail=f"classifier model not found: {model_path}")
-        _device = pose_classifier.select_device()
-        _classifier, _classes = pose_classifier.load_classifier(model_path, _device)
+        try:
+            _device = pose_classifier.select_device()
+            _classifier, _classes = pose_classifier.load_classifier(model_path, _device)
+        except ImportError:
+            raise HTTPException(status_code=503, detail="pose classifier unavailable: torch is not installed")
         logger.info("Pose classifier loaded on %s — classes: %s", _device, _classes)
 
 

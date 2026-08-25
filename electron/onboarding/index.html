@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>CORAL Setup</title>
+<link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+<main>
+  <h1>Set up CORAL</h1>
+  <p>Enter your OpenAI API key to get started. It's stored only on this computer.</p>
+
+  <form id="setup-form">
+    <label for="openaiApiKey">OpenAI API key <span class="required">(required)</span></label>
+    <input id="openaiApiKey" type="password" autocomplete="off" required />
+
+    <details>
+      <summary>Advanced (optional)</summary>
+      <label for="langfuseSecretKey">Langfuse secret key</label>
+      <input id="langfuseSecretKey" type="password" autocomplete="off" />
+      <label for="langfusePublicKey">Langfuse public key</label>
+      <input id="langfusePublicKey" type="text" autocomplete="off" />
+      <label for="robotIp">Robot IP (hardware mode only)</label>
+      <input id="robotIp" type="text" placeholder="192.168.8.219" />
+    </details>
+
+    <p id="error" class="error" hidden></p>
+    <button type="submit" id="submit">Start CORAL</button>
+  </form>
+</main>
+<script src="onboarding.js"></script>
+</body>
+</html>
