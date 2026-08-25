@@ -20,10 +20,11 @@ promoted here so the live server can use it per-move.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import mujoco
 from loguru import logger
+
+import resource_path
 
 _HEAD_BODY_NAME = "head_tilt_link"
 
@@ -47,10 +48,7 @@ class StabilityChecker:
         fall_head_frac: float = _DEFAULT_FALL_HEAD_FRAC,
     ):
         if model_path is None:
-            # stability_checker.py lives at src/coral_agent/collision/ — four
-            # levels up from the project root.
-            project_root = Path(__file__).parent.parent.parent
-            model_path = str(project_root / "assets" / "ainex" / "ainex.xml")
+            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)

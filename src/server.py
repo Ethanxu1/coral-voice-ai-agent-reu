@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
 
+import resource_path
 from llm.config import LLM_MODEL
 from follow_controller import FollowController
 from llm.intent_classifier import classify_intent
@@ -67,8 +68,8 @@ from validation import (
 from pose_db import clear_all_poses, delete_pose, get_pose, list_pose_names, save_pose
 
 # Setup recordings directory
-RECORDINGS_DIR = Path(__file__).parent.parent / "recordings"
-RECORDINGS_DIR.mkdir(exist_ok=True)
+RECORDINGS_DIR = resource_path.user_data_dir() / "recordings"
+RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 PROMPTS_DIR = Path(__file__).parent / "llm" / "prompts"
 
 # Global simulator and dispatcher instances. In robot mode both dispatchers are
@@ -302,7 +303,7 @@ app.add_middleware(
 
 # Serve robot mesh assets (STL) so the browser viewer can load geometry.
 # Meshes resolve to /assets/ainex/meshes/<link>.STL (see /ws/sim + RobotViewer.tsx).
-ASSETS_DIR = Path(__file__).parent.parent / "assets"
+ASSETS_DIR = resource_path.repo_root() / "assets"
 app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
