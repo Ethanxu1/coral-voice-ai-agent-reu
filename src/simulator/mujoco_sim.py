@@ -1,5 +1,6 @@
 """MuJoCo simulator for AiNex humanoid robot."""
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -61,7 +62,12 @@ class AiNexSimulator:
 
     def __init__(self, model_path: str | None = None):
         if model_path is None:
-            project_root = Path(__file__).parent.parent.parent
+            if getattr(sys, "frozen", False):
+                # PyInstaller onedir bundle: assets/ ships as a bundle-relative
+                # datas entry, not three directories above this file.
+                project_root = Path(sys._MEIPASS)
+            else:
+                project_root = Path(__file__).parent.parent.parent
             model_path = str(project_root / "assets" / "ainex" / "ainex.xml")
 
         logger.info(f"Loading MuJoCo model from: {model_path}")

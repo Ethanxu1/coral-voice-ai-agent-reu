@@ -1,0 +1,15 @@
+{
+  "name": "coral-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop installer shell for the CORAL Voice AI Agent demo",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.0"
+  }
+}

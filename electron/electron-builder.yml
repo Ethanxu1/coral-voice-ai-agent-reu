@@ -1,0 +1,45 @@
+appId: com.coral-agent.desktop
+productName: CORAL
+directories:
+  output: dist
+  buildResources: icons
+
+files:
+  - main.js
+  - preload.js
+  - ports.js
+  - sidecars.js
+  - staticServer.js
+  - config-store.js
+  - onboarding/**/*
+  - error.html
+
+extraResources:
+  # PyInstaller onedir COLLECT output (packaging/backend.spec, name="backend").
+  - from: ../packaging/dist/backend
+    to: backend
+  # Built React/Vite frontend.
+  - from: ../frontend/dist
+    to: frontend
+
+# Icons: drop icons/icon.icns (mac), icons/icon.ico (win), icons/icon.png
+# (linux, 512x512+) in place — electron-builder picks them up automatically
+# from buildResources without further config. Until real branding exists,
+# omitting them falls back to Electron's default icon.
+mac:
+  category: public.app-category.education
+  target:
+    - dmg
+
+win:
+  target:
+    - nsis
+
+linux:
+  category: Education
+  target:
+    - AppImage
+
+# No code-signing configured yet — CI passes CSC_IDENTITY_AUTO_DISCOVERY=false.
+# Revisit once real Apple/Windows signing credentials are available (see
+# .agents/docs/features/desktop-packaging.md, "Known limitations").

@@ -31,6 +31,9 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...except our hand-written desktop-installer build spec, which is
+# checked in deliberately (see packaging/, .agents/docs/features/desktop-packaging.md).
+!packaging/backend.spec
 
 # Installer logs
 pip-log.txt
@@ -222,12 +225,20 @@ frontend/dist/
 frontend/.vite/
 frontend/tsconfig.tsbuildinfo
 
+# Desktop packaging (electron/dist, packaging/dist already covered by the
+# generic dist/ rule above)
+electron/node_modules/
+
 # Nix
 result
 result-*
 
 # Claude Code
 .claude/
+
+# .agents
+.agents/
+/AGENTS.md
 
 recordings/
 
