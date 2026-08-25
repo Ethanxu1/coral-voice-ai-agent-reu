@@ -1,9 +1,7 @@
 """MuJoCo simulator for AiNex humanoid robot."""
 
-import sys
 import threading
 import time
-from pathlib import Path
 from typing import Callable
 
 import mujoco
@@ -11,6 +9,7 @@ import mujoco.viewer
 import numpy as np
 from loguru import logger
 
+import resource_path
 from validation import JOINT_LIMITS
 
 
@@ -62,13 +61,7 @@ class AiNexSimulator:
 
     def __init__(self, model_path: str | None = None):
         if model_path is None:
-            if getattr(sys, "frozen", False):
-                # PyInstaller onedir bundle: assets/ ships as a bundle-relative
-                # datas entry, not three directories above this file.
-                project_root = Path(sys._MEIPASS)
-            else:
-                project_root = Path(__file__).parent.parent.parent
-            model_path = str(project_root / "assets" / "ainex" / "ainex.xml")
+            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
 
         logger.info(f"Loading MuJoCo model from: {model_path}")
         self.model = mujoco.MjModel.from_xml_path(model_path)
