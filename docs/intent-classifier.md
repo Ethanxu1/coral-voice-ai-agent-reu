@@ -52,16 +52,19 @@ These patterns are considered unambiguous and are returned at high confidence.
 
 | Pattern | Intent | Confidence |
 |---|---|---|
-| `follow me`, `mirror me`, `copy me`, `start following`, `follow my moves` | `follow_start` | 0.95 |
-| `stop following`, `stop mirroring`, `stop copying`, `don't follow me` | `follow_stop` | 0.95 |
-| `take a snapshot`, `take a picture`, `capture my pose`, `copy my pose`, `mimic my pose`, `snapshot`, `capture this`, `freeze`, `lock it in` | `capture` | 0.95 |
-| `my poses`, `show poses`, `saved poses`, `list poses`, `what poses do i have` | `library` | 0.90 |
-| `exit`, `quit`, `goodbye`, `bye`, `see you`, `i'm done`, `we're done` | `exit` | 0.90 |
-| `save this pose`, `save current position`, `save the current position`, `remember this pose`, `save it as is`, `save position` | `save_robot_pose` | 0.95 |
-| `name this pose X`, `call this X`, `save this as X`, `remember this as X` | `naming` (with `name`) | 0.90–0.95 |
+| `follow me`, `mirror me`, `copy me`, `mimic me`, `start following`, `follow my moves`, `follow my movement`, `mirror my moves`, `copy my movements`, `mimic my movements` | `follow_start` | 0.95 |
+| `stop following`, `stop mirroring`, `stop copying`, `don't follow me`, `stop mimicking`, `quit following` | `follow_stop` | 0.95 |
+| `take a snapshot`, `take a picture`, `capture my pose`, `copy my pose`, `mimic my pose`, `snapshot`, `capture this`, `freeze`, `lock it in`, `record my pose`, `picture of me`, `take a picture of me`, plus `"i want you to..."` / `"can you..."` wrappers around take a picture/capture my pose/record my pose/copy my pose | `capture` | 0.95 |
+| `my poses`, `show poses`, `saved poses`, `list poses`, `what poses do i have`, `pose library` | `library` | 0.90 |
+| `exit`, `quit`, `goodbye`, `bye`, `see you`, `i'm done`, `we're done`, `that's all`, `all done`, `done` | `exit` | 0.90 |
+| `save this pose`, `save current position`, `save the current position`, `remember this pose`, `save it as is`, `save position`, `remember this`, `keep this pose`, `save the current pose` | `save_robot_pose` | 0.95 |
+| `name this pose X`, `call this X` | `naming` (with `name`) | 0.95 |
+| `save this as X`, `remember this as X` | `naming` (with `name`) | 0.90 |
 | `undo`, `undo that`, `take it back`, `revert` | `undo` | 0.95 |
 | `go back`, `step back`, `previous` | `undo` | 0.90 |
 | `reset`, `start over`, `neutral`, `go to neutral`, `return to start` | `reset` | 0.95 |
+
+Note: the `exit` pattern matches the bare word `done` anywhere in the message, not just phrases like "i'm done" — e.g. "done" on its own also fires it.
 
 ## 2. Retry / rollback
 
@@ -74,7 +77,7 @@ This prevents a first utterance like "again" from being interpreted as a retry w
 
 ## 3. Corrections
 
-Regex matches `faster`, `slower`, `a little more`, `a bit more`, `more`, `higher`, `further`, `a little less`, `a bit less`, `less`, `lower`, `not that much`, `too much`.
+Regex matches `faster`, `speed up`, `quicker`, `slower`, `slow down`, `a little more`, `a bit more`, `more`, `higher`, `further`, `farther`, `a little less`, `a bit less`, `less`, `lower`, `not that much`, `not so much`, `too much`.
 
 - If assistant history exists → `motion` with confidence 0.85–0.90.
 - If no history exists → `conversation` at 0.80, LLM fallback.
@@ -89,19 +92,19 @@ Motion regexes capture body part, side, direction, and optional angle.
 | `head_tilt` | `look up` | "Tilt head up" |
 | `arm` | `raise your right arm forward` | "Raise right arm forward and up" |
 | `arm_out` | `move your left arm out to the side` | "Move left arm out to the side" |
-| `arm_lower` | `lower your right arm` | "Lower right arm" |
+| `arm_lower` | `put down your right arm` | "Lower right arm" |
 | `elbow_bend` | `bend your left elbow` | "Bend left elbow" |
 | `elbow_straighten` | `straighten your right elbow` | "Straighten right elbow" |
 | `elbow_rotate` | `rotate your left forearm in` | "Rotate left forearm in" |
 
+Note: `lower` is also a correction keyword (§3), and the corrections matcher runs before the motion matcher. So a phrase built around the bare word "lower" — e.g. `"lower your right arm"` — never reaches the `arm_lower` matcher: with no assistant history it's classified as `conversation`, and with history it's classified as a correction (`"Adjust last action: less (lower your right arm)"`), not `"Lower right arm"`. Only `put down`/`drop` phrasing reliably reaches `arm_lower`.
+
 ### Confidence penalties
 
-A match starts with a base confidence and is reduced for missing required information:
+A match starts with a base confidence of 0.90 and is reduced for missing required information:
 
-- Missing side on arm/elbow commands: −0.40
-- Missing side on arm/elbow when the bare pattern matched: additional −0.35
-- Missing direction on head turn/tilt: −0.35
-- Missing direction on elbow rotate: −0.35
+- Missing side on arm/elbow commands (`arm`, `arm_out`, `arm_lower`, `elbow_bend`, `elbow_straighten`, `elbow_rotate`): −0.40, plus an additional −0.35 applied afterward for the same missing side. In practice these two penalties always fire together (there's no code path that gives just one), so any arm/elbow command with an unspecified side lands around 0.15 confidence regardless of the pattern's base confidence — enough to trigger LLM fallback every time.
+- `head_turn`, `head_tilt`, and `elbow_rotate` patterns require their direction word (`left`/`right`, `up`/`down`, `in`/`out`) to match at all — the regex has no optional form. So a direction-less phrase like `"turn your head"` or `"rotate your forearm"` doesn't produce a low-confidence motion result; it simply doesn't match any motion pattern, and falls through to the conversation matcher or a full LLM classification instead.
 
 ### Examples
 
@@ -112,15 +115,15 @@ A match starts with a base confidence and is reduced for missing required inform
 | `raise your right arm` | 0.85 | Auto motion |
 | `raise your arm` | ~0.15 | LLM fallback |
 | `bend your elbow` | ~0.15 | LLM fallback |
-| `turn your head` | ~0.55 | LLM fallback |
+| `turn your head` | no match (direction required) | Falls through regex entirely; handled by the LLM from scratch |
 
 Explicit angles are captured and included in the description:
 
 - `"raise your right arm to 45 degrees"` → `"Raise right arm forward and up to 45 degrees"`
 
-Relative modifiers (`a little`, `a bit`, `a lot`, `more`, `less`, `slightly`) are also captured and appended when no explicit angle is present, for head turn, head tilt, and elbow bend:
+`_build_motion_description` has logic to append a relative modifier (`a little`, `a bit`, `a lot`, `more`, `less`, `slightly`) when no explicit angle is present, for head turn, head tilt, and elbow bend — but none of the compiled `_MOTION_PATTERNS` regexes actually capture a `rel` group, so this path is currently dead code. In practice trailing modifiers are dropped from the description:
 
-- `"turn your head left a little"` → `"Turn head left a little"`
+- `"turn your head left a little"` → `"Turn head left"` (not `"Turn head left a little"`)
 
 Two defaults worth knowing: a bare arm command with no direction assumes forward/up (because "raise" implies it), and `both` counts as a specified side, so `"raise both arms"` does not take the missing-side penalty.
 
@@ -128,11 +131,11 @@ Two defaults worth knowing: a bare arm command with no direction assumes forward
 
 Fires on greetings, questions, compliments, and meta phrases:
 
-- `hi`, `hello`, `hey`, `howdy`
-- `how are you`, `what can you do`, `who are you`, `what is your name`
-- `thanks`, `thank you`, `that's cool`, `nice`, `great`, `wow`, `ok`, `okay`
+- `hi`, `hello`, `hey`, `howdy`, `what's up` (must be at the start of the message)
+- `how are you`, `what can you do`, `who are you`, `what is your name`, `tell me about yourself`
+- `thanks`, `thank you`, `that's cool`, `that's awesome`, `nice`, `great`, `wow`, `ok`, `okay`
 - `what does that look like`, `describe your pose`, `what do you look like`
-- bare `yes`, `no`, `maybe`
+- bare `yes`, `no`, `maybe` (must be at the start of the message)
 
 Returns `conversation` at 0.85 confidence.
 
@@ -182,7 +185,7 @@ The intent classifier is the router: only finalized motion descriptions reach th
 
 | Classifier output | Frontend sends to `/ws` | Backend handler |
 |---|---|---|
-| `motion` | `{type: "chat", content: <raw>, intent_type: "motion", description: <clean description>}` | `process_chat_message` (motion planner) |
+| `motion` | `{type: "chat", content: <raw>, intent_type: "motion", description: <clean description>, sim_only: <bool>}` | `process_chat_message` (motion planner) |
 | `conversation` | `{type: "chat", content: <raw>, intent_type: "conversation"}` | `process_conversation_message` (chat LLM) |
 | `immediate` | `{type: "chat", content: <raw>, intent_type: "immediate"}` | `try_handle_system_intent` |
 | `clarification` | nothing — frontend asks the follow-up question and loops | — |
@@ -200,4 +203,4 @@ Tests live in `tests/test_intent_classifier.py`. Run them with:
 uv run pytest tests/test_intent_classifier.py -v
 ```
 
-The tests cover immediate intents, undo/reset, motion commands with and without ambiguity, conversation patterns, corrections with/without history, retry with/without history, and no-match fallback.
+The tests cover immediate intents, undo/reset, motion commands with and without ambiguity, conversation patterns, corrections with/without history, retry with/without history, no-match fallback, and that a regex response includes the `classifier`/`reason` metadata fields.

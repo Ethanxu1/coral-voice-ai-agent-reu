@@ -196,6 +196,8 @@ cd ~/ros_ws && catkin build ainex_demo && source devel/setup.bash
 
 ## 4. Running code in the container
 
+`pyrun` is presumed to be a convenience alias/function set up locally in the `ubuntu` user's shell inside the container — it is **not** defined anywhere in this repo (no `pyrun` script under `utils/` or elsewhere). If it isn't set up on your Pi, run the script directly instead, e.g. `python3 ~/ros_ws/src/demos/test.py` (source `~/ros_ws/devel/setup.bash` first if the script imports ROS packages), or use `rosrun ainex_demo <node>.py` for an actual ROS node under `ainex_demo/nodes/`.
+
 ```bash
 pyrun <path from ros_ws/src>
 ```
@@ -248,8 +250,8 @@ Change the port. The relevant variables are `ROBOT_AGENT_PORT` (Mac side, the po
 
 In order of likelihood:
 
-1. **Poor connection to corob-mobile** — this is the usual cause.
-2. **The Mac is in Low Power Mode.** Turn it off; it throttles enough to show up as. pipeline lag.
+1. **Poor connection to the coroblab wifi** — this is the usual cause.
+2. **The Mac is in Low Power Mode.** Turn it off; it throttles enough to show up as pipeline lag.
 
 ### Camera
 

@@ -33,10 +33,12 @@ The system prompt in `router.md` instructs the LLM to respond with structured JS
 
 ```json
 {
-  "verbal_response": "Sure, waving now!",
+  "action": "motion",
   "waypoints": [
-    { "primitives": ["right_arm_forward"], "angle": 90, "speed": 2.0 }
-  ]
+    { "primitives": ["right_arm_forward"], "angle": 90, "direction": null, "speed": 2.0 }
+  ],
+  "verbal_response": "Sure, waving now!",
+  "satisfied": null
 }
 ```
 
@@ -71,7 +73,7 @@ This runs on the shared path used by `/move`, `/set-pose`, and `/poses/play`, so
 Each joint's radian value becomes a Hiwonder servo unit (0–1000 scale, 1000 units = 240°):
 
 ```
-units = 500 + round(degrees(rad) × 1000/240)
+units = clamp(500 + round(degrees(rad) × 1000/240), 0, 1000)
 ```
 
 The `500` neutral offset is **sim-only**. Physical servos have per-joint neutrals and some run in the opposite direction from the MuJoCo model, so hardware mode converts through [`src/robot/hardware_angle_utils.py`](../src/robot/hardware_angle_utils.py) instead:
@@ -80,6 +82,8 @@ The `500` neutral offset is **sim-only**. Physical servos have per-joint neutral
 delta_rad = rad − HW_STAND_RAD[joint]
 hw_units  = STAND_PULSE[joint] + round(delta_rad × TICKS_PER_RAD × HW_DIRECTION[joint])
 ```
+
+The result is then clamped to that joint's measured-safe `HW_SERVO_LIMITS` range (not the generic 0–1000) — a tighter, per-servo bound than the sim-side clamp.
 
 `HW_STAND_RAD` must stay equal, joint for joint, to the `stand` keyframe in `assets/ainex/ainex.xml` — that equality is what makes the calibrated bent-knee stand render identically in sim and on hardware.
 
@@ -114,7 +118,7 @@ Which one is live depends on how the server was started — `uv run server` for 
 
 ```
 frontend  ──POST :8001/map-features?leg_mode=…──▶  vision server
-          ◀── { pose_detected, commands[], targets, body_landmarks, image_b64 }
+          ◀── { pose_detected, commands[], targets, leg_mode, body_landmarks, image_b64 }
 
 frontend  ──POST :8000/move────────────────────▶  main server
           ◀── { status, count, safety }
@@ -148,7 +152,7 @@ The frontend posts the returned commands to `/move`, which decodes them back to 
 
 `/map-features` **always** encodes with the uniform 500-centre sim map (`rad_to_servo_units`), regardless of sim or hardware mode, so `/move` must decode with the matching `servo_units_to_rad`. Conversion to hardware units happens later, inside `hardware_controller.py` (§6).
 
-Decoding with the per-joint hardware-calibrated inverse instead silently corrupts every joint whose `STAND_PULSE` isn't 500 — that is, every leg and arm joint except hip roll and hip yaw. A captured stand-pose knee at 0.925 rad round-tripped to roughly double that, a completely different bend, while the trivially-calibrated hip joints survived and made the bug look intermittent.
+Decoding with the per-joint hardware-calibrated inverse instead silently corrupts every joint whose `STAND_PULSE` isn't 500 *or* whose `HW_STAND_RAD` isn't 0 — that is, every leg and arm joint except hip roll and hip yaw. (The knees are the trap here: `STAND_PULSE["l_knee"]` and `STAND_PULSE["r_knee"]` **are** 500, same as sim neutral, but `HW_STAND_RAD` is ±0.925 rad for them, so they'd still be corrupted by the wrong inverse — `STAND_PULSE == 500` alone isn't a safe joint indicator.) A captured stand-pose knee at 0.925 rad round-tripped to roughly double that (~1.85 rad), a completely different bend, while the trivially-calibrated hip joints survived and made the bug look intermittent.
 
 ---
 
