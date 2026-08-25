@@ -14,6 +14,7 @@ import RobotViewer from './pages/RobotViewer'
 import SubjectSelect from './pages/SubjectSelect'
 import RobotModeToggle from './components/RobotModeToggle'
 import StreamSourceToggle from './components/StreamSourceToggle'
+import { useServerSettingsSync } from './hooks/useServerSettingsSync'
 
 interface JointStates {
   [key: string]: number
@@ -29,6 +30,11 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
   const pendingAudioUrlRef = useRef<string | null>(null)
+
+  // App renders on every route, so the browser-remembered server settings (fall
+  // check, angle overlay, MuJoCo window) reach the servers no matter where the
+  // user lands — including deep links straight into the refined demo.
+  useServerSettingsSync()
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return

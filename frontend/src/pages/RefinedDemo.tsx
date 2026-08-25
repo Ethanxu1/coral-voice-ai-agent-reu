@@ -20,6 +20,7 @@ export default function RefinedDemo() {
     injectText,
     approveIntent,
     rejectIntent,
+    toggleApprovals,
     goToLibrary,
     goToExit,
     startAgain,
@@ -76,6 +77,17 @@ export default function RefinedDemo() {
               My Poses{state.savedPoses.length > 0 ? ` · ${state.savedPoses.length}` : ''}
             </button>
           )}
+          <button
+            className={`rd-topbar-btn ${state.approvalsEnabled ? 'ghost' : 'muted active'}`}
+            onClick={toggleApprovals}
+            title={
+              state.approvalsEnabled
+                ? 'Turn intent approval pop-ups off (auto-approve)'
+                : 'Turn intent approval pop-ups on'
+            }
+          >
+            {state.approvalsEnabled ? 'Approvals: On' : 'Approvals: Off'}
+          </button>
           {isActive && (
             <button
               className={`rd-topbar-btn ${state.muted ? 'muted active' : 'ghost'}`}

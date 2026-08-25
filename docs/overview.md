@@ -47,13 +47,14 @@ React + TypeScript + Vite. Three.js (`@react-three/fiber`) renders the robot; th
 
 | Page | Purpose |
 |---|---|
+| `Welcome` | Landing screen — offers the tutorial or a skip straight to the demo |
 | `RefinedDemo` | The main child-facing demo — the one used for experiments |
 | `Tutorial` | Guided walkthrough |
 | `ProDemo`, `MoveMate` | Developer-facing / alternate demo surfaces |
-| `PoseTester`, `JointGizmo`, `RobotViewer` | Debug and inspection tools |
+| `PoseTester`, `JointGizmo`, `RobotViewer`, `PoseVisualization` | Debug and inspection tools |
 | `SubjectSelect` | Experiment session setup |
 
-Demo flow lives in `frontend/src/demo/useRefinedDemoMachine.ts` — an explicit state machine (`IDLE → LISTENING → COUNTDOWN → CAPTURED → FINETUNE → NAMING → …`). When reasoning about *why the demo did something*, this file is usually the answer; the backend is stateless with respect to demo progression.
+Demo flow lives in `frontend/src/demo/useRefinedDemoMachine.ts` — an explicit state machine (`IDLE → SUBJECT_SELECT → LISTENING → COUNTDOWN → CAPTURED → FINETUNE → NAMING → …`, with `FOLLOWING`, `LIBRARY`, `EXIT_CONFIRM`, and `ERROR` as additional stages). When reasoning about *why the demo did something*, this file is usually the answer; the backend is stateless with respect to demo progression.
 
 ### Main server — `src/server.py`, port 8000
 
@@ -104,7 +105,7 @@ This layer exists because neither source of poses is body-aware: retargeting map
 
 ### Speaker — `src/speaker/`, port 5002
 
-pyttsx3 text-to-speech. Scripted lines live in `scripts.py`, requested by identifier so spoken copy stays in one place rather than scattered through the UI.
+pyttsx3 text-to-speech, played back through `sounddevice`/`soundfile` rather than pyttsx3's own playback (which segfaults on some platforms). Scripted lines live in `scripts.py`, requested by identifier so spoken copy stays in one place rather than scattered through the UI. A `qwen-tts` dependency and a standalone harness under `tests/qwen3-tts-test/` exist for an in-progress evaluation of a neural TTS replacement, but `speaker_server.py` does not use it yet.
 
 ---
 
@@ -157,7 +158,7 @@ Both converge at the safety layer. That convergence is deliberate — it means t
 | Trace voice → motion in detail | [code-flow.md](code-flow.md) |
 | Understand intent routing | [intent-classifier.md](intent-classifier.md) |
 | Work with the physical robot | [hardware.md](hardware.md) |
-| Reproduce an experiment | [experiments/](experiments/) |
+| Reproduce an experiment | [scenarios/](scenarios/) |
 | Change what the robot says | `src/speaker/scripts.py`, `src/llm/prompts/` |
 | Change how poses map to joints | `src/vision/pose_to_robot.py` |
 | Change the demo's flow | `frontend/src/demo/useRefinedDemoMachine.ts` |

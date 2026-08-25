@@ -170,9 +170,9 @@ Note: "arm out" before "arm up" requires returning to neutral on `right_arm_forw
 
 ## What this exercises in the pipeline
 
-- `src/coral_agent/prompts/router.md` — the parallel-track rule, the disambiguation rule, and the speed conventions.
-- `src/coral_agent/server.py` `process_chat_message()` — concurrency model. Today this is strictly serial; the pattern motivates an `abort()` hook on `RobotController`.
-- `src/coral_agent/robot/sim_controller.py` and `hardware_controller.py` — both need a cancellation path if turn-3-style interrupts are to be handled in real time.
+- `src/llm/prompts/router.md` — the parallel-track rule, the disambiguation rule, and the speed conventions.
+- `src/server.py` `process_chat_message()` — concurrency model. Today this is strictly serial; the pattern motivates an `abort()` hook on `RobotController`.
+- `src/robot/sim_controller.py` and `hardware_controller.py` — both need a cancellation path if turn-3-style interrupts are to be handled in real time.
 
 ## Open question
 

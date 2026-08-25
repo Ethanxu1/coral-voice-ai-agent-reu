@@ -20,6 +20,7 @@ import {
   startSubjectSelection,
   stopSubjectSelection,
   subscribeSubjectSelection,
+  type MoveSafety,
   type ServoCommand,
   type SubjectSelectionState,
 } from './api'
@@ -63,6 +64,9 @@ export interface RefinedState {
   error: string | null
   pendingIntent: string | null
   muted: boolean
+  // When false, intent approval pop-ups are skipped and every classified
+  // intent is auto-approved. Useful for demos where the modal interrupts flow.
+  approvalsEnabled: boolean
   // Index of the saved pose currently being performed on the end-session
   // replay screen, or null when not replaying.
   replayIdx: number | null
@@ -90,6 +94,7 @@ const INIT: RefinedState = {
   error: null,
   pendingIntent: null,
   muted: false,
+  approvalsEnabled: false,
   replayIdx: null,
   safetyChecking: false,
   selectionState: 'idle',
@@ -102,6 +107,10 @@ function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
 }
 
 const CANCELLED = Symbol('cancelled')
+
+// Exit-replay pacing: each saved pose is played over this long, then the loop
+// waits the same again before the next one so the moves never overlap.
+const REPLAY_POSE_MS = 1000
 
 function agentMsg(text: string, chips?: string[]): RefinedChatMsg {
   return { role: 'agent', text, chips }
@@ -143,6 +152,9 @@ export function useRefinedDemoMachine() {
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
+  // Mirrors state.approvalsEnabled so the async run() loop reads the current
+  // setting rather than the value captured when the run started.
+  const approvalsEnabledRef = useRef(false)
   // Object URLs for recorded user utterances; revoked on stop/unmount to avoid leaks.
   const audioUrlsRef = useRef<string[]>([])
   // Mute state is mirrored in a ref so the async capture loop can read it
@@ -225,6 +237,22 @@ export function useRefinedDemoMachine() {
     resolve?.(false)
   }, [])
 
+  // Turn the intent approval pop-ups on/off. Switching them off while a modal
+  // is already up auto-approves that pending intent so the loop isn't left
+  // blocked on a resolver no one can reach anymore.
+  const toggleApprovals = useCallback(() => {
+    const next = !approvalsEnabledRef.current
+    approvalsEnabledRef.current = next
+    if (!next) {
+      const resolve = approvalResolverRef.current
+      approvalResolverRef.current = null
+      dispatch({ approvalsEnabled: next, pendingIntent: null })
+      resolve?.(true)
+    } else {
+      dispatch({ approvalsEnabled: next })
+    }
+  }, [])
+
   const toggleMute = useCallback(() => {
     const next = !state.muted
     mutedRef.current = next
@@ -279,12 +307,16 @@ export function useRefinedDemoMachine() {
       try {
         // Transition straight from the current sim pose into the next move —
         // no reset to stand in between.
-        await playPose(names[i], 1200)
+        await playPose(names[i], REPLAY_POSE_MS)
       } catch {
         // A pose that fails to play (e.g. deleted) shouldn't stall the show.
       }
       if (!alive()) return
-      await sleep(2400) // hold the pose so it's clearly visible
+      // The sim dispatch blocks for the full duration, but the hardware POST
+      // returns as soon as the robot server accepts it — the servos are still
+      // travelling. Waiting the pose duration again keeps consecutive poses from
+      // overlapping on hardware, and holds the pose long enough to be seen.
+      await sleep(REPLAY_POSE_MS)
     }
 
     if (!alive()) return
@@ -435,11 +467,33 @@ export function useRefinedDemoMachine() {
       })
     }
 
-    const awaitApproval = (description: string): Promise<boolean> =>
-      new Promise<boolean>((resolve) => {
+    const awaitApproval = (description: string): Promise<boolean> => {
+      // Pop-ups toggled off: auto-approve without ever showing the modal.
+      if (!approvalsEnabledRef.current) return Promise.resolve(true)
+      return new Promise<boolean>((resolve) => {
         approvalResolverRef.current = resolve
         dispatch({ pendingIntent: description })
       })
+    }
+
+    // Report a fine-tuning adjustment's safety verdict into the chat. The
+    // adjustment moves run server-side through the motion planner (not our own
+    // /move call), so the checks that ran there come back on the chat response
+    // — without this the child sees a clamped or blocked tweak silently do
+    // nothing, while a captured pose explains itself. `null` means the turn
+    // executed no motion (pure conversation), so there's nothing to report.
+    const reportMotionSafety = (safety: MoveSafety | null | undefined): void => {
+      if (!safety) return
+      if (safety.fallBlocked) {
+        addMsg(sysMsg("Safety check: that tweak would tip me over, so I stayed put."))
+      } else if (safety.collisionClamped) {
+        addMsg(sysMsg(
+          `Safety check: pulled the move back to ${Math.round(safety.safeFraction * 100)}% to avoid a collision.`,
+        ))
+      } else {
+        addMsg(sysMsg('Safety check passed!'))
+      }
+    }
 
     // Execute a captured pose's servo commands behind the backend safety
     // checks (kinematic collision clamp + dynamics fall check), holding a
@@ -805,6 +859,7 @@ export function useRefinedDemoMachine() {
                   dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
                   const fr = await session.sendText(ft, 'motion', ftResult.description)
                   active()
+                  reportMotionSafety(fr.safety)
                   addMsg(agentMsg(fr.content || ''))
                   if (fr.satisfied === true) satisfied = true
                 } else {
@@ -975,6 +1030,7 @@ export function useRefinedDemoMachine() {
               dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
               const fr = await session.sendText(ft, 'motion', ftResult.description)
               active()
+              reportMotionSafety(fr.safety)
               addMsg(agentMsg(fr.content || ''))
               if (fr.satisfied === true) satisfied = true
             } else {
@@ -1092,6 +1148,7 @@ export function useRefinedDemoMachine() {
     injectText,
     approveIntent,
     rejectIntent,
+    toggleApprovals,
     goToLibrary,
     goToExit,
     startAgain,

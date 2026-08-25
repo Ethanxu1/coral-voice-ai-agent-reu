@@ -22,7 +22,7 @@ Each file is a self-contained scenario with:
 
 1. **Pattern description** — what speech behavior is being tested and why it's expected from this user population.
 2. **Sample utterances** — actual transcripts as Whisper would produce them, including false starts and run-on phrasing.
-3. **Expected router output** — JSON conforming to `src/coral_agent/prompts/router.md`.
+3. **Expected router output** — JSON conforming to `src/llm/prompts/router.md`.
 4. **Pass criteria** — what the agent needs to do to handle the pattern correctly.
 5. **Known failure modes** — how today's pipeline is likely to mishandle it, so regressions are easy to spot.
 

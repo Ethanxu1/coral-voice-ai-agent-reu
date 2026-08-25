@@ -4,6 +4,8 @@ Working notes for the physical AiNex robot: how to reach it, how to get code ont
 
 For first-time setup and the normal run procedure, see the [README](../README.md) — this document covers everything around it rather than repeating it.
 
+The manufacturer's documentation for the AiNex lives in [this Google Drive folder](https://drive.google.com/drive/folders/1kyhah0bdW4d8omzYjot0Kq2f50l5GYcB).
+
 ---
 
 ## 1. The mental model
@@ -194,6 +196,8 @@ cd ~/ros_ws && catkin build ainex_demo && source devel/setup.bash
 
 ## 4. Running code in the container
 
+`pyrun` is presumed to be a convenience alias/function set up locally in the `ubuntu` user's shell inside the container — it is **not** defined anywhere in this repo (no `pyrun` script under `utils/` or elsewhere). If it isn't set up on your Pi, run the script directly instead, e.g. `python3 ~/ros_ws/src/demos/test.py` (source `~/ros_ws/devel/setup.bash` first if the script imports ROS packages), or use `rosrun ainex_demo <node>.py` for an actual ROS node under `ainex_demo/nodes/`.
+
 ```bash
 pyrun <path from ros_ws/src>
 ```
@@ -204,7 +208,21 @@ For example:
 pyrun demos/test.py
 ```
 
-For the full demo launch, see the README's Pi run section.
+For the full demo launch, source the workspace and start the launch file:
+
+```bash
+cd ~/ros_ws && source devel/setup.bash
+roslaunch ainex_demo ainex_demo.launch
+```
+
+This brings up `robot_server` along with the rest of the demo nodes. Confirm it is
+up from the Mac:
+
+```bash
+curl http://192.168.8.219:9000/health
+```
+
+See also the README's Pi run section.
 
 ---
 
@@ -232,18 +250,57 @@ Change the port. The relevant variables are `ROBOT_AGENT_PORT` (Mac side, the po
 
 In order of likelihood:
 
-1. **Poor connection to corob-mobile** — this is the usual cause.
-2. **The Mac is in Low Power Mode.** Turn it off; it throttles enough to show up as. pipeline lag.
+1. **Poor connection to the coroblab wifi** — this is the usual cause.
+2. **The Mac is in Low Power Mode.** Turn it off; it throttles enough to show up as pipeline lag.
 
 ### Camera
 
 - **Blurry image** — the lens is manually focusable. Adjust it by hand.
 - **No image at all when live streaming** — unplug the camera, plug it back in, then try a different USB port.
 
+### A joint moves less on the robot than in the sim
+
+**Servo 20 — the right elbow bend — is mechanically damaged.** It cannot travel its
+full range, so it is capped in software: `HW_SERVO_LIMITS` in
+`src/robot/hardware_angle_utils.py` gives `r_el_yaw` a range of `(450, 850)` where
+an undamaged servo would get the full `0–1000`. Note that the physical elbow *bend*
+is `*_el_yaw` (servos 19/20), not `*_el_pitch` — the YAML joint names are
+misleading, and `*_el_pitch` (17/18) is forearm rotation.
+
+The symptom is one-sided: **the pose looks correct in the simulator and correct
+after adjustments, and only the physical robot comes up short.** That is expected
+given how the two targets are clamped:
+
+- `rad_to_hardware_units` clamps every target to `HW_SERVO_LIMITS` **silently** —
+  no warning is logged when a command is cut back, so nothing in the logs
+  distinguishes "reached" from "clamped".
+- The simulator has no equivalent cap. Every joint in `assets/ainex/ainex.xml`
+  inherits the same default `range="-2.09 2.09"` (±120°), so MuJoCo happily shows
+  motion the servos will never reproduce.
+
+Two things make the elbows the most visible case. Their stand pose sits *exactly on*
+a range bound (`l_el_yaw` stands at pulse 150, the floor; `r_el_yaw` at 850, the
+ceiling), so from stand the hardware elbow has travel in one direction only and tops
+out around 90° of bend. And the left/right forearm ranges are not mirrored —
+`l_el_pitch` gets `(440, 653)` but `r_el_pitch` only `(320, 560)` — so a pose that is
+symmetric in the sim can land a few degrees apart on the two arms.
+
+Before chasing this as a software bug, move the joint by hand and confirm the servo
+itself reaches the angle. If a range in `HW_SERVO_LIMITS` turns out to be wrong,
+edit it there and nowhere else: `src/validation.py` derives the sim-radian
+`JOINT_LIMITS` from that table, so the two stay in lockstep. Every range must still
+contain its joint's `STAND_PULSE`, or the stand pose becomes unreachable.
+
+One inconsistency to be aware of: the comments on `r_el_yaw` say "never command
+below 360" while the range floor is actually set to 450. The code is the stricter of
+the two, so it is safe, but the true mechanical floor has not been re-measured.
+
 ---
 
 ## 6. Conventions and gotchas
 
 **Left and right are the robot's.** Throughout the code, "left" and "right" refer to the robot's own left and right, not the perspective of a person facing it. The retargeting mirrors accordingly: a person's right arm drives the robot's left arm.
+
+**Keep the battery above 10V.** A full charge takes roughly one hour. To maintain the robot's optimal performance, charge it promptly once the voltage drops to **≤10V**
 
 **The Pi hostname and IP are hard-coded as defaults** in `src/robot/hardware_controller.py` and the README. If the robot's address changes, override `ROBOT_IP` rather than editing the default.

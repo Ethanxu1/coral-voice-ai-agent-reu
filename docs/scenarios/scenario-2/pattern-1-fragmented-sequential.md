@@ -132,6 +132,6 @@ Compound utterance: "okay stop" is acknowledgement filler, "a tiny bit back up" 
 
 ## What this exercises in the pipeline
 
-- `src/coral_agent/prompts/router.md` — the "Relative angle adjustments" branch and the joint→primitive mapping table.
-- `src/coral_agent/server.py` → `HierarchicalMemory` — short-term retention and mid-term summary fidelity.
-- `src/coral_agent/state.py` — running joint state passed in as `CURRENT_STATE`.
+- `src/llm/prompts/router.md` — the "Relative angle adjustments" branch and the joint→primitive mapping table.
+- `src/server.py` → `HierarchicalMemory` — short-term retention and mid-term summary fidelity.
+- `src/state.py` — running joint state passed in as `CURRENT_STATE`.
