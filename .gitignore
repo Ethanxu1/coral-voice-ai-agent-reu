@@ -248,3 +248,4 @@ training/
 /vision-bundle
 /vision-bundle.zip
 /data
+/.env.robot.local
