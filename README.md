@@ -74,20 +74,13 @@ servers, so a missing one looks like the demo hanging rather than a clean
 error.
 
 ```bash
-# Terminal 1 — voice + LLM server + MuJoCo simulator          (:8000)
-uv run server                          # simulation mode
-# or
-ROBOT_IP={robot ip addr} && uv run robot    # physical robot mode (no MuJoCo)
-
-# Terminal 2 — vision server: webcam → body pose              (:8001)
-uv run vision
-
-# Terminal 3 — speaker server: text-to-speech for the demo    (:5002)
-uv run speaker
-
-# Terminal 4 — frontend                                       (:5173)
-cd frontend && npm run dev
 ```
+# run code without physical robot
+./run.sh
+# run with robot
+./run.sh -live -ip {robot ip}
+# if you want to start the speaker
+./run.sh -speaker
 
 Open <http://localhost:5173> and click **✨ Start Demo Here**.
 
