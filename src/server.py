@@ -271,8 +271,16 @@ async def lifespan(app: FastAPI):
 
     follow_controller = FollowController(dispatch_servo_commands)
 
-    langfuse_client = Langfuse()
-    logger.info("Langfuse tracing initialized")
+    langfuse_keys_present = bool(os.getenv("LANGFUSE_PUBLIC_KEY")) and bool(
+        os.getenv("LANGFUSE_SECRET_KEY")
+    )
+    langfuse_client = Langfuse(tracing_enabled=langfuse_keys_present)
+    if langfuse_keys_present:
+        logger.info("Langfuse tracing initialized")
+    else:
+        logger.info(
+            "LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY not set — Langfuse tracing disabled"
+        )
 
     logger.info("Pre-loading Whisper STT model...")
     _get_whisper_model()
