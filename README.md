@@ -65,50 +65,6 @@ docker exec -it ainex bash
 su - ubuntu
 ```
 
-Copy the ROS package into the catkin workspace:
-
-```bash
-cp -r /path/to/repo/src/robot/pi/ ~/ros_ws/src/ainex_demo/
-chmod +x ~/ros_ws/src/ainex_demo/nodes/*.py
-```
-
-Build the package:
-
-```bash
-cd ~/ros_ws
-catkin build ainex_demo
-source devel/setup.bash
-```
-
-Nothing else to do here for the pose classifier — it doesn't run on the Pi. The
-MobileNetV3 checkpoint ships pretrained in this repo at
-`src/vision/models/pose_classifier.pt` and is loaded automatically by the Mac's
-vision server (`CLASSIFIER_PATH` below overrides the path). Running inference
-needs torch + torchvision on the Mac (`uv sync --extra robot`); without it the
-vision server still runs, but `/classify` errors until you install that extra.
-
-### (Optional) SMPL shape calibration weights
-
-Enables per-user body-shape calibration during pose capture, normalizing arm/leg segment lengths so the same pose maps to the same joint angles across adults and children.
-
-1. Register at <https://smpl.is.tue.mpg.de/> (academic use only).
-2. Download the *SMPL_python_v.1.1.0* archive. The neutral weight file is `models/basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl`.
-3. Convert the legacy pickle to `.npz` (one-time, ~1 s):
-
-   ```bash
-   uv run python scripts/convert_smpl_pkl_to_npz.py \
-     path/to/basicmodel_neutral_lbs_10_207_0_v1.1.0.pkl \
-     assets/smpl/SMPL_NEUTRAL.npz
-   ```
-
-4. Install the optional torch/smplx stack:
-
-   ```bash
-   uv sync --extra smpl
-   ```
-
-If you skip this step the capture flow still works — shape calibration is silently disabled and a log message points you back here.
-
 ## Running
 
 ### Laptop (four terminals)
@@ -121,7 +77,7 @@ error.
 # Terminal 1 — voice + LLM server + MuJoCo simulator          (:8000)
 uv run server                          # simulation mode
 # or
-ROBOT_IP=192.168.8.219 uv run robot    # physical robot mode (no MuJoCo)
+ROBOT_IP={robot ip addr} && uv run robot    # physical robot mode (no MuJoCo)
 
 # Terminal 2 — vision server: webcam → body pose              (:8001)
 uv run vision
@@ -150,8 +106,8 @@ uv run sim-test dab wave     # only these
 ssh pi@raspberrypi.local
 docker exec -it ainex bash
 su - ubuntu
-cd ~/ros_ws && source devel/setup.bash
-roslaunch ainex_demo ainex_demo.launch
+cd ~/ros_ws/src
+pyrun vision/robot_agent.py
 ```
 
 Verify the Pi's server node (`nodes/server.py`) is up:
@@ -159,20 +115,6 @@ Verify the Pi's server node (`nodes/server.py`) is up:
 ```bash
 curl http://192.168.8.219:9000/health
 ```
-
-### Syncing files to Pi
-
-[`utils/dump.sh`](utils/dump.sh) pushes a file from Mac → Pi → Docker container in one command. Install it on your `PATH` first (see [hardware.md](docs/hardware.md) for the one-time setup, including editing its hard-coded `REPO_ROOT`):
-
-```bash
-dump src/robot/pi/nodes/server.py
-# then when prompted: Write to: /home/ubuntu/ros_ws/src/____
-#   type: ainex_demo/nodes
-```
-
-Full behavior (path flattening, `sshpass` requirement, troubleshooting) is in [hardware.md](docs/hardware.md).
-
-Files in `nodes/` take effect immediately (no rebuild). Changes to `CMakeLists.txt`, `package.xml`, or `srv/` require `catkin build ainex_demo`.
 
 ## Environment Variables
 

@@ -8,8 +8,7 @@
 
 # ── Robot network ────────────────────────────────────────────────────────────
 # IP address of the physical AiNex robot on your network.
-# Default (robot AP mode / direct ethernet): 192.168.8.219
-ROBOT_IP=192.168.8.219
+ROBOT_IP=
 
 # HTTP port the robot_agent.py server listens on.
 ROBOT_AGENT_PORT=9000
