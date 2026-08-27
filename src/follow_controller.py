@@ -43,7 +43,7 @@ _FOLLOW_SEED_DURATION_MS = 800
 _CAPTURE_DURATION_MS = 1500
 _CAPTURE_TIMEOUT_S = 20.0
 
-DispatchFn = Callable[[list[ServoCommand]], Awaitable[None]]
+DispatchFn = Callable[[list[ServoCommand], bool | None], Awaitable[None]]
 StatusFn = Callable[[dict], Awaitable[None]]
 
 
@@ -61,7 +61,7 @@ class FollowController:
     def is_capturing(self) -> bool:
         return self._capture_task is not None and not self._capture_task.done()
 
-    async def start_follow(self, status_fn: StatusFn) -> None:
+    async def start_follow(self, status_fn: StatusFn, sim_only: bool | None = None) -> None:
         if self.is_following:
             return
         # Reset any frozen stability capture so the vision stream goes live again.
@@ -71,7 +71,7 @@ class FollowController:
                 await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
         except Exception as e:
             logger.debug("Vision continue on follow-start failed: %s", e)
-        self._task = asyncio.create_task(self._follow_loop(status_fn))
+        self._task = asyncio.create_task(self._follow_loop(status_fn, sim_only))
 
     async def stop_follow(self, status_fn: Optional[StatusFn] = None) -> None:
         task = self._task
@@ -85,7 +85,7 @@ class FollowController:
         if status_fn is not None:
             await status_fn({"type": "follow_status", "active": False})
 
-    async def _follow_loop(self, status_fn: StatusFn) -> None:
+    async def _follow_loop(self, status_fn: StatusFn, sim_only: bool | None = None) -> None:
         """Split into reader + dispatcher so stale frames can't queue up.
 
         Sequence:
@@ -155,7 +155,7 @@ class FollowController:
                         targets = smoother.smooth(targets)
                         seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
                         logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
-                        await self._dispatch(seed_cmds)
+                        await self._dispatch(seed_cmds, sim_only)
                         seeded = True
                     logger.info("Follow: initial seed complete, entering live tracking")
 
@@ -177,7 +177,7 @@ class FollowController:
                                 skip_count += 1
                             else:
                                 commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
-                                in_flight = asyncio.create_task(self._dispatch(commands))
+                                in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
                                 in_flight.add_done_callback(_log_dispatch_error)
                                 dispatch_count += 1
 
@@ -201,12 +201,14 @@ class FollowController:
             logger.warning("Follow loop error: %s", exc)
             await status_fn({"type": "follow_status", "active": False, "error": str(exc)})
 
-    async def trigger_capture_and_mimic(self, status_fn: StatusFn) -> None:
+    async def trigger_capture_and_mimic(
+        self, status_fn: StatusFn, sim_only: bool | None = None
+    ) -> None:
         if self.is_capturing:
             return
-        self._capture_task = asyncio.create_task(self._capture_flow(status_fn))
+        self._capture_task = asyncio.create_task(self._capture_flow(status_fn, sim_only))
 
-    async def _capture_flow(self, status_fn: StatusFn) -> None:
+    async def _capture_flow(self, status_fn: StatusFn, sim_only: bool | None = None) -> None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as http:
                 resp = await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/start")
@@ -262,7 +264,7 @@ class FollowController:
                 except Exception as e:
                     logger.debug("Vision continue post failed: %s", e)
 
-            await self._dispatch(commands)
+            await self._dispatch(commands, sim_only)
             await status_fn({"type": "capture_status", "stage": "done"})
 
         except asyncio.TimeoutError:

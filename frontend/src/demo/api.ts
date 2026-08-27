@@ -8,6 +8,7 @@
 import { ACTION_WS, SPEAKER_BASE } from './config'
 import { getFeaturesBase, getPiBase, getRobotBase, getRobotConfig, getSimBase } from './robotConfig'
 import type { LegMode } from './robotConfig'
+import { beginHardwareDispatch } from './hardwareDispatchStatus'
 
 /** One servo target: Hiwonder id + pulse (0–1000) + move time. */
 export interface ServoCommand {
@@ -710,7 +711,11 @@ export function openActionSession(sessionId?: string): ActionSession {
       const payload: Record<string, unknown> = { type: 'chat', content: text }
       if (intentType) payload.intent_type = intentType
       if (description) payload.description = description
-      if (intentType === 'motion') payload.sim_only = getRobotConfig().simOnly
+      // 'immediate' covers follow_start/capture, which dispatch to the robot
+      // just like a motion-planner move — must follow the same sim/hardware
+      // toggle so they don't hit hardware just because the toggle wasn't
+      // flipped for this particular utterance.
+      if (intentType === 'motion' || intentType === 'immediate') payload.sim_only = getRobotConfig().simOnly
       return send(payload, timeoutMs, text)
     },
     close() {
@@ -825,27 +830,34 @@ export async function listPoses(): Promise<string[]> {
 }
 
 export async function saveCurrentPose(name: string): Promise<void> {
-  await fetch('http://localhost:8000/poses/save-current', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  })
+  const endDispatch = beginHardwareDispatch()
+  try {
+    await fetch('http://localhost:8000/poses/save-current', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+  } finally {
+    endDispatch()
+  }
 }
 
 // Strike a saved pose directly by name (no LLM). Used by the end-session replay.
-// sim_only follows the sim/hardware toggle, same as /move, so the replay drives
-// the physical robot whenever the rest of the demo does.
+// sim_only is intentionally omitted — demonstrating a saved pose always reaches
+// hardware once connected (server default), independent of the sim/hardware
+// toggle that gates pose *composition*. See the 2026-08-27 fix.
 export async function playPose(name: string, durationMs = 1000): Promise<void> {
-  const res = await fetch('http://localhost:8000/poses/play', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      duration_ms: durationMs,
-      sim_only: getRobotConfig().simOnly,
-    }),
-  })
-  if (!res.ok) throw new Error(`play pose failed: ${res.status}`)
+  const endDispatch = beginHardwareDispatch()
+  try {
+    const res = await fetch('http://localhost:8000/poses/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, duration_ms: durationMs }),
+    })
+    if (!res.ok) throw new Error(`play pose failed: ${res.status}`)
+  } finally {
+    endDispatch()
+  }
 }
 
 // Short camera-shutter blip via WebAudio (no asset needed).
