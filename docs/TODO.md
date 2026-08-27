@@ -11,3 +11,7 @@ Current goals
   - defining different dimensions that the children can modify like tone, and stuff to work with the physical aspect
 
 Add chat feedback so robot can talk back.
+
+
+Bugs to fix
+1. I think there is an error with saving poses, it's not saving the final position of the robot at the time that I tell it to save, which means whatever the simulator is in. And also, I think that everything should only be performed in the simulator until the user has saved the pose, or the user wants to demonstrate and tell the robot to perform a pose before it reflects on the physical robot.

@@ -83,11 +83,28 @@ robot_mode: str = "sim"
 follow_controller: FollowController | None = None
 collision_checker: CollisionChecker | None = None
 stability_checker: StabilityChecker | None = None
+# Poses are always composed live in the simulator (every dispatch reaches
+# sim_dispatcher); the physical robot only gets a move when a caller opts in
+# (sim_only=False). This tracks whether hardware's joints currently match what
+# was last dispatched, so "current pose" reads don't report stale hardware
+# state for a pose that was actually only ever built in sim — see the
+# 2026-08-27 pose-save fix.
+hardware_in_sync: bool = False
 
 
 def _get_robot_state() -> dict[str, float]:
-    """Return current joint states — hardware in robot mode, simulator otherwise."""
-    if robot_mode in ("robot", "hardware") and hardware_dispatcher is not None:
+    """Return current joint states.
+
+    Hardware is only trusted when it's known to match the last dispatched
+    move (``hardware_in_sync``) — otherwise a pose composed sim_only would
+    report the physical robot's stale, unrelated position instead of what was
+    actually built.
+    """
+    if (
+        robot_mode in ("robot", "hardware")
+        and hardware_dispatcher is not None
+        and hardware_in_sync
+    ):
         try:
             return hardware_dispatcher.get_joint_states()
         except Exception as e:
@@ -171,6 +188,7 @@ async def handle_save_dialog(
             return True
         joints = dialog.pending_joints or {}
         save_pose(name, joints)
+        await _execute_on_hardware_if_connected(joints)
         dialog.stage = _SaveStage.IDLE
         dialog.pending_joints = None
         await websocket.send_json({
@@ -188,6 +206,7 @@ async def handle_save_dialog(
 def _sync_sim_to_hardware() -> None:
     """Copy the physical robot's current joint positions into the simulator
     so the viewer starts mirroring the real robot's pose."""
+    global hardware_in_sync
     if simulator is None or hardware_dispatcher is None:
         return
     try:
@@ -200,6 +219,7 @@ def _sync_sim_to_hardware() -> None:
         if joint in simulator.JOINT_NAMES:
             simulator.set_joint_position(joint, rad)
             synced += 1
+    hardware_in_sync = True
     logger.info(f"Synced simulator to {synced} physical joint positions")
 
 
@@ -539,6 +559,7 @@ async def dispatch_servo_commands(
     ``sim_only`` is set by an approved frontend motion request. ``None`` keeps
     the existing server-mode behavior for background flows such as following.
     """
+    global hardware_dispatcher, hardware_in_sync
     if not commands:
         return
     dispatches: list[Awaitable[Any]] = []
@@ -548,16 +569,52 @@ async def dispatch_servo_commands(
         sim_only is None and robot_mode in ("robot", "hardware")
     )
     if send_to_hardware:
-        global hardware_dispatcher
         if hardware_dispatcher is None:
             hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
         dispatches.append(asyncio.to_thread(hardware_dispatcher.send_commands, commands))
     if dispatches:
         results = await asyncio.gather(*dispatches, return_exceptions=True)
+        # Hardware is only in sync with what was just built if this dispatch
+        # actually reached it without error — a sim_only move (or a failed
+        # hardware send) leaves hardware's joints stale relative to the sim.
+        hardware_in_sync = send_to_hardware and not isinstance(results[-1], Exception)
         if send_to_hardware and isinstance(results[-1], Exception):
             raise RobotServerUnavailable("robot server could not be reached") from results[-1]
         if isinstance(results[0], Exception):
             raise results[0]
+    else:
+        hardware_in_sync = send_to_hardware
+
+
+async def _execute_on_hardware_if_connected(
+    joints: dict[str, float], duration_ms: int = 1000
+) -> None:
+    """Physically strike ``joints`` on the robot when the backend is actually
+    connected to hardware — used right after a pose is saved, so "saving"
+    doubles as "showing the child what was saved". Deliberately ignores
+    ``sim_only``/the frontend toggle (passes ``sim_only=None``): saving and
+    demonstrating are the two actions that are always allowed to reach
+    hardware once connected — see the 2026-08-27 fix. No-ops in sim mode,
+    and a hardware-server hiccup is logged rather than raised, since this is
+    a nicety on top of an already-completed save, not something that should
+    fail the save itself.
+    """
+    if robot_mode not in ("robot", "hardware") or simulator is None:
+        return
+    safe_joints, _safety = collision_checked_targets(simulator, joints, "pose save/demonstrate")
+    commands = [
+        ServoCommand(
+            servo_id=SERVO_ID_MAP[joint],
+            position=rad_to_servo_units(rad),
+            duration_ms=duration_ms,
+        )
+        for joint, rad in safe_joints.items()
+        if joint in SERVO_ID_MAP
+    ]
+    try:
+        await dispatch_servo_commands(commands, sim_only=None)
+    except RobotServerUnavailable as e:
+        logger.warning(f"Could not execute pose on hardware: {e}")
 
 
 async def execute_waypoints(
@@ -1172,14 +1229,17 @@ async def save_current_pose_endpoint(req: SaveCurrentPoseRequest) -> dict[str, s
     if not clean_name:
         raise HTTPException(status_code=400, detail="Name cannot be empty")
     save_pose(clean_name, joints)
+    await _execute_on_hardware_if_connected(joints)
     return {"name": clean_name, "status": "saved"}
 
 
 class PlayPoseRequest(BaseModel):
     name: str
     duration_ms: int = 1000
-    # None keeps the server-mode default; the frontend sends its sim/hardware
-    # toggle so the exit replay reaches the robot on the same terms as /move.
+    # None (the frontend's default — it doesn't send this field) means
+    # "demonstrate": reaches hardware whenever the backend is connected to
+    # it, regardless of the composing-only sim/hardware toggle. A caller can
+    # still force sim-only (True) or force hardware (False) explicitly.
     sim_only: bool | None = None
 
 
@@ -1465,7 +1525,10 @@ async def process_chat_message(
                     for joint, rad in joints.items()
                     if joint in SERVO_ID_MAP
                 ]
-                await dispatch_servo_commands(cmds, sim_only=sim_only)
+                # Striking a named saved pose is a "demonstrate" action (same
+                # category as /poses/play) — always reaches hardware once
+                # connected, ignoring the composing-only sim_only toggle.
+                await dispatch_servo_commands(cmds, sim_only=None)
                 logger.info(f"Executed saved pose '{pose_name}' ({len(cmds)} joints)")
             else:
                 logger.warning(f"Saved pose '{pose_name}' not found in database")
@@ -1753,9 +1816,17 @@ async def _send_status(websocket: WebSocket, payload: dict) -> None:
 
 
 async def try_handle_system_intent(
-    text: str, websocket: WebSocket, save_dialog: SavePoseDialog
+    text: str,
+    websocket: WebSocket,
+    save_dialog: SavePoseDialog,
+    sim_only: bool | None = None,
 ) -> bool:
-    """If the text matches a follow/capture/save intent, dispatch and reply. Return True if handled."""
+    """If the text matches a follow/capture/save intent, dispatch and reply. Return True if handled.
+
+    ``sim_only`` follows the same sim/hardware toggle as /move and the chat
+    motion planner, so follow/capture never dispatch to the physical robot
+    just because the server happens to be running in hardware mode.
+    """
     follow_active = follow_controller.is_following if follow_controller is not None else False
     intent = classify_system_intent(text, follow_active=follow_active)
     if intent is None:
@@ -1781,7 +1852,7 @@ async def try_handle_system_intent(
         return False
 
     if intent == "follow_start":
-        await follow_controller.start_follow(status_fn)
+        await follow_controller.start_follow(status_fn, sim_only=sim_only)
         await websocket.send_json({
             "type": "chat_response",
             "role": "assistant",
@@ -1803,7 +1874,7 @@ async def try_handle_system_intent(
         return True
 
     if intent == "capture_pose":
-        await follow_controller.trigger_capture_and_mimic(status_fn)
+        await follow_controller.trigger_capture_and_mimic(status_fn, sim_only=sim_only)
         await websocket.send_json({
             "type": "chat_response",
             "role": "assistant",
@@ -1929,7 +2000,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 # TLDR: Stops "copy your left arm closer to your chest" from triggering a second capture mid-adjustment.
                 if intent_type in (None, "immediate"):
-                    if await try_handle_system_intent(user_message, websocket, save_dialog):
+                    if await try_handle_system_intent(user_message, websocket, save_dialog, sim_only=sim_only):
                         continue
 
                 # Route conversation/clarification to the chat LLM and finalized

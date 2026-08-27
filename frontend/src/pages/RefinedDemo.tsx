@@ -5,6 +5,7 @@ import {
   type RefinedChatMsg,
 } from '../demo/useRefinedDemoMachine'
 import { resetPose } from '../demo/api'
+import { useHardwareDispatching } from '../demo/hardwareDispatchStatus'
 import { LiveStream } from './DummyStream'
 import RobotViewer from './RobotViewer'
 import StreamSourceToggle from '../components/StreamSourceToggle'
@@ -45,6 +46,10 @@ export default function RefinedDemo() {
   }, [])
 
   const isActive = !['IDLE', 'ERROR'].includes(state.stage)
+  // Fires whenever a pose save or demonstrate dispatch is targeting hardware —
+  // shown in sim mode too (no robot attached) so it's usable for debugging;
+  // see the 2026-08-27 fix.
+  const hardwareDispatching = useHardwareDispatching()
 
   return (
     <div className="rd-root">
@@ -152,6 +157,13 @@ export default function RefinedDemo() {
             <div className="rd-safety-badge">
               <span className="rd-safety-spinner" />
               Safety check…
+            </div>
+          )}
+
+          {hardwareDispatching && (
+            <div className="rd-hardware-badge">
+              <span className="rd-hardware-badge-dot" />
+              Executing on robot…
             </div>
           )}
 
@@ -307,6 +319,12 @@ export default function RefinedDemo() {
                 {/* Live sim so the child sees the robot strike each saved move. */}
                 <div className="rd-exit-stage">
                   <RobotViewer embedded />
+                  {hardwareDispatching && (
+                    <div className="rd-hardware-badge">
+                      <span className="rd-hardware-badge-dot" />
+                      Executing on robot…
+                    </div>
+                  )}
                   <div className="rd-exit-stage-caption">
                     {state.replayIdx !== null
                       ? `Performing "${state.savedPoses[state.replayIdx]}" · ${state.replayIdx + 1} of ${state.savedPoses.length}`

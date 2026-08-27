@@ -2,6 +2,7 @@
 // Continuous voice loop: listen → classify intent → act → repeat until exit.
 
 import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { beginHardwareDispatch } from './hardwareDispatchStatus'
 import {
   captureUtterance,
   classifyIntent,
@@ -301,22 +302,31 @@ export function useRefinedDemoMachine() {
     if (!alive()) return
     await sleep(700)
 
-    for (let i = 0; i < names.length; i++) {
-      if (!alive()) return
-      dispatch({ replayIdx: i, statusText: `Performing "${names[i]}"` })
-      try {
-        // Transition straight from the current sim pose into the next move —
-        // no reset to stand in between.
-        await playPose(names[i], REPLAY_POSE_MS)
-      } catch {
-        // A pose that fails to play (e.g. deleted) shouldn't stall the show.
+    // One dispatch "in flight" for the whole sequence, not per-pose — playPose()
+    // itself only covers the network round-trip, but the pose is still visibly
+    // holding through the sleep below, so a per-call wrap would flicker the
+    // "Executing on robot…" pill off between poses.
+    const endDispatch = beginHardwareDispatch()
+    try {
+      for (let i = 0; i < names.length; i++) {
+        if (!alive()) return
+        dispatch({ replayIdx: i, statusText: `Performing "${names[i]}"` })
+        try {
+          // Transition straight from the current sim pose into the next move —
+          // no reset to stand in between.
+          await playPose(names[i], REPLAY_POSE_MS)
+        } catch {
+          // A pose that fails to play (e.g. deleted) shouldn't stall the show.
+        }
+        if (!alive()) return
+        // The sim dispatch blocks for the full duration, but the hardware POST
+        // returns as soon as the robot server accepts it — the servos are still
+        // travelling. Waiting the pose duration again keeps consecutive poses from
+        // overlapping on hardware, and holds the pose long enough to be seen.
+        await sleep(REPLAY_POSE_MS)
       }
-      if (!alive()) return
-      // The sim dispatch blocks for the full duration, but the hardware POST
-      // returns as soon as the robot server accepts it — the servos are still
-      // travelling. Waiting the pose duration again keeps consecutive poses from
-      // overlapping on hardware, and holds the pose long enough to be seen.
-      await sleep(REPLAY_POSE_MS)
+    } finally {
+      endDispatch()
     }
 
     if (!alive()) return

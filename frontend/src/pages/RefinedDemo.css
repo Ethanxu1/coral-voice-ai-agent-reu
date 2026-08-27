@@ -411,6 +411,36 @@
   align-items: center;
   gap: 8px;
 }
+/* Shown whenever a pose save or demonstrate dispatch targets hardware — also
+   fires with no robot attached (sim mode) so it's usable for debugging. */
+.rd-hardware-badge {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(38, 35, 47, 0.85);
+  backdrop-filter: blur(6px);
+  border: 2px solid #E4572E;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  padding: 7px 16px;
+  border-radius: 999px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rd-hardware-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #E4572E;
+  box-shadow: 0 0 8px #E4572E;
+  animation: rd-pulse 1.2s ease-in-out infinite;
+}
+
 .rd-safety-spinner {
   width: 14px;
   height: 14px;

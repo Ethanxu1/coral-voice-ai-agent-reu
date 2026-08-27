@@ -100,6 +100,26 @@ uv run sim-test              # all motions
 uv run sim-test dab wave     # only these
 ```
 
+### Setting up wifi connection on Pi
+
+```bash
+ssh pi@raspberrypi.local
+
+# modify wifi configurations
+nano wifi_manager/wifi_config.py
+
+# add your own wifi configurations
+# add 2 new lines with your wifi credentials
+WIFI_STA_SSID= # your wifi SSID
+WIFI_STA_PASSWORD= # your wifi password
+
+# restart the wifi service (requires sudo)
+systemctl restart wifi.service
+
+# the robot will reboot the wifi service, it will take a minute before wifi comes back on
+# after the wifi comes back, you should be able to connect to your wifi hostspot
+```
+
 ### Pi (every session)
 
 ```bash
