@@ -1,0 +1,30 @@
+# Coral stack for local production smoke tests.
+# Runs the backend headless (no MuJoCo window). The frontend should be served
+# separately, e.g. `cd frontend && npm run dev` or a static nginx container.
+version: "3.8"
+
+services:
+  coral-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coral-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Copy local env into the container. Secrets live in your .env file,
+      # not in this compose definition.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      - ENABLE_COLLISION_CHECK=${ENABLE_COLLISION_CHECK:-true}
+      - ENABLE_FALL_CHECK=${ENABLE_FALL_CHECK:-true}
+      # Headless inside Docker.
+      - CORAL_NO_VIEWER=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

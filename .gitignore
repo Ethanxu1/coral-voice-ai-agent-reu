@@ -242,6 +242,9 @@ result-*
 
 recordings/
 
+# run.sh process output
+logs/
+
 # training code
 training/
 /AiNex Documentation

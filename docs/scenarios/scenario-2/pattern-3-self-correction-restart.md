@@ -113,5 +113,5 @@ In the Jun 24 Voice-Controlled Robotics in Early Education study, about 38% of v
 
 ## What this exercises in the pipeline
 
-- `src/llm/prompts/router.md` — implicitly the chain-of-thought reasoning, which needs to handle disfluency cleanup before primitive selection. Consider adding an explicit example of `no`/`wait` handling to the prompt.
-- Whisper transcription quality on `src/server.py` `transcribe_audio()` — Whisper's tendency to drop "um" and "uh" can either help (silently cleans the input) or hurt (loses the restart cue). Validate by checking actual Whisper output on a sample wav.
+- `backend/app/llm/prompts/router.md` — implicitly the chain-of-thought reasoning, which needs to handle disfluency cleanup before primitive selection. Consider adding an explicit example of `no`/`wait` handling to the prompt.
+- Whisper transcription quality on `backend/app/services/transcription.py` `transcribe_audio()` — Whisper's tendency to drop "um" and "uh" can either help (silently cleans the input) or hurt (loses the restart cue). Validate by checking actual Whisper output on a sample wav.

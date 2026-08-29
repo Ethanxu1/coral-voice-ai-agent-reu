@@ -74,20 +74,13 @@ servers, so a missing one looks like the demo hanging rather than a clean
 error.
 
 ```bash
-# Terminal 1 — voice + LLM server + MuJoCo simulator          (:8000)
-uv run server                          # simulation mode
-# or
-ROBOT_IP={robot ip addr} && uv run robot    # physical robot mode (no MuJoCo)
-
-# Terminal 2 — vision server: webcam → body pose              (:8001)
-uv run vision
-
-# Terminal 3 — speaker server: text-to-speech for the demo    (:5002)
-uv run speaker
-
-# Terminal 4 — frontend                                       (:5173)
-cd frontend && npm run dev
 ```
+# run code without physical robot
+./run.sh
+# run with robot
+./run.sh -live -ip {robot ip}
+# if you want to start the speaker
+./run.sh -speaker
 
 Open <http://localhost:5173> and click **✨ Start Demo Here**.
 
@@ -98,6 +91,26 @@ To cycle the simulator through every motion in `motions.py` without the LLM or f
 ```bash
 uv run sim-test              # all motions
 uv run sim-test dab wave     # only these
+```
+
+### Setting up wifi connection on Pi
+
+```bash
+ssh pi@raspberrypi.local
+
+# modify wifi configurations
+nano wifi_manager/wifi_config.py
+
+# add your own wifi configurations
+# add 2 new lines with your wifi credentials
+WIFI_STA_SSID= # your wifi SSID
+WIFI_STA_PASSWORD= # your wifi password
+
+# restart the wifi service (requires sudo)
+systemctl restart wifi.service
+
+# the robot will reboot the wifi service, it will take a minute before wifi comes back on
+# after the wifi comes back, you should be able to connect to your wifi hostspot
 ```
 
 ### Pi (every session)

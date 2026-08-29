@@ -132,6 +132,6 @@ Compound utterance: "okay stop" is acknowledgement filler, "a tiny bit back up" 
 
 ## What this exercises in the pipeline
 
-- `src/llm/prompts/router.md` — the "Relative angle adjustments" branch and the joint→primitive mapping table.
-- `src/server.py` → `HierarchicalMemory` — short-term retention and mid-term summary fidelity.
-- `src/state.py` — running joint state passed in as `CURRENT_STATE`.
+- `backend/app/llm/prompts/router.md` — the "Relative angle adjustments" branch and the joint→primitive mapping table.
+- `backend/app/services/chat.py` → `HierarchicalMemory` — short-term retention and mid-term summary fidelity.
+- `backend/app/state.py` — running joint state passed in as `CURRENT_STATE`.
