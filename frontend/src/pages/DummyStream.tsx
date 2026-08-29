@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useRobotConfig, getRobotStream } from '../demo/robotConfig'
+import { getRobotStream } from '../demo/robotConfig'
 
 export function LiveStream({
   className = '',
@@ -11,7 +11,6 @@ export function LiveStream({
   badge?: boolean
 }) {
   const [key, setKey] = useState(0)
-  useRobotConfig()
   return (
     <div className={`tui-stream ${className}`} style={style}>
       <img

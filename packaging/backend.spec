@@ -17,7 +17,7 @@ import glob
 import os
 
 ROOT = os.path.dirname(os.path.abspath(SPECPATH))
-SRC = os.path.join(ROOT, "src")
+SRC = os.path.join(ROOT, "backend", "app")
 
 datas = []
 datas += [(f, "vision/models") for f in glob.glob(os.path.join(SRC, "vision", "models", "*.task"))]
@@ -25,7 +25,7 @@ datas += [(f, "vision/models") for f in glob.glob(os.path.join(SRC, "vision", "m
 datas += [(f, "llm/prompts") for f in glob.glob(os.path.join(SRC, "llm", "prompts", "*.md"))]
 
 # Whole AiNex MuJoCo asset tree (xml + meshes/), bundled at a location the
-# sys.frozen branch in src/simulator/mujoco_sim.py knows to look for.
+# sys.frozen branch in backend/app/simulator/mujoco_sim.py knows to look for.
 # NOTE: Tree() returns 3-tuples (dest, src, typecode), not the 2-tuples
 # (src, dest) Analysis(datas=...) expects — it must be added in COLLECT()
 # below instead, not merged into this list.

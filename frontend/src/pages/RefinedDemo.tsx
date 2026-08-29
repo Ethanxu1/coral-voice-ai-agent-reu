@@ -7,8 +7,7 @@ import {
 import { resetPose } from '../demo/api'
 import { useHardwareDispatching } from '../demo/hardwareDispatchStatus'
 import { LiveStream } from './DummyStream'
-import RobotViewer from './RobotViewer'
-import StreamSourceToggle from '../components/StreamSourceToggle'
+import RobotViewer from '../components/RobotViewer'
 import './RefinedDemo.css'
 
 export default function RefinedDemo() {
@@ -61,18 +60,11 @@ export default function RefinedDemo() {
           </div>
         </div>
         <div className="rd-topbar-right">
-          <StreamSourceToggle compact />
           <button
             className="rd-topbar-btn ghost"
             onClick={() => { resetPose().catch(() => {}) }}
           >
             Return to stand
-          </button>
-          <button
-            className="rd-topbar-btn ghost"
-            onClick={() => navigate('/tutorial')}
-          >
-            Tutorial
           </button>
           {isActive && (
             <button

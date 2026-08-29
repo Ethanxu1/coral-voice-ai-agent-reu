@@ -1,0 +1,49 @@
+.cs-root {
+  display: flex;
+  justify-content: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  background: #1e1e38;
+  border: 1px solid #3a3a5c;
+  border-radius: 12px;
+}
+
+.cs-service {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #eee;
+}
+
+.cs-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.cs-dot-ok {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.cs-dot-down {
+  background: #ef4444;
+  box-shadow: 0 0 6px #ef4444;
+}
+
+.cs-dot-pending {
+  background: #f59e0b;
+  animation: cs-pulse 1.2s infinite ease-in-out;
+}
+
+@keyframes cs-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}

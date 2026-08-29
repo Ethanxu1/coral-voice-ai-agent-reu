@@ -12,7 +12,7 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     # Dev-mode convenience: `uv run python packaging/backend_entry.py <cmd>`
     # without needing the project installed first.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend" / "app"))
 
 COMMANDS = ("server", "vision", "speaker")
 
@@ -24,15 +24,15 @@ def main() -> None:
 
     which = sys.argv.pop(1)  # pop so the target main() sees clean argv
     if which == "server":
-        import server
+        from app import main as app_main
 
-        server.main()
+        app_main.main()
     elif which == "vision":
-        from vision import vision_server
+        from app.vision import vision_server
 
         vision_server.main()
     elif which == "speaker":
-        from speaker import speaker_server
+        from app.speaker import speaker_server
 
         speaker_server.main()
 

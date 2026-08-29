@@ -43,7 +43,7 @@ See [hardware.md](hardware.md) for how to reach the Pi and get code onto it.
 
 ### Frontend — `frontend/`
 
-React + TypeScript + Vite. Three.js (`@react-three/fiber`) renders the robot; the pages under `frontend/src/pages/` are separate experiences sharing one component library:
+React + TypeScript + Vite. Three.js (`@react-three/fiber`) renders the robot; the pages under `frontend/backend/app/pages/` are separate experiences sharing one component library:
 
 | Page | Purpose |
 |---|---|
@@ -54,22 +54,22 @@ React + TypeScript + Vite. Three.js (`@react-three/fiber`) renders the robot; th
 | `PoseTester`, `JointGizmo`, `RobotViewer`, `PoseVisualization` | Debug and inspection tools |
 | `SubjectSelect` | Experiment session setup |
 
-Demo flow lives in `frontend/src/demo/useRefinedDemoMachine.ts` — an explicit state machine (`IDLE → SUBJECT_SELECT → LISTENING → COUNTDOWN → CAPTURED → FINETUNE → NAMING → …`, with `FOLLOWING`, `LIBRARY`, `EXIT_CONFIRM`, and `ERROR` as additional stages). When reasoning about *why the demo did something*, this file is usually the answer; the backend is stateless with respect to demo progression.
+Demo flow lives in `frontend/backend/app/demo/useRefinedDemoMachine.ts` — an explicit state machine (`IDLE → SUBJECT_SELECT → LISTENING → COUNTDOWN → CAPTURED → FINETUNE → NAMING → …`, with `FOLLOWING`, `LIBRARY`, `EXIT_CONFIRM`, and `ERROR` as additional stages). When reasoning about *why the demo did something*, this file is usually the answer; the backend is stateless with respect to demo progression.
 
-### Main server — `src/server.py`, port 8000
+### Main server — `backend/app/server.py`, port 8000
 
 The hub. A FastAPI app that owns:
 
 - **Speech-to-text** — faster-whisper, running locally on CPU. Audio never leaves the laptop.
-- **Intent classification** — [`src/llm/intent_classifier.py`](../src/llm/intent_classifier.py), regex-first with an LLM fallback. See [intent-classifier.md](intent-classifier.md).
-- **Motion planning** — the LLM turns a motion description into waypoints of named primitives, guided by [`src/llm/prompts/router.md`](../src/llm/prompts/router.md).
+- **Intent classification** — [`backend/app/llm/intent_classifier.py`](../backend/app/llm/intent_classifier.py), regex-first with an LLM fallback. See [intent-classifier.md](intent-classifier.md).
+- **Motion planning** — the LLM turns a motion description into waypoints of named primitives, guided by [`backend/app/llm/prompts/router.md`](../backend/app/llm/prompts/router.md).
 - **Safety** — self-collision clamping and a fall check on every dispatch path.
 - **The simulator** — MuJoCo, in-process.
 - **Pose library** — saving, listing, and replaying named poses.
 
-Prompts are Markdown files in `src/llm/prompts/` rather than string literals, so they can be edited without touching Python. The model is set in one place, [`src/llm/config.py`](../src/llm/config.py).
+Prompts are Markdown files in `backend/app/llm/prompts/` rather than string literals, so they can be edited without touching Python. The model is set in one place, [`backend/app/llm/config.py`](../backend/app/llm/config.py).
 
-### Vision server — `src/vision/`, port 8001
+### Vision server — `backend/app/vision/`, port 8001
 
 Separate process, separate port, because it owns the webcam and runs a continuous loop that shouldn't compete with request handling.
 
@@ -89,21 +89,21 @@ Worth knowing at this level: **`/map-features` lives on the vision server (8001)
 
 Mechanics — the response shape, the visibility gates that abort a capture, the `leg_mode` options, and the encoding invariant between the two endpoints — are in [code-flow.md](code-flow.md).
 
-### Robot control — `src/robot/`
+### Robot control — `backend/app/robot/`
 
-An abstract `RobotController` ([`interface.py`](../src/robot/interface.py)) with two implementations — `sim_controller.py` (MuJoCo) and `hardware_controller.py` (HTTP to the Pi) — so nothing upstream knows or cares which is live. Swapping them is how the same demo runs with or without a physical robot.
+An abstract `RobotController` ([`interface.py`](../backend/app/robot/interface.py)) with two implementations — `sim_controller.py` (MuJoCo) and `hardware_controller.py` (HTTP to the Pi) — so nothing upstream knows or cares which is live. Swapping them is how the same demo runs with or without a physical robot.
 
 They differ in unit conversion, not structure; see [code-flow.md](code-flow.md) for the sim-versus-hardware details.
 
-`src/robot/pi/` holds the ROS package deployed to the Pi — `nodes/server.py` (HTTP → servos), plus `body.py`, `head.py`, and `vision.py`.
+`backend/app/robot/pi/` holds the ROS package deployed to the Pi — `nodes/server.py` (HTTP → servos), plus `body.py`, `head.py`, and `vision.py`.
 
-### Safety — `src/collision/`
+### Safety — `backend/app/collision/`
 
 A self-collision clamp and a fall check, both applied before dispatch on every path that moves the robot.
 
 This layer exists because neither source of poses is body-aware: retargeting maps a human's geometry without knowing what the robot can do to itself, and the LLM generates joint targets from language. Everything upstream is therefore free to propose poses that would be unsafe, and this is what makes executing them acceptable. Details in [code-flow.md](code-flow.md).
 
-### Speaker — `src/speaker/`, port 5002
+### Speaker — `backend/app/speaker/`, port 5002
 
 pyttsx3 text-to-speech, played back through `sounddevice`/`soundfile` rather than pyttsx3's own playback (which segfaults on some platforms). Scripted lines live in `scripts.py`, requested by identifier so spoken copy stays in one place rather than scattered through the UI. A `qwen-tts` dependency and a standalone harness under `tests/qwen3-tts-test/` exist for an in-progress evaluation of a neural TTS replacement, but `speaker_server.py` does not use it yet.
 
@@ -142,7 +142,7 @@ Both converge at the safety layer. That convergence is deliberate — it means t
 
 **Angles are radians internally**, degrees at the LLM boundary, and 0–1000 Hiwonder units at the servo boundary.
 
-**Prompts are files**, not literals — `src/llm/prompts/*.md`.
+**Prompts are files**, not literals — `backend/app/llm/prompts/*.md`.
 
 **The frontend holds demo state**; the backend is stateless per request except for the simulator and pose library.
 
@@ -159,6 +159,6 @@ Both converge at the safety layer. That convergence is deliberate — it means t
 | Understand intent routing | [intent-classifier.md](intent-classifier.md) |
 | Work with the physical robot | [hardware.md](hardware.md) |
 | Reproduce an experiment | [scenarios/](scenarios/) |
-| Change what the robot says | `src/speaker/scripts.py`, `src/llm/prompts/` |
-| Change how poses map to joints | `src/vision/pose_to_robot.py` |
-| Change the demo's flow | `frontend/src/demo/useRefinedDemoMachine.ts` |
+| Change what the robot says | `backend/app/speaker/scripts.py`, `backend/app/llm/prompts/` |
+| Change how poses map to joints | `backend/app/vision/pose_to_robot.py` |
+| Change the demo's flow | `frontend/backend/app/demo/useRefinedDemoMachine.ts` |

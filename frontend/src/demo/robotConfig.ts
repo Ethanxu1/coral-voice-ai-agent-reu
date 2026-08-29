@@ -1,69 +1,19 @@
-// Runtime control for whether pose moves target only the simulator or both the
-// simulator and physical robot. The setting is persisted in localStorage so the
-// demo does not need a restart when switching modes.
-//
-// Not a React context — api.ts calls these getters from plain async functions,
-// not components, so a module-level store + subscriber list is simpler than
-// wiring context through every call site. Components that need to re-render on
-// change (e.g. the live camera feed) use the useRobotConfig() hook below.
+// Small module-level store for the few runtime frontend settings that remain.
+// Not a React context — api.ts calls getters from plain async functions, and
+// only components that need live updates use the hook.
 
 import { useSyncExternalStore } from 'react'
 
-export type StreamSource = 'mac' | 'robot'
-
-/** How /map-features drives the legs. Arms always use live retargeting.
- *  - retarget: live pelvis-frame hip pitch/roll + knee bend (default)
- *  - legacy:   old atan2 mapping (hip_yaw ← forward/back swing)
- *  - classify: MobileNetV3 → snap legs to the matching canned pose
- *  - buckets:  classify knee/ankle/hip-pitch depth (both legs together) and
- *              hip yaw (each leg independently) into discrete low/stand/high
- *              and in/stand/out stances, then snap to the matching targets */
-export type LegMode = 'retarget' | 'legacy' | 'classify' | 'buckets'
-
 export interface RobotConfig {
-  /** True sends /move commands only to the simulator. */
-  simOnly: boolean
-  /** Camera stream source shown by the live-stream panels. */
-  streamSource: StreamSource
-  /** Pi hostname/IP used by explicit robot-only tools. */
+  /** Pi hostname/IP used by explicit robot-only tools (PoseTester). */
   piHost: string
-  /** Leg-retargeting strategy passed to /map-features. */
-  legMode: LegMode
-  /** Debug overlay: draw the knee-bend/hip-yaw angle arcs on the live video
-   *  feed (Mac vision-server only — see POST /settings/angle-arcs). Off by
-   *  default so it doesn't clutter the kid-facing demo pages. */
-  showAngleArcs: boolean
-  /** Dynamic fall check (StabilityChecker on the robot base server): when true,
-   *  moves that would topple the robot are blocked entirely (0% executed).
-   *  Toggling calls POST /settings/fall-check so both demo variants — safe and
-   *  unchecked — can be shown without restarting the server. */
-  fallCheckEnabled: boolean
-  /** Whether the native MuJoCo window opens when the base server starts.
-   *  Persisted server-side via POST /settings/mujoco-viewer; the window can only
-   *  be opened at process start, so flipping this applies on the next launch.
-   *  Off by default — the browser viewer covers most runs. */
-  mujocoViewerOnLaunch: boolean
 }
 
-// Bump when the defaults below change in a way every browser should pick up.
-// Saved config is merged over the defaults, so without this a machine that ran
-// an earlier build would keep its stale values forever — exactly the case the
-// demo defaults exist to prevent. A bump discards the saved config once.
-const STORAGE_KEY = 'coral.robotConfig.v2'
+const STORAGE_KEY = 'coral.robotConfig.v3'
 const env = import.meta.env as Record<string, string | undefined>
 
-// Defaults are tuned for the simulator walkthrough teammates run when giving
-// feedback (docs/sim-testing-guide.md): sim-only so no Pi is needed, bucketed
-// legs because they read most clearly on screen, and the fall check off so a
-// tester's pose is never silently dropped for being unstable.
 const DEFAULT_CONFIG: RobotConfig = {
-  simOnly: true,
-  streamSource: 'mac',
   piHost: env.VITE_ROBOT_HOST ?? '192.168.8.219',
-  legMode: 'buckets',
-  showAngleArcs: false,
-  fallCheckEnabled: false,
-  mujocoViewerOnLaunch: false,
 }
 
 function loadConfig(): RobotConfig {
@@ -103,23 +53,20 @@ export function useRobotConfig(): RobotConfig {
   return useSyncExternalStore(subscribe, getRobotConfig)
 }
 
-// The Mac hosts the demo, simulator, and vision server. The main server forwards
-// /move to the Pi itself when sim_only is false.
+/** Main backend API base (sim or hardware mode). */
 export function getRobotBase(): string {
   return env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
 }
 
+/** Vision / MJPEG stream base. */
 export function getRobotStream(): string {
-  if (config.streamSource === 'robot') return `http://${config.piHost}:9001`
   return env.VITE_ROBOT_STREAM ?? 'http://localhost:8001'
 }
 
+/** Vision feature endpoints base. */
 export function getFeaturesBase(): string {
   return env.VITE_FEATURES_BASE ?? 'http://localhost:8001'
 }
-
-// Mode-independent bases, for tools that pick their target explicitly (e.g.
-// the Pose Tester's sim/robot/both selector) instead of following the toggle.
 
 /** Mac sim server (:8000), regardless of the sim/hardware toggle. */
 export function getSimBase(): string {
