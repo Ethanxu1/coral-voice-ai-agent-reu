@@ -58,7 +58,7 @@ def _viewer_opens_on_launch() -> bool:
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
 
-    state.robot_mode = ROBOT_MODE
+    state.robot_mode = os.environ.get("ROBOT_MODE", ROBOT_MODE)
 
     clear_all_poses()
     logger.info("Pose database cleared for new session.")
@@ -200,8 +200,9 @@ def main():
 
 def main_robot():
     """Entry point for hardware robot mode."""
+    # Set this before any imports or re-exec so the new process reads ROBOT_MODE=robot.
+    os.environ["ROBOT_MODE"] = "robot"
     _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
-    os.environ.setdefault("ROBOT_MODE", "robot")
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {ROBOT_IP})")
     logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
     logger.info(f"Make sure robot_server.py is running on the robot at {ROBOT_IP}:9000")

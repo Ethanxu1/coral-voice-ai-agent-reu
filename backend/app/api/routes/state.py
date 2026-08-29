@@ -1,8 +1,9 @@
-"""Demo state endpoint."""
+"""Demo state endpoints."""
 
 from fastapi import APIRouter
 
 from app.schemas.requests import StateRequest
+from app.services.motion import _get_robot_state
 
 router = APIRouter()
 
@@ -15,3 +16,9 @@ async def demo_set_state(req: StateRequest) -> dict[str, str]:
     global _demo_state
     _demo_state = req.mode
     return {"state": _demo_state}
+
+
+@router.get("/joint_states")
+async def get_joint_states() -> dict[str, dict[str, float]]:
+    """Return the current robot joint states in radians."""
+    return {"joint_states": _get_robot_state()}
