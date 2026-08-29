@@ -61,6 +61,33 @@ function radToDeg(rad: number): number {
   return (rad * 180) / Math.PI
 }
 
+function radToServoUnits(rad: number): number {
+  // Hiwonder servo: 1000 units = 240°, neutral = 500 units.
+  const degrees = radToDeg(rad)
+  const units = 500 + Math.round(degrees * (1000 / 240))
+  return Math.max(0, Math.min(1000, units))
+}
+
+const STATE_GROUPS: { title: string; joints: string[] }[] = [
+  { title: 'Head', joints: ['head_pan', 'head_tilt'] },
+  {
+    title: 'Left Arm',
+    joints: ['l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'],
+  },
+  {
+    title: 'Right Arm',
+    joints: ['r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper'],
+  },
+  {
+    title: 'Left Leg',
+    joints: ['l_hip_yaw', 'l_hip_roll', 'l_hip_pitch', 'l_knee', 'l_ank_pitch', 'l_ank_roll'],
+  },
+  {
+    title: 'Right Leg',
+    joints: ['r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll'],
+  },
+]
+
 export default function TestFunctionality() {
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
   const [joints, setJoints] = useState<Record<string, number>>({})
@@ -116,7 +143,6 @@ export default function TestFunctionality() {
     ws.send(JSON.stringify({ type: 'command', command: cmd }))
   }, [])
 
-  const sortedJoints = Object.entries(joints).sort(([a], [b]) => a.localeCompare(b))
 
   return (
     <div className="tf-root">
@@ -197,16 +223,29 @@ export default function TestFunctionality() {
           <div className="tf-panel tf-state">
             <div className="tf-panel-header">
               <span>Current joint positions</span>
-              <span className="tf-state-hint">degrees</span>
+              <span className="tf-state-hint">deg → servo</span>
             </div>
             <div className="tf-state-scroll">
-              {sortedJoints.length === 0 ? (
+              {Object.keys(joints).length === 0 ? (
                 <div className="tf-empty">No joint state yet</div>
               ) : (
-                sortedJoints.map(([name, rad]) => (
-                  <div key={name} className="tf-state-row">
-                    <span className="tf-state-name">{name}</span>
-                    <span className="tf-state-value">{radToDeg(rad).toFixed(1)}°</span>
+                STATE_GROUPS.map((group) => (
+                  <div key={group.title} className="tf-state-group">
+                    <div className="tf-state-group-title">{group.title}</div>
+                    {group.joints.map((name) => {
+                      const rad = joints[name]
+                      if (rad === undefined) return null
+                      return (
+                        <div key={name} className="tf-state-row">
+                          <span className="tf-state-name">{name}</span>
+                          <span className="tf-state-value">
+                            {radToDeg(rad).toFixed(1)}°
+                            <span className="tf-state-arrow">→</span>
+                            {radToServoUnits(rad)}
+                          </span>
+                        </div>
+                      )
+                    })}
                   </div>
                 ))
               )}

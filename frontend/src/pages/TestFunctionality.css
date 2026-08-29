@@ -253,6 +253,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+.tf-state-arrow {
+  color: #8888aa;
+  font-weight: 500;
+  margin: 0 0.4rem;
+}
+
+.tf-state-group {
+  margin-bottom: 0.75rem;
+}
+
+.tf-state-group-title {
+  color: #a78bfa;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.5rem 0 0.2rem;
+  border-bottom: 1px solid #4c4c6d;
+  margin-bottom: 0.25rem;
+}
+
 .tf-empty {
   color: #8888aa;
   font-size: 0.9rem;
