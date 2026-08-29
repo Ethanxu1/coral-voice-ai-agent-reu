@@ -6,8 +6,7 @@
 // /classify returns.
 
 import { ACTION_WS, SPEAKER_BASE } from './config'
-import { getFeaturesBase, getPiBase, getRobotBase, getRobotConfig, getSimBase } from './robotConfig'
-import type { LegMode } from './robotConfig'
+import { getFeaturesBase, getPiBase, getRobotBase, getSimBase } from './robotConfig'
 import { beginHardwareDispatch } from './hardwareDispatchStatus'
 
 /** One servo target: Hiwonder id + pulse (0–1000) + move time. */
@@ -17,8 +16,7 @@ export interface ServoCommand {
   duration_ms: number
 }
 
-/** Result of retargeting the user's pose (landmarks → robot joints). Replaces
- *  the old MobileNetV3 ClassifyResult — no class name, no probabilities. */
+/** Result of retargeting the user's pose (landmarks → robot joints). */
 export interface MapFeaturesResult {
   /** False when the hips aren't visible: no arm retargeting, caller should retake. */
   poseDetected: boolean
@@ -26,10 +24,6 @@ export interface MapFeaturesResult {
   detail: string | null
   commands: ServoCommand[]
   imageB64: string | null
-  /** Which leg strategy the server used for this call. */
-  legMode: LegMode
-  /** In 'classify' leg mode, the recognized pose class; null otherwise. */
-  poseClass: string | null
 }
 
 export interface ActionResult {
@@ -62,24 +56,11 @@ export async function killSpeech(): Promise<void> {
   }
 }
 
-// ── Robot server (Pi :9000) ───────────────────────────────────────────────────
-export async function motion(name: string, globalDuration?: number): Promise<void> {
-  const res = await fetch(`${getRobotBase()}/motion`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, global_duration: globalDuration ?? null }),
-  })
-  if (!res.ok) throw new Error(`motion failed: ${res.status}`)
-}
-
 // Retarget the user's current pose to robot servo commands. Hits the vision
 // server directly (it owns the live landmarks); the caller executes the returned
 // commands via move(). Also returns the frame the pose was read from, for the UI.
-export async function mapFeatures(legMode?: LegMode): Promise<MapFeaturesResult> {
-  // Default to the live-toggled leg mode from the shared robot config.
-  const mode = legMode ?? getRobotConfig().legMode
-  const url = `${getFeaturesBase()}/map-features?leg_mode=${encodeURIComponent(mode)}`
-  const res = await fetch(url, { method: 'POST' })
+export async function mapFeatures(): Promise<MapFeaturesResult> {
+  const res = await fetch(`${getFeaturesBase()}/map-features`, { method: 'POST' })
   if (!res.ok) {
     // Surface the server's actual failure reason (e.g. a Python exception
     // message) instead of just the status code — FastAPI puts it in `detail`.
@@ -92,51 +73,6 @@ export async function mapFeatures(legMode?: LegMode): Promise<MapFeaturesResult>
     detail: data.detail ?? null,
     commands: Array.isArray(data.commands) ? data.commands : [],
     imageB64: data.image_b64 ?? null,
-    legMode: (data.leg_mode ?? mode) as LegMode,
-    poseClass: data.pose_class ?? null,
-  }
-}
-
-// Toggle the knee-bend/hip-yaw debug angle arcs drawn on every live frame by
-// the Mac vision server (see pose_estimator._draw_bucket_angle_arcs). Applies
-// immediately, no restart needed. Best-effort like setRobotState — in
-// hardware mode this endpoint doesn't exist on the Pi, so a failure here
-// shouldn't block the UI toggle from flipping locally.
-export async function setAngleArcsEnabled(enabled: boolean): Promise<void> {
-  try {
-    await fetch(`${getFeaturesBase()}/settings/angle-arcs?enabled=${enabled}`, {
-      method: 'POST',
-    })
-  } catch {
-    /* ignore */
-  }
-}
-
-// Toggle the dynamic fall check on the robot base server (StabilityChecker —
-// see collision_checked_targets in server.py). Applies immediately, no
-// restart needed. Best-effort like setAngleArcsEnabled: a failure here
-// shouldn't block the UI toggle from flipping locally.
-export async function setFallCheckEnabled(enabled: boolean): Promise<void> {
-  try {
-    await fetch(`${getRobotBase()}/settings/fall-check?enabled=${enabled}`, {
-      method: 'POST',
-    })
-  } catch {
-    /* ignore */
-  }
-}
-
-// Persist whether the native MuJoCo window opens the next time the base server
-// starts (POST /settings/mujoco-viewer). Unlike the toggles above this cannot
-// apply now — the window has to be opened at process start — so it only writes
-// the preference. Best-effort all the same.
-export async function setMujocoViewerOnLaunch(enabled: boolean): Promise<void> {
-  try {
-    await fetch(`${getRobotBase()}/settings/mujoco-viewer?enabled=${enabled}`, {
-      method: 'POST',
-    })
-  } catch {
-    /* ignore */
   }
 }
 
@@ -181,15 +117,12 @@ export function parseSafety(raw: unknown): MoveSafety | null {
 // Drive the robot/sim with raw servo commands (from mapFeatures). No-op safe if
 // the command list is empty. Returns the server's safety verdict so callers
 // (the refined demo) can report a blocked move to the user.
-export async function move(
-  commands: ServoCommand[],
-  simOnly = getRobotConfig().simOnly,
-): Promise<MoveResult> {
+export async function move(commands: ServoCommand[]): Promise<MoveResult> {
   if (commands.length === 0) return { executed: false, safety: SAFE_MOVE }
   const res = await fetch(`${getRobotBase()}/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ moves: commands, sim_only: simOnly }),
+    body: JSON.stringify({ moves: commands }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
@@ -267,13 +200,6 @@ export async function movePulses(
   }
   const data = await res.json().catch(() => null)
   return { count: data?.count ?? commands.length }
-}
-
-export async function watchForAction(timeoutS: number): Promise<{ detected: boolean }> {
-  const res = await fetch(`${getRobotBase()}/watch-for-action?timeout=${timeoutS}`)
-  if (!res.ok) throw new Error(`watch-for-action failed: ${res.status}`)
-  const data = await res.json()
-  return { detected: !!data.detected }
 }
 
 export async function setRobotState(mode: string): Promise<void> {
@@ -378,14 +304,9 @@ export function subscribeSubjectSelection(
   }
 }
 
-// Snap the sim (and, in robot mode, animate the hardware) back to the stand
-// pose via the "reset" primitive in mujoco_sim.COMMAND_MAP.
+// Snap the sim (and, in robot mode, animate the hardware) back to the stand pose.
 export async function resetPose(): Promise<void> {
-  const res = await fetch(`${getRobotBase()}/command`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command: 'reset' }),
-  })
+  const res = await fetch(`${getRobotBase()}/reset`, { method: 'POST' })
   if (!res.ok) throw new Error(`reset failed: ${res.status}`)
 }
 
@@ -711,11 +632,6 @@ export function openActionSession(sessionId?: string): ActionSession {
       const payload: Record<string, unknown> = { type: 'chat', content: text }
       if (intentType) payload.intent_type = intentType
       if (description) payload.description = description
-      // 'immediate' covers follow_start/capture, which dispatch to the robot
-      // just like a motion-planner move — must follow the same sim/hardware
-      // toggle so they don't hit hardware just because the toggle wasn't
-      // flipped for this particular utterance.
-      if (intentType === 'motion' || intentType === 'immediate') payload.sim_only = getRobotConfig().simOnly
       return send(payload, timeoutMs, text)
     },
     close() {

@@ -140,7 +140,7 @@ Social/affective request, not a physical one — the robot has no torso to wrap.
 
 ## Pass criteria
 
-- **Zero hallucinated primitives.** Every primitive name in every waypoint must appear in `src/llm/primitives.py`. This is the central failure mode for this pattern and the one most worth measuring.
+- **Zero hallucinated primitives.** Every primitive name in every waypoint must appear in `backend/app/llm/primitives.py`. This is the central failure mode for this pattern and the one most worth measuring.
 - **No invented joints.** No mention of joints like `torso_lean`, `wrist_rotate`, or `hip_swivel` — none exist in the 24 DOF model.
 - **Tone matches the frame.** Pretend-play requests get pretend-play verbal responses ("rawr", "whoosh"). Impossible requests get warm declines, never bare refusals.
 - **Graceful decline when there's no good mapping.** Turn 3 should emit empty waypoints and a friendly redirect, not a flailing approximation.
@@ -155,9 +155,9 @@ Social/affective request, not a physical one — the robot has no torso to wrap.
 
 ## What this exercises in the pipeline
 
-- `src/llm/prompts/router.md` — the closed-vocabulary constraint and the verbal-response style guide. Worth adding an explicit "pretend play" section with examples.
-- `src/validation.py` — joint-name validation should *log loudly* on unknown joints so hallucinations are detected during testing, not silently dropped.
-- `src/llm/primitives.py` — this pattern surfaces gaps in the primitive library. Recurring impossible-request themes (swimming, dancing, hugging) may justify new compound primitives later.
+- `backend/app/llm/prompts/router.md` — the closed-vocabulary constraint and the verbal-response style guide. Worth adding an explicit "pretend play" section with examples.
+- `backend/app/validation.py` — joint-name validation should *log loudly* on unknown joints so hallucinations are detected during testing, not silently dropped.
+- `backend/app/llm/primitives.py` — this pattern surfaces gaps in the primitive library. Recurring impossible-request themes (swimming, dancing, hugging) may justify new compound primitives later.
 
 ## Why this matters
 

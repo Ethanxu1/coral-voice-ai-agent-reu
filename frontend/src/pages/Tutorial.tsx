@@ -18,7 +18,7 @@ import {
   type MapFeaturesResult,
   type IntentResult,
 } from '../demo/api'
-import RobotViewer from './RobotViewer'
+import RobotViewer from '../components/RobotViewer'
 import AIReasoningStepper, { type StepItem } from '../components/AIReasoningStepper'
 import './Tutorial.css'
 
@@ -252,12 +252,10 @@ function Confetti() {
 }
 
 function SimPanel({
-  mode,
   caption,
   cameraUrl,
   overlay,
 }: {
-  mode?: 'manual' | 'auto'
   caption?: string
   cameraUrl?: string
   overlay?: React.ReactNode
@@ -287,7 +285,7 @@ function SimPanel({
         />
         Safe zone
       </div>
-      <RobotViewer embedded forcedMode={mode} />
+      <RobotViewer embedded />
       {caption && (
         <div className="tut-sim-caption">
           <div className="tut-sim-caption-pill">{caption}</div>
@@ -504,7 +502,7 @@ function SimPlaygroundScreen({
       </div>
 
       <div className="tut-twocol">
-        <SimPanel mode="manual" cameraUrl={cameraUrl} />
+        <SimPanel cameraUrl={cameraUrl} />
         <div className="tut-right">
           <div className="tut-right-scroll">
             <AgentBubble>
@@ -722,7 +720,7 @@ function ConceptJointsScreen({
     <>
       <ConceptHeader index={0} title="Joints & Movement" onSkip={onNext} />
       <div className="tut-twocol">
-        <SimPanel mode="auto" cameraUrl={cameraUrl} />
+        <SimPanel cameraUrl={cameraUrl} />
         <div className="tut-right">
           <div className="tut-right-scroll">
             <AgentBubble>
@@ -828,7 +826,7 @@ function ConceptIntentScreen({
     <>
       <ConceptHeader index={1} title="Instructions & Intent" onSkip={onNext} />
       <div className="tut-twocol">
-        <SimPanel mode="auto" cameraUrl={cameraUrl} />
+        <SimPanel cameraUrl={cameraUrl} />
         <div className="tut-right">
           <div className="tut-right-scroll">
             <AgentBubble>
@@ -958,7 +956,7 @@ function ConceptSafetyScreen({
     <>
       <ConceptHeader index={2} title="Safety Checks" onSkip={onNext} />
       <div className="tut-twocol">
-        <SimPanel mode="auto" cameraUrl={cameraUrl} />
+        <SimPanel cameraUrl={cameraUrl} />
         <div className="tut-right">
           <div className="tut-right-scroll">
             <AgentBubble>
@@ -1064,7 +1062,6 @@ function ConceptFollowScreen({
       <ConceptHeader index={3} title="Follow My Movement" onSkip={onNext} />
       <div className="tut-twocol">
         <SimPanel
-          mode="auto"
           cameraUrl={cameraUrl}
           overlay={
             s.capturePhase === 'countdown' && s.countdown != null ? (
@@ -1189,7 +1186,6 @@ function ConceptSaveScreen({
       <ConceptHeader index={4} title="Save a Pose" onSkip={onNext} />
       <div className="tut-twocol">
         <SimPanel
-          mode="auto"
           cameraUrl={cameraUrl}
           overlay={
             s.capturePhase === 'countdown' && s.countdown != null ? (
@@ -1437,7 +1433,6 @@ function FreePracticeScreen({
 
       <div className="tut-twocol">
         <SimPanel
-          mode="auto"
           cameraUrl={cameraUrl}
           overlay={
             s.capturePhase === 'countdown' && s.countdown != null ? (

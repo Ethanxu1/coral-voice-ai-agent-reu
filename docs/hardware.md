@@ -262,7 +262,7 @@ In order of likelihood:
 
 **Servo 20 — the right elbow bend — is mechanically damaged.** It cannot travel its
 full range, so it is capped in software: `HW_SERVO_LIMITS` in
-`src/robot/hardware_angle_utils.py` gives `r_el_yaw` a range of `(450, 850)` where
+`backend/app/robot/hardware_angle_utils.py` gives `r_el_yaw` a range of `(450, 850)` where
 an undamaged servo would get the full `0–1000`. Note that the physical elbow *bend*
 is `*_el_yaw` (servos 19/20), not `*_el_pitch` — the YAML joint names are
 misleading, and `*_el_pitch` (17/18) is forearm rotation.
@@ -287,7 +287,7 @@ symmetric in the sim can land a few degrees apart on the two arms.
 
 Before chasing this as a software bug, move the joint by hand and confirm the servo
 itself reaches the angle. If a range in `HW_SERVO_LIMITS` turns out to be wrong,
-edit it there and nowhere else: `src/validation.py` derives the sim-radian
+edit it there and nowhere else: `backend/app/validation.py` derives the sim-radian
 `JOINT_LIMITS` from that table, so the two stay in lockstep. Every range must still
 contain its joint's `STAND_PULSE`, or the stand pose becomes unreachable.
 
@@ -303,4 +303,4 @@ the two, so it is safe, but the true mechanical floor has not been re-measured.
 
 **Keep the battery above 10V.** A full charge takes roughly one hour. To maintain the robot's optimal performance, charge it promptly once the voltage drops to **≤10V**
 
-**The Pi hostname and IP are hard-coded as defaults** in `src/robot/hardware_controller.py` and the README. If the robot's address changes, override `ROBOT_IP` rather than editing the default.
+**The Pi hostname and IP are hard-coded as defaults** in `backend/app/robot/hardware_controller.py` and the README. If the robot's address changes, override `ROBOT_IP` rather than editing the default.

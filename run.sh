@@ -10,6 +10,7 @@
 #   ./run.sh -speaker                 # also start uv run speaker
 #   ./run.sh -live -ip 192.168.8.219 -speaker
 set -euo pipefail
+set -m  # enable job control so each background job gets its own process group
 
 LIVE=false
 ROBOT_IP=""
@@ -51,11 +52,23 @@ LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 PIDS=()
+CLEANING_UP=0
 
 cleanup() {
+    if [[ "$CLEANING_UP" -ne 0 ]]; then
+        return
+    fi
+    CLEANING_UP=1
     echo "Stopping..."
     for pid in "${PIDS[@]}"; do
-        kill "$pid" >/dev/null 2>&1 || true
+        # Kill the entire process group so uv/uvicorn/npm children go down too.
+        kill -- -"$pid" >/dev/null 2>&1 || true
+    done
+    sleep 0.5
+    for pid in "${PIDS[@]}"; do
+        if kill -0 "$pid" >/dev/null 2>&1; then
+            kill -9 -- -"$pid" >/dev/null 2>&1 || true
+        fi
     done
     wait >/dev/null 2>&1 || true
 }

@@ -55,33 +55,33 @@ reid = [
 ]
 
 [project.scripts]
-server = "server:main"
-robot = "server:main_robot"
-sim-test = "server:main_sim_test"
-speaker = "speaker.speaker_server:main"
-vision = "vision.vision_server:main"
-# collision-test / leg-bucket-test moved to tests/ (dev harnesses, not packaged);
-# run directly: `python tests/collision_test.py`, `python tests/leg_bucket_test.py`.
-# robot-agent / robot-server removed with the retired robot_agent.py / gen-2 Pi server.
+server = "app.main:main"
+robot = "app.main:main_robot"
+sim-test = "app.main:main_sim_test"
+speaker = "app.speaker.speaker_server:main"
+vision = "app.vision.vision_server:main"
+# collision-test / leg-bucket-test moved to backend/tests/ (dev harnesses, not packaged);
+# run directly: `python backend/tests/collision_test.py`, `python backend/tests/leg_bucket_test.py`.
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# Flat src layout: each dir under src/ is a top-level package (robot, vision,
-# llm, simulator, speaker, collision) and the loose modules (server.py,
-# validation.py, state.py, follow_controller.py, pose_db.py) sit at the wheel
-# root. `only-include = ["src"]` ships everything under src/; `sources = ["src"]`
-# strips the prefix so imports are `import server`, `from validation import …`.
-only-include = ["src"]
-sources = ["src"]
+# The backend lives under backend/app. Each subdirectory (robot, vision, llm,
+# simulator, speaker, collision) becomes a top-level package inside the wheel,
+# and the loose modules (main.py, validation.py, state_manager.py,
+# follow_controller.py) sit at the wheel root as `app.*`.
+# `only-include = ["backend/app"]` ships everything under backend/app;
+# `sources = ["backend"]` tells hatchling that backend/ is the parent of the
+# package directories, so `backend/app/` becomes the importable `app` package.
+only-include = ["backend/app"]
+sources = ["backend"]
 
 [tool.pytest.ini_options]
-# src on the path so tests import the top-level packages without an install;
-# only collect real tests (test_*.py) — the *_test.py files under tests/ are
-# manual harnesses (collision_test, leg_bucket_test, speaker_test, …), not suites.
-pythonpath = ["src"]
+# backend/app on the path so tests import the app packages without an install;
+# only collect real tests (test_*.py) — the *_test.py files are manual harnesses.
+pythonpath = ["backend/app"]
 python_files = ["test_*.py"]
 
 [dependency-groups]

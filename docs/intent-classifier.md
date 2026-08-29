@@ -1,6 +1,6 @@
 # CORAL Intent Classifier — Regex/Hybrid Matching
 
-The intent classifier in [`src/llm/intent_classifier.py`](../src/llm/intent_classifier.py) uses a hybrid architecture:
+The intent classifier in [`backend/app/llm/intent_classifier.py`](../backend/app/llm/intent_classifier.py) uses a hybrid architecture:
 
 1. **Regex/template matchers** run first and classify deterministic commands instantly.
 2. If a matcher is uncertain (confidence below `INTENT_HIGH_CONFIDENCE_THRESHOLD`, default `0.85`), the classifier falls back to the LLM.
@@ -8,7 +8,7 @@ The intent classifier in [`src/llm/intent_classifier.py`](../src/llm/intent_clas
 
 This gives the common, unambiguous commands (`"follow me"`, `"turn your head left"`, `"what can you do"`) a fast, reliable path while preserving the LLM for ambiguous or open-ended input.
 
-The classifier sits between transcription and the motion planner — see [code-flow.md](code-flow.md) for the full voice-to-motion path, and [overview.md](overview.md) for how the pieces fit together. The fallback model is `LLM_MODEL` from [`src/llm/config.py`](../src/llm/config.py), overridable per call via the `model` argument.
+The classifier sits between transcription and the motion planner — see [code-flow.md](code-flow.md) for the full voice-to-motion path, and [overview.md](overview.md) for how the pieces fit together. The fallback model is `LLM_MODEL` from [`backend/app/llm/config.py`](../backend/app/llm/config.py), overridable per call via the `model` argument.
 
 ## Entry point
 
@@ -157,7 +157,7 @@ Regex falls back to the LLM when:
 2. No regex matcher fires.
 3. A correction or retry pattern matched but there is no assistant history.
 
-The LLM receives the same prompt as before ([`src/llm/prompts/intent_classifier.md`](../src/llm/prompts/intent_classifier.md)) with `CURRENT_STATE`, `STATE_DESCRIPTION`, `follow_active`, saved poses, and conversation history.
+The LLM receives the same prompt as before ([`backend/app/llm/prompts/intent_classifier.md`](../backend/app/llm/prompts/intent_classifier.md)) with `CURRENT_STATE`, `STATE_DESCRIPTION`, `follow_active`, saved poses, and conversation history.
 
 If the LLM fails and regex had a low-confidence motion, the classifier emits a clarification question using the motion description instead of falling back to conversation. For example:
 
@@ -192,7 +192,7 @@ The intent classifier is the router: only finalized motion descriptions reach th
 
 This means:
 - "Move your arm up" → classified as `clarification` → no backend call until the user clarifies.
-- "What can you do?" → classified as `conversation` → handled by [`src/llm/prompts/chat.md`](../src/llm/prompts/chat.md), not the motion planner.
+- "What can you do?" → classified as `conversation` → handled by [`backend/app/llm/prompts/chat.md`](../backend/app/llm/prompts/chat.md), not the motion planner.
 - "Raise your right arm" → classified as `motion` → approval modal → motion planner receives the clean description.
 
 ## Testing
