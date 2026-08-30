@@ -157,6 +157,8 @@ export function useRefinedDemoMachine() {
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
+  // Aborts the in-flight voice-approval capture when the user clicks Approve/Reject.
+  const voiceApprovalAbortRef = useRef<AbortController | null>(null)
   // Mirrors state.approvalsEnabled so the async run() loop reads the current
   // setting rather than the value captured when the run started.
   const approvalsEnabledRef = useRef(false)
@@ -255,6 +257,8 @@ export function useRefinedDemoMachine() {
   const approveIntent = useCallback(() => {
     const resolve = approvalResolverRef.current
     approvalResolverRef.current = null
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     dispatch({ pendingIntent: null })
     resolve?.(true)
   }, [])
@@ -262,6 +266,8 @@ export function useRefinedDemoMachine() {
   const rejectIntent = useCallback(() => {
     const resolve = approvalResolverRef.current
     approvalResolverRef.current = null
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     dispatch({ pendingIntent: null })
     resolve?.(false)
   }, [])
@@ -275,6 +281,8 @@ export function useRefinedDemoMachine() {
     if (!next) {
       const resolve = approvalResolverRef.current
       approvalResolverRef.current = null
+      voiceApprovalAbortRef.current?.abort()
+      voiceApprovalAbortRef.current = null
       dispatch({ approvalsEnabled: next, pendingIntent: null })
       resolve?.(true)
     } else {
@@ -561,12 +569,65 @@ export function useRefinedDemoMachine() {
       })
     }
 
+    // Capture a short yes/no answer while the approval modal is visible.
+    // Returns true/false or null when the utterance isn't clearly yes/no.
+    const listenForYesNo = async (signal: AbortSignal): Promise<boolean | null> => {
+      try {
+        const blob = await captureUtterance({
+          silenceMs: 900,
+          maxMs: 7000,
+          signal,
+        })
+        const text = (await sendAudioForTranscript(blob)).trim().toLowerCase()
+        if (!text) return null
+        if (/\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it)\b/.test(text)) return true
+        if (/\b(no|nope|nah|cancel|never mind|nevermind)\b/.test(text)) return false
+        return null
+      } catch {
+        return null
+      }
+    }
+
     const awaitApproval = (description: string): Promise<boolean> => {
       // Pop-ups toggled off: auto-approve without ever showing the modal.
       if (!approvalsEnabledRef.current) return Promise.resolve(true)
       return new Promise<boolean>((resolve) => {
-        approvalResolverRef.current = resolve
+        let resolved = false
+        const doResolve = (val: boolean) => {
+          if (resolved) return
+          resolved = true
+          approvalResolverRef.current = null
+          voiceApprovalAbortRef.current?.abort()
+          voiceApprovalAbortRef.current = null
+          dispatch({ pendingIntent: null })
+          resolve(val)
+        }
+
+        approvalResolverRef.current = doResolve
         dispatch({ pendingIntent: description })
+
+        // Also accept a spoken yes/no. The mic is free because the main run()
+        // loop is blocked on this promise. Loop a few times so a mumbled or
+        // unclear first answer doesn't force the child to use the buttons.
+        const voiceLoop = async () => {
+          for (let attempt = 0; attempt < 3 && !resolved; attempt++) {
+            const ctrl = new AbortController()
+            voiceApprovalAbortRef.current = ctrl
+            const answer = await listenForYesNo(ctrl.signal)
+            if (resolved) return
+            if (answer === true) {
+              doResolve(true)
+              return
+            }
+            if (answer === false) {
+              doResolve(false)
+              return
+            }
+            // Unrecognized answer: keep the modal up and listen once more,
+            // unless this was the last attempt.
+          }
+        }
+        voiceLoop()
       })
     }
 
@@ -1196,6 +1257,8 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     stopCurrentAudio()
     selectionUnsubRef.current?.()
     selectionUnsubRef.current = null
@@ -1209,6 +1272,8 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     const names = await listPoses()
     dispatch({ stage: 'LIBRARY', savedPoses: names })
   }, [abortCurrentCapture])
@@ -1217,6 +1282,8 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     const names = await listPoses()
     dispatch({ stage: 'EXIT_CONFIRM', savedPoses: names, replayIdx: null })
     runExitReplay(names)

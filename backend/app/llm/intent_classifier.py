@@ -68,7 +68,7 @@ def _compile(pattern: str) -> re.Pattern[str]:
 # ---------------------------------------------------------------------------
 
 _IMMEDIATE_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
-    (_compile(r"\b(follow me|mirror me|copy me|mimic me|start following|follow my moves|follow my movement|mirror my moves|copy my movements|mimic my movements)\b"), "follow_start", 0.95),
+    (_compile(r"\b(follow me|mirror me|copy me|mimic me|start following|follow my moves?|follow my movements?|mirror my moves?|mirror my movements?|copy my movements?|mimic my movements?)\b"), "follow_start", 0.95),
     (_compile(r"\b(stop following|stop mirroring|stop copying|don't follow me|stop mimicking|quit following)\b"), "follow_stop", 0.95),
     (_compile(r"\b(take a snapshot|take a picture|capture my pose|copy my pose|mimic my pose|snapshot|capture this|freeze|lock it in|record my pose|picture of me|take a picture of me|i want you to (take a picture|capture my pose|record my pose|copy my pose)|can you (take a picture|capture my pose|record my pose))\b"), "capture", 0.95),
     (_compile(r"\b(my poses|show poses|saved poses|list poses|what poses do i have|pose library)\b"), "library", 0.90),
@@ -95,7 +95,7 @@ _UNDO_RESET_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
 # ---------------------------------------------------------------------------
 
 _CONVERSATION_PATTERNS: list[re.Pattern[str]] = [
-    _compile(r"^(hi|hello|hey|howdy|what['\u2019]s up)\b"),
+    _compile(r"^(hi|hello|hey|howdy|what['\u2019]s up)[\s!.]*$"),
     _compile(r"\b(how are you|what can you do|who are you|what is your name|tell me about yourself)\b"),
     _compile(r"\b(thanks?|thank you|that's cool|that['\u2019]s awesome|nice|great|wow|ok|okay)\b"),
     _compile(r"\b(what does that look like|describe your pose|what do you look like)\b"),
@@ -120,11 +120,13 @@ _MOTION_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
     # Head tilt (implicit: "look up", "look down")
     (_compile(r"\b(look|tilt)\s+(?P<dir>up|down)\b"), "head_tilt", 0.88),
     # Arm forward / raise (explicit direction)
-    (_compile(rf"\b(raise|lift|move)\s+(?:your\s+)?{_SIDE_WORDS}?\s*(?:arm|arms)\s+(?P<dir>forward|up|out|sideways)\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "arm", 0.88),
+    (_compile(rf"\b(raise|lift|move|put)\s+(?:your\s+)?{_SIDE_WORDS}?\s*(?:arm|arms)\s+(?P<dir>forward|up|out|sideways)\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "arm", 0.88),
     # Arm forward / raise (explicit side only)
-    (_compile(rf"\b(raise|lift|move)\s+(?:your\s+)?{_SIDE_WORDS}\s+(?:arm|arms)\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "arm", 0.85),
+    (_compile(rf"\b(raise|lift|move|put)\s+(?:your\s+)?{_SIDE_WORDS}\s+(?:arm|arms)\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "arm", 0.85),
     # Arm forward / raise (bare: "raise your arm" — ambiguous side, defaults to forward)
-    (_compile(r"\b(raise|lift|move)\s+(?:your\s+)?(?:left|right|both)?\s*(?:arm|arms)\b"), "arm", 0.80),
+    (_compile(r"\b(raise|lift|move|put)\s+(?:your\s+)?(?:left|right|both)?\s*(?:arm|arms)\b"), "arm", 0.80),
+    # "put your arm up" / "put your left arm up" — child phrasing not caught above
+    (_compile(rf"\bput\s+(?:your\s+)?{_SIDE_WORDS}?\s*(?:arm|arms)\s+up\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "arm", 0.86),
     # Arm out / sideways
     (_compile(rf"\b(extend|put|move|hold)\s+(?:your\s+)?{_SIDE_WORDS}?\s*(?:arm|arms)\s+(?:out|to the side|sideways)\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "arm_out", 0.88),
     # Lower arm / put down
@@ -156,6 +158,19 @@ _RETRY_PATTERNS: list[re.Pattern[str]] = [
 # ---------------------------------------------------------------------------
 # Matcher helpers
 # ---------------------------------------------------------------------------
+
+# Markers that indicate the user wants multiple sequential motions. Regex
+# matchers only return a single motion, so compound commands should fall through
+# to the LLM which can produce multi-waypoint plans.
+_COMPOUND_MARKERS_RE = re.compile(
+    r"\b(and\s+then|then|after\s+that|next|first\b.*\bthen)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_compound_command(text: str) -> bool:
+    return _COMPOUND_MARKERS_RE.search(text) is not None
+
 
 def _has_assistant_history(history: list[dict] | None) -> bool:
     return bool(history and any(m.get("role") == "assistant" for m in history))
@@ -371,14 +386,18 @@ def _match_retry(text: str, history: list[dict] | None) -> ClassifiedIntent | No
 def _match_regex(text: str, history: list[dict] | None) -> ClassifiedIntent | None:
     """Run regex matchers in order of specificity. Return the best match."""
     normalized = normalize_for_regex(text)
+    is_compound = _is_compound_command(normalized)
 
     matchers = [
         _match_immediate,
         _match_retry,
-        _match_motion,
-        _match_correction,
-        _match_conversation,
     ]
+    # Compound commands need multi-waypoint plans; skip single-motion regex so
+    # the LLM sees the full request and can emit several waypoints.
+    if not is_compound:
+        matchers.extend([_match_motion, _match_correction])
+    matchers.append(_match_conversation)
+
     for matcher in matchers:
         # retry/correction need history; the rest don't
         result = (
@@ -442,12 +461,71 @@ def _load_prompt() -> str:
 
 
 def _build_intent_json_schema() -> dict[str, Any]:
-    """Build the JSON Schema used to constrain the LLM fallback output."""
-    schema = _INTENT_ADAPTER.json_schema()
-    # OpenAI structured outputs require a top-level object with additionalProperties false.
-    schema["$schema"] = "http://json-schema.org/draft-07/schema#"
-    schema["additionalProperties"] = False
-    return schema
+    """Build a single-object JSON Schema that OpenAI structured outputs accepts.
+
+    Pydantic's discriminated-union JSON schema uses ``oneOf`` at the top level,
+    which OpenAI rejects ("schema must have type 'object' and not have
+    'oneOf'/'anyOf'/'allOf' at the top level"). We therefore flatten the union
+    into one object with all fields optional and let the prompt instruct the LLM
+    which fields to emit for each ``type``. Pydantic validation still enforces
+    the correct discriminated-union shape after parsing.
+    """
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "type": {
+                "type": "string",
+                "enum": ["immediate", "motion", "clarification", "conversation"],
+                "description": "Intent category",
+            },
+            "intent": {
+                "type": "string",
+                "enum": [
+                    "follow_start",
+                    "follow_stop",
+                    "capture",
+                    "library",
+                    "exit",
+                    "save_robot_pose",
+                    "naming",
+                    "undo",
+                    "reset",
+                    "rollback_and_retry",
+                ],
+                "description": "Required when type=immediate",
+            },
+            "name": {"type": "string", "description": "Optional naming suggestion when type=immediate/intent=naming"},
+            "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required when type=motion: a precise natural-language movement instruction",
+            },
+            "direction": {
+                "type": "string",
+                "enum": ["left", "right", "up", "down", "in", "out"],
+                "description": "Optional movement direction",
+            },
+            "angle": {"type": "number", "description": "Optional explicit angle in degrees"},
+            "body_parts": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional body parts involved in the motion",
+            },
+            "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required when type=clarification",
+            },
+            "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required when type=conversation: echo the user's message",
+            },
+        },
+        "required": ["type"],
+        "additionalProperties": False,
+    }
 
 
 @observe(name="classify_intent_llm_fallback")

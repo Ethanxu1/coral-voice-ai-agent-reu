@@ -982,9 +982,17 @@
   font-family: 'Baloo 2', cursive;
   font-size: 17px;
   font-weight: 700;
-  margin-bottom: 26px;
+  margin-bottom: 10px;
   text-align: center;
   line-height: 1.4;
+}
+
+.rd-intent-hint {
+  font-size: 13px;
+  font-weight: 700;
+  color: #8A8398;
+  margin-bottom: 18px;
+  text-align: center;
 }
 
 /* Poses gallery in exit overlay */

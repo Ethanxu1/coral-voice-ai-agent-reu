@@ -122,15 +122,31 @@ def _build_plain(description: str) -> Optional[PlainWaypoint]:
     return PlainWaypoint(primitives=[primitive], angle=angle, direction=direction)
 
 
+_SEQUENTIAL_SEPARATORS_RE = re.compile(r"\s+(?:and\s+then|then|after\s+that|next)\s+", re.IGNORECASE)
+
+
 def plan_for_description(description: str) -> Optional[MotionPlan]:
     """Return a deterministic MotionPlan for a known description, if any.
 
-    Returns None when the description cannot be mapped safely.
+    Handles single motions and simple sequential commands (e.g. "raise left arm
+    then lower right arm") by splitting on common sequential markers and building
+    one waypoint per clause. Returns None when the description cannot be mapped
+    safely.
     """
-    waypoint = _build_plain(description)
-    if waypoint is None:
+    clauses = [c.strip() for c in _SEQUENTIAL_SEPARATORS_RE.split(description) if c.strip()]
+    if not clauses:
+        clauses = [description]
+
+    waypoints: list[PlainWaypoint] = []
+    for clause in clauses:
+        wp = _build_plain(clause)
+        if wp is None:
+            return None
+        waypoints.append(wp)
+
+    if not waypoints:
         return None
-    return MotionPlan(action="motion", waypoints=[waypoint])
+    return MotionPlan(action="motion", waypoints=waypoints)
 
 
 def plan_for_saved_pose(pose_name: str) -> MotionPlan:

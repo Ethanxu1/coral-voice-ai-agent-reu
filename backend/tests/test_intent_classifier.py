@@ -14,6 +14,26 @@ class TestImmediateIntents:
         assert result.data["intent"] == "follow_start"
         assert result.confidence >= HIGH_CONFIDENCE_THRESHOLD
 
+    def test_follow_start_movement_phrasing(self):
+        for phrase in [
+            "follow my movement",
+            "follow my movements",
+            "Follow my movement.",
+            "mirror my movement",
+            "copy my movement",
+            "mimic my movement",
+        ]:
+            result = classify_intent_regex(phrase)
+            assert result is not None, phrase
+            assert result.type == "immediate", phrase
+            assert result.data["intent"] == "follow_start", phrase
+
+    def test_follow_start_with_greeting_prefix(self):
+        result = classify_intent_regex("Hey, can you follow my movement?")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "follow_start"
+
     def test_follow_stop(self):
         result = classify_intent_regex("stop following")
         assert result is not None
@@ -130,6 +150,23 @@ class TestMotionIntents:
         assert result is not None
         assert "45" in result.data["description"]
 
+    def test_put_arm_up(self):
+        result = classify_intent_regex("put your left arm up")
+        assert result is not None
+        assert result.type == "motion"
+        assert "left" in result.data["description"].lower()
+
+    def test_put_arm_down(self):
+        result = classify_intent_regex("put your right arm down")
+        assert result is not None
+        assert result.type == "motion"
+        assert "right" in result.data["description"].lower()
+
+    def test_compound_command_skips_regex_motion(self):
+        """Compound sequential commands should fall through to the LLM."""
+        result = classify_intent_regex("raise your left arm and then lower your right arm")
+        assert result is None
+
 
 class TestConversationIntents:
     def test_greeting(self):
@@ -205,6 +242,20 @@ class TestRegexPitfalls:
         assert result is not None
         assert result.type == "immediate"
         assert result.data["intent"] == "exit"
+
+
+class TestLLMSchemaShape:
+    def test_intent_json_schema_is_openai_compatible(self):
+        """OpenAI structured outputs reject oneOf/anyOf/allOf at the top level."""
+        from app.llm.intent_classifier import _build_intent_json_schema
+
+        schema = _build_intent_json_schema()
+        assert schema.get("type") == "object"
+        assert "oneOf" not in schema
+        assert "anyOf" not in schema
+        assert "allOf" not in schema
+        assert schema.get("additionalProperties") is False
+        assert "type" in schema.get("properties", {})
 
 
 class TestPydanticResponseShape:

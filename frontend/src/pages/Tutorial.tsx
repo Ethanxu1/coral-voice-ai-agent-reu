@@ -678,7 +678,11 @@ function ConceptJointsScreen({
   dispatch: React.Dispatch<Action>
   cameraUrl: string
   onNext: () => void
-  sendCommand: (text: string) => Promise<ActionResult>
+  sendCommand: (
+    text: string,
+    intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
+    description?: string,
+  ) => Promise<ActionResult>
 }) {
   const abortRef = useRef<AbortController | null>(null)
 
@@ -759,7 +763,11 @@ function ConceptIntentScreen({
   dispatch: React.Dispatch<Action>
   cameraUrl: string
   onNext: () => void
-  sendCommand: (text: string) => Promise<ActionResult>
+  sendCommand: (
+    text: string,
+    intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
+    description?: string,
+  ) => Promise<ActionResult>
 }) {
   const abortRef = useRef<AbortController | null>(null)
   const [intent, setIntent] = useState<IntentResult | null>(null)
@@ -902,7 +910,11 @@ function ConceptSafetyScreen({
   dispatch: React.Dispatch<Action>
   cameraUrl: string
   onNext: () => void
-  sendCommand: (text: string) => Promise<ActionResult>
+  sendCommand: (
+    text: string,
+    intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
+    description?: string,
+  ) => Promise<ActionResult>
 }) {
   const abortRef = useRef<AbortController | null>(null)
   const didReset = useRef(false)
@@ -914,27 +926,16 @@ function ConceptSafetyScreen({
     return () => { abortRef.current?.abort() }
   }, [])
 
-  const prompt = 'rotate your right arm all the way into your stomach'
+  const demoCommand = 'rotate your right arm all the way into your stomach'
 
-  const listen = async () => {
+  const runDemo = async () => {
     dispatch({ type: 'SET_ERROR', text: '' })
-    dispatch({ type: 'SET_TRANSCRIPT', text: '' })
+    dispatch({ type: 'SET_TRANSCRIPT', text: demoCommand })
     dispatch({ type: 'CLEAR_STEPPER' })
-    dispatch({ type: 'SET_VOICE_PHASE', phase: 'listening' })
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
+    dispatch({ type: 'SET_VOICE_PHASE', phase: 'thinking' })
     try {
-      const blob = await captureUtterance({ signal: ctrl.signal })
-      dispatch({ type: 'SET_VOICE_PHASE', phase: 'thinking' })
-      const text = await sendAudioForTranscript(blob)
-      if (!text.trim()) {
-        dispatch({ type: 'SET_ERROR', text: "I didn't catch that — try again!" })
-        dispatch({ type: 'SET_VOICE_PHASE', phase: 'idle' })
-        return
-      }
-      dispatch({ type: 'SET_TRANSCRIPT', text })
-      dispatch({ type: 'SET_STEPPER', stepper: { command: text, understanding: 'Rotate right arm inward' } })
-      await sendCommand(text)
+      dispatch({ type: 'SET_STEPPER', stepper: { command: demoCommand, understanding: 'Rotate right arm inward' } })
+      await sendCommand(demoCommand, 'motion', 'Rotate right arm inward')
       dispatch({
         type: 'SET_STEPPER',
         stepper: {
@@ -960,11 +961,18 @@ function ConceptSafetyScreen({
         <div className="tut-right">
           <div className="tut-right-scroll">
             <AgentBubble>
-              I always check a move is safe before I try it. First I'll stand back up — then ask me to rotate my right arm all the way into my stomach and watch what happens.
+              I always check a move is safe before I try it. First I'll stand back up — then press the button and watch what happens when I try to rotate my right arm all the way into my stomach.
             </AgentBubble>
 
-            <SuggestedChips prompts={[prompt]} onPrompt={() => listen()} />
-            <MicOrb phase={s.voicePhase} onClick={listen} label={`Tap and say "${prompt}"`} />
+            {s.voicePhase !== 'done' && (
+              <button
+                className="tut-next-btn"
+                onClick={runDemo}
+                disabled={s.voicePhase === 'thinking'}
+              >
+                {s.voicePhase === 'thinking' ? 'Running safety check…' : 'Show me the safety check'}
+              </button>
+            )}
 
             <TranscriptBox text={s.transcript} />
             {s.error && <div className="tut-waiting-text">{s.error}</div>}
@@ -1623,9 +1631,16 @@ export default function Tutorial() {
     dispatch({ type: 'GO', screen })
   }, [])
 
-  const sendCommand = useCallback(async (text: string): Promise<ActionResult> => {
-    return actionSessionRef.current!.sendText(text)
-  }, [])
+  const sendCommand = useCallback(
+    async (
+      text: string,
+      intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
+      description?: string,
+    ): Promise<ActionResult> => {
+      return actionSessionRef.current!.sendText(text, intentType, description)
+    },
+    [],
+  )
 
   const runBlockMove = useCallback(async (part: string, dir: string) => {
     dispatch({ type: 'BLOCK_CHECKING' })

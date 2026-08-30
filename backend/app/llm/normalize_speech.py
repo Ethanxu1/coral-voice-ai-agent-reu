@@ -32,6 +32,8 @@ _CONTRACTIONS: list[tuple[re.Pattern[str], str]] = [
 _MOTION_SYNONYMS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(make|put)\s+it\s+(go\s+)?up\b", re.IGNORECASE), "raise"),
     (re.compile(r"\b(make|put)\s+it\s+(go\s+)?down\b", re.IGNORECASE), "lower"),
+    (re.compile(r"\bput\s+(?:your\s+|my\s+|the\s+)?(left|right|both)?\s*(?:arm|arms)\s+up\b", re.IGNORECASE), r"raise \1 arm"),
+    (re.compile(r"\bput\s+(?:your\s+|my\s+|the\s+)?(left|right|both)?\s*(?:arm|arms)\s+down\b", re.IGNORECASE), r"lower \1 arm"),
     (re.compile(r"\blift\s+(it\s+)?up\b", re.IGNORECASE), "raise"),
     (re.compile(r"\bput\s+(it\s+)?down\b", re.IGNORECASE), "lower"),
     (re.compile(r"\bmove\s+it\s+out\b", re.IGNORECASE), "extend"),
@@ -39,6 +41,10 @@ _MOTION_SYNONYMS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bmove\s+it\s+down\b", re.IGNORECASE), "lower"),
     (re.compile(r"\bturn\s+it\s+(left|right)\b", re.IGNORECASE), r"turn \1"),
     (re.compile(r"\blook\s+it\s+(left|right)\b", re.IGNORECASE), r"look \1"),
+    # "put your head up/down" → tilt head up/down
+    (re.compile(r"\bput\s+(?:your\s+|my\s+|the\s+)?head\s+(up|down)\b", re.IGNORECASE), r"tilt head \1"),
+    # "put your head left/right" → turn head left/right
+    (re.compile(r"\bput\s+(?:your\s+|my\s+|the\s+)?head\s+(left|right)\b", re.IGNORECASE), r"turn head \1"),
 ]
 
 # Collapse repeated words (e.g. "the the the" → "the").

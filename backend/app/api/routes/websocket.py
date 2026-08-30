@@ -15,6 +15,8 @@ from loguru import logger
 from app.robot.angle_utils import rad_to_servo_units
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import SERVO_ID_MAP
+from app.data.pose_db import list_pose_names
+from app.llm.intent_classifier import classify_intent
 from app.services.chat import (
     HierarchicalMemory,
     _build_pre_context,
@@ -27,8 +29,10 @@ from app.services.motion import (
     RobotServerUnavailable,
     _get_robot_state,
     _sync_sim_to_hardware,
+    convert_state_to_degrees,
     dispatch_servo_commands,
 )
+from app.services.clean_logger import close_logger, get_or_create_logger
 from app.services.recording import ConversationRecorder
 from app.services.transcription import transcribe_audio
 from app.services.tts import generate_speech
@@ -76,6 +80,130 @@ async def _send_response_with_audio(
         )
 
 
+async def _route_text_turn(
+    user_message: str,
+    websocket: WebSocket,
+    save_dialog: SavePoseDialog,
+    memory: HierarchicalMemory,
+    state_manager: StateManager,
+    recorder: ConversationRecorder,
+    session_id: str,
+    clean_logger: Any,
+    pre_context: tuple[dict, str, list] | None = None,
+    frontend_intent_type: str | None = None,
+    frontend_description: str | None = None,
+) -> dict:
+    """Classify and dispatch a text utterance using the hybrid intent classifier.
+
+    First tries the regex system-intent fast path; if that misses, asks the LLM
+    classifier (the same one used by ``/classify-intent``) and routes by its
+    result. This ensures novel child phrasing like "Can you mimic what I do?"
+    reaches follow/capture instead of being treated as conversation.
+    """
+    # Fast regex path for clients that send an explicit immediate intent.
+    if frontend_intent_type in (None, "immediate"):
+        if await try_handle_system_intent(
+            user_message, websocket, save_dialog, clean_logger=clean_logger
+        ):
+            return {"type": "handled_by_system_intent"}
+
+    # Build context for the LLM classifier.
+    if pre_context is not None:
+        robot_state, state_description, memory_ctx = pre_context
+    else:
+        robot_state = _get_robot_state()
+        state_description = describe_joint_state(robot_state)
+        memory_ctx = memory.get_context_for_llm()
+
+    follow_active = (
+        state.follow_controller.is_following
+        if state.follow_controller is not None
+        else False
+    )
+    intent_result = classify_intent(
+        user_message,
+        follow_active=follow_active,
+        state_degrees=convert_state_to_degrees(robot_state),
+        state_description=state_description,
+        saved_names=list_pose_names(),
+        history=memory_ctx,
+    )
+    clean_logger.user_message(
+        user_message,
+        extras={
+            "source": "typed/chat" if frontend_intent_type is not None else "audio",
+            "classified_type": intent_result.get("type"),
+            "classified_intent": intent_result.get("intent"),
+            "classifier": intent_result.get("classifier"),
+        },
+    )
+
+    # If the LLM also says immediate, force the system-intent handler with the
+    # exact intent it chose.
+    if intent_result["type"] == "immediate":
+        if await try_handle_system_intent(
+            user_message,
+            websocket,
+            save_dialog,
+            clean_logger=clean_logger,
+            intent_override=intent_result.get("intent"),
+        ):
+            return {"type": "handled_by_system_intent"}
+
+    if intent_result["type"] == "conversation" or frontend_intent_type == "conversation":
+        return await process_conversation_message(
+            user_message=user_message,
+            memory=memory,
+            recorder=recorder,
+            session_id=session_id,
+        )
+
+    if intent_result["type"] == "motion" or frontend_intent_type == "motion":
+        description = frontend_description or intent_result.get("description", user_message)
+        try:
+            return await process_chat_message(
+                user_message=description,
+                memory=memory,
+                state_manager=state_manager,
+                recorder=recorder,
+                simulator_instance=state.simulator,
+                session_id=session_id,
+                pre_context=pre_context,
+                on_action_started=lambda: websocket.send_json(
+                    {"type": "action_started"}
+                ),
+            )
+        except RobotServerUnavailable:
+            return {
+                "type": "chat_response",
+                "role": "assistant",
+                "content": _CHILD_FRIENDLY_ERRORS["robot_unavailable"],
+                "waypoints": [],
+            }
+
+    if intent_result["type"] == "clarification":
+        return {
+            "type": "chat_response",
+            "role": "assistant",
+            "content": intent_result.get("question", "Can you say that another way?"),
+            "waypoints": [],
+            "joint_states": _get_robot_state() or None,
+        }
+
+    # Unknown/unsupported result shape: fall back to the motion planner, which
+    # has its own deterministic fallback.
+    return await process_chat_message(
+        user_message=user_message,
+        memory=memory,
+        state_manager=state_manager,
+        recorder=recorder,
+        simulator_instance=state.simulator,
+        session_id=session_id,
+        pre_context=pre_context,
+        on_action_started=lambda: websocket.send_json({"type": "action_started"}),
+    )
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for chat and real-time updates."""
@@ -94,6 +222,7 @@ async def websocket_endpoint(websocket: WebSocket):
         websocket.query_params.get("session_id")
         or f"ws-{id(websocket)}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     )
+    clean_logger = get_or_create_logger(session_id)
 
     # Save initial state as checkpoint
     if state.simulator:
@@ -186,58 +315,30 @@ async def websocket_endpoint(websocket: WebSocket):
                 if save_dialog.stage != _SaveStage.IDLE:
                     if await handle_save_dialog(user_message, save_dialog, websocket):
                         continue
-                # The regex system-intent matcher is for clients that hand us raw
-                # speech and let us decide what it means. A client that sends an
-                # explicit intent_type has already classified this turn and owns
-                # the flow, so re-matching here would fight it.
-                if intent_type in (None, "immediate"):
-                    if await try_handle_system_intent(
-                        user_message, websocket, save_dialog
-                    ):
-                        continue
 
-                # Route conversation/clarification to the chat LLM and finalized
-                # motion descriptions to the motion planner.
-                if intent_type == "conversation":
-                    response_data = await process_conversation_message(
-                        user_message=user_message,
-                        memory=memory,
-                        recorder=recorder,
-                        session_id=session_id,
-                    )
-                elif intent_type == "motion" and motion_description:
-                    try:
-                        response_data = await process_chat_message(
-                            user_message=motion_description,
-                            memory=memory,
-                            state_manager=state_manager,
-                            recorder=recorder,
-                            simulator_instance=state.simulator,
-                            session_id=session_id,
-                            on_action_started=lambda: websocket.send_json(
-                                {"type": "action_started"}
-                            ),
-                        )
-                    except RobotServerUnavailable:
-                        response_data = {
-                            "type": "chat_response",
-                            "role": "assistant",
-                            "content": _CHILD_FRIENDLY_ERRORS["robot_unavailable"],
-                            "waypoints": [],
-                        }
-                else:
-                    response_data = await process_chat_message(
-                        user_message=user_message,
-                        memory=memory,
-                        state_manager=state_manager,
-                        recorder=recorder,
-                        simulator_instance=state.simulator,
-                        session_id=session_id,
-                        on_action_started=lambda: websocket.send_json(
-                            {"type": "action_started"}
-                        ),
-                    )
+                response_data = await _route_text_turn(
+                    user_message,
+                    websocket,
+                    save_dialog,
+                    memory,
+                    state_manager,
+                    recorder,
+                    session_id,
+                    clean_logger,
+                    frontend_intent_type=intent_type,
+                    frontend_description=motion_description,
+                )
+                if response_data.get("type") == "handled_by_system_intent":
+                    continue
                 await _send_response_with_audio(websocket, response_data)
+                clean_logger.agent_response(
+                    response_data.get("content", ""),
+                    response_type=response_data.get("type", "chat_response"),
+                    extras={
+                        "waypoints": len(response_data.get("waypoints", [])),
+                        "safety": response_data.get("safety"),
+                    },
+                )
 
             elif msg_type == "audio":
                 audio_b64 = message_data.get("data", "")
@@ -246,6 +347,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 transcribe_only = message_data.get("transcribe_only") is True
                 if transcribe_only:
                     transcribed_text = await asyncio.to_thread(transcribe_audio, audio_bytes)
+                    clean_logger.user_message(
+                        transcribed_text,
+                        extras={"source": "audio-transcribe-only"},
+                    )
                     await websocket.send_json(
                         {"type": "transcription", "text": transcribed_text}
                     )
@@ -257,29 +362,39 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json(
                     {"type": "transcription", "text": transcribed_text}
                 )
+                clean_logger.user_message(
+                    transcribed_text,
+                    extras={"source": "audio"},
+                )
                 if transcribed_text.strip():
                     if save_dialog.stage != _SaveStage.IDLE:
                         if await handle_save_dialog(
                             transcribed_text, save_dialog, websocket
                         ):
                             continue
-                    if await try_handle_system_intent(
-                        transcribed_text, websocket, save_dialog
-                    ):
-                        continue
-                    response_data = await process_chat_message(
-                        user_message=transcribed_text,
-                        memory=memory,
-                        state_manager=state_manager,
-                        recorder=recorder,
-                        simulator_instance=state.simulator,
-                        session_id=session_id,
+
+                    response_data = await _route_text_turn(
+                        transcribed_text,
+                        websocket,
+                        save_dialog,
+                        memory,
+                        state_manager,
+                        recorder,
+                        session_id,
+                        clean_logger,
                         pre_context=pre_context,
-                        on_action_started=lambda: websocket.send_json(
-                            {"type": "action_started"}
-                        ),
                     )
+                    if response_data.get("type") == "handled_by_system_intent":
+                        continue
                     await _send_response_with_audio(websocket, response_data)
+                    clean_logger.agent_response(
+                        response_data.get("content", ""),
+                        response_type=response_data.get("type", "chat_response"),
+                        extras={
+                            "waypoints": len(response_data.get("waypoints", [])),
+                            "safety": response_data.get("safety"),
+                        },
+                    )
 
             elif msg_type == "get_state":
                 robot_state = await asyncio.to_thread(_get_robot_state)
@@ -297,9 +412,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
+        clean_logger.websocket_event("disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         traceback.print_exc()
+        clean_logger.error(f"WebSocket error: {e}", e)
         try:
             await _send_response_with_audio(
                 websocket,
@@ -316,7 +433,10 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         connected_clients.discard(websocket)
         if state.follow_controller is not None and state.follow_controller.is_following:
-            await state.follow_controller.stop_follow()
+            await state.follow_controller.stop_follow(
+                reason="websocket closing", clean_logger=clean_logger
+            )
+        close_logger(session_id)
         logger.info(
             f"WebSocket client removed. Total clients: {len(connected_clients)}"
         )

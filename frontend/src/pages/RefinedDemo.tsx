@@ -484,13 +484,14 @@ export default function RefinedDemo() {
         </div>
       )}
 
-      {/* Intent approval modal — placeholder gate before executing a branch. */}
+      {/* Intent approval modal — voice yes/no or buttons. */}
       {state.pendingIntent && (
         <div className="rd-overlay">
           <div className="rd-overlay-card">
             <div className="rd-overlay-title">Is this right?</div>
             <div className="rd-intent-label">What I'll do</div>
             <div className="rd-intent-pill">{state.pendingIntent}</div>
+            <div className="rd-intent-hint">Say yes or no, or tap a button.</div>
             <div className="rd-overlay-btns">
               <button className="rd-overlay-btn primary" onClick={approveIntent}>
                 Approve

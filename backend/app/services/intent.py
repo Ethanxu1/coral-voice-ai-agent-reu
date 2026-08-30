@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from fastapi import WebSocket
 from loguru import logger
@@ -116,6 +117,10 @@ _FOLLOW_START_RE = re.compile(
     r"|\bcopy\s+me\b",
     re.IGNORECASE,
 )
+# Stop commands are matched without requiring follow_active: stop_follow is a
+# no-op when not following, and a user saying "stop following" after a follow
+# loop has already crashed/ended must still be handled as a system command
+# instead of falling through to the motion planner.
 _FOLLOW_STOP_RE = re.compile(
     r"\bstop\b(\s+(following|mimicking|copying|mirroring))?\b|\bquit\s+follow\b",
     re.IGNORECASE,
@@ -139,11 +144,15 @@ _SAVE_POSE_RE = re.compile(
 )
 
 
-def classify_system_intent(text: str, follow_active: bool) -> str | None:
+def classify_system_intent(text: str) -> str | None:
     """Match voice/chat input to a follow/capture/save system action.
 
     Returns one of {"follow_start", "follow_stop", "capture_pose",
     "save_current_pose"} or None to fall through to the LLM motion planner.
+    Stop-follow matching no longer requires an active follow loop: calling
+    stop_follow when not following is a safe no-op, and a user who says
+    "stop following" must not have their command re-interpreted as a head
+    motion by the chat planner.
     """
     t = text.strip()
     if not t:
@@ -154,7 +163,7 @@ def classify_system_intent(text: str, follow_active: bool) -> str | None:
         return "capture_pose"
     if _FOLLOW_START_RE.search(t):
         return "follow_start"
-    if follow_active and _FOLLOW_STOP_RE.search(t):
+    if _FOLLOW_STOP_RE.search(t):
         return "follow_stop"
     return None
 
@@ -171,19 +180,22 @@ async def try_handle_system_intent(
     websocket: WebSocket,
     save_dialog: SavePoseDialog,
     sim_only: bool | None = None,
+    clean_logger: Any | None = None,
+    intent_override: str | None = None,
 ) -> bool:
     """If the text matches a follow/capture/save intent, dispatch and reply. Return True if handled.
 
     ``sim_only`` follows the same sim/hardware toggle as /move and the chat
     motion planner, so follow/capture never dispatch to the physical robot
     just because the server happens to be running in hardware mode.
+
+    ``intent_override`` lets a caller that already ran the hybrid intent
+    classifier (e.g. the WebSocket audio path) supply the exact immediate
+    intent instead of re-running the regex matcher.
     """
-    follow_active = (
-        state.follow_controller.is_following
-        if state.follow_controller is not None
-        else False
-    )
-    intent = classify_system_intent(text, follow_active=follow_active)
+    intent = intent_override
+    if intent is None:
+        intent = classify_system_intent(text)
     if intent is None:
         return False
 
@@ -209,7 +221,9 @@ async def try_handle_system_intent(
         return False
 
     if intent == "follow_start":
-        await state.follow_controller.start_follow(status_fn, sim_only=sim_only)
+        await state.follow_controller.start_follow(
+            status_fn, sim_only=sim_only, clean_logger=clean_logger
+        )
         await websocket.send_json(
             {
                 "type": "chat_response",
@@ -222,7 +236,9 @@ async def try_handle_system_intent(
         return True
 
     if intent == "follow_stop":
-        await state.follow_controller.stop_follow(status_fn)
+        await state.follow_controller.stop_follow(
+            status_fn, reason="user requested stop", clean_logger=clean_logger
+        )
         await websocket.send_json(
             {
                 "type": "chat_response",
@@ -235,7 +251,9 @@ async def try_handle_system_intent(
         return True
 
     if intent == "capture_pose":
-        await state.follow_controller.trigger_capture_and_mimic(status_fn, sim_only=sim_only)
+        await state.follow_controller.trigger_capture_and_mimic(
+            status_fn, sim_only=sim_only, clean_logger=clean_logger
+        )
         await websocket.send_json(
             {
                 "type": "chat_response",

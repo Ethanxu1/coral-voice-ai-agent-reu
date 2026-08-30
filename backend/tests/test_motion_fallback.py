@@ -108,6 +108,25 @@ class TestChildParaphrases:
         assert wp.direction == "right"
 
 
+class TestCompoundCommands:
+    def test_raise_then_lower(self):
+        plan = plan_for_description("raise your left arm then lower your right arm")
+        assert plan is not None
+        assert len(plan.waypoints) == 2
+        assert plan.waypoints[0].primitives == ["left_arm_forward"]
+        assert plan.waypoints[1].primitives == ["right_arm_forward"]
+        assert plan.waypoints[1].angle == pytest.approx(0.0)
+
+    def test_and_then_separator(self):
+        plan = plan_for_description("turn your head left and then look up")
+        assert plan is not None
+        assert len(plan.waypoints) == 2
+        assert plan.waypoints[0].primitives == ["head_turn"]
+        assert plan.waypoints[0].direction == "left"
+        assert plan.waypoints[1].primitives == ["head_tilt"]
+        assert plan.waypoints[1].direction == "up"
+
+
 class TestNoMatch:
     def test_unknown_description_returns_none(self):
         assert plan_for_description("do a backflip") is None

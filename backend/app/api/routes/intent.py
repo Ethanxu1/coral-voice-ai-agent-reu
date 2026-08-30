@@ -10,6 +10,7 @@ from app.data.pose_db import list_pose_names
 from app.llm.config import LLM_MODEL
 from app.llm.intent_classifier import classify_intent
 from app.schemas.requests import IntentRequest
+from app.services.clean_logger import get_or_create_logger
 from app.services.motion import _get_robot_state, convert_state_to_degrees
 from app.validation import describe_joint_state
 
@@ -81,6 +82,23 @@ async def classify_intent_endpoint(req: IntentRequest) -> dict:
             history=req.history,
             model=LLM_MODEL,
         )
+
+        clean_logger = get_or_create_logger(session_id)
+        extras = {
+            "type": result.get("type"),
+            "classifier": result.get("classifier"),
+            "reason": result.get("reason"),
+        }
+        if result.get("type") == "immediate":
+            extras["intent"] = result.get("intent")
+            extras["name"] = result.get("name")
+        elif result.get("type") == "motion":
+            extras["description"] = result.get("description")
+        elif result.get("type") == "clarification":
+            extras["question"] = result.get("question")
+        elif result.get("type") == "conversation":
+            extras["text"] = result.get("text")
+        clean_logger.user_message(req.text, extras={"source": "classify-intent", **extras})
 
         langfuse.update_current_span(output=result)
         return result
