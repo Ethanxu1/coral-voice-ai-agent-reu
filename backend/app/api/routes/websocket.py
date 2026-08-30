@@ -31,6 +31,7 @@ from app.services.motion import (
 )
 from app.services.recording import ConversationRecorder
 from app.services.transcription import transcribe_audio
+from app.services.tts import generate_speech
 from app.simulator.mujoco_sim import execute_command
 from app.state import state
 from app.state_manager import StateManager
@@ -43,6 +44,36 @@ router = APIRouter()
 
 # Store connected websocket clients
 connected_clients: set[WebSocket] = set()
+
+
+# Child-friendly error copy so a failure feels recoverable, not scary.
+_CHILD_FRIENDLY_ERRORS = {
+    "robot_unavailable": (
+        "I moved in the simulator, but I couldn't reach the physical robot. "
+        "Make sure it's turned on and connected."
+    ),
+    "generic": (
+        "Oops, my brain hiccuped. Can you try that again?"
+    ),
+}
+
+
+async def _send_response_with_audio(
+    websocket: WebSocket, response_data: dict
+) -> None:
+    """Send a chat response, then synthesize and send audio for its text."""
+    await websocket.send_json(response_data)
+
+    text = response_data.get("content", "")
+    audio = await asyncio.to_thread(generate_speech, text)
+    if audio is not None:
+        await websocket.send_json(
+            {
+                "type": "audio_response",
+                "audio_base64": base64.b64encode(audio).decode("utf-8"),
+                "format": "mp3",
+            }
+        )
 
 
 @router.websocket("/ws")
@@ -191,7 +222,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         response_data = {
                             "type": "chat_response",
                             "role": "assistant",
-                            "content": "I moved in the simulation, but I couldn't reach the robot server.",
+                            "content": _CHILD_FRIENDLY_ERRORS["robot_unavailable"],
                             "waypoints": [],
                         }
                 else:
@@ -206,7 +237,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             {"type": "action_started"}
                         ),
                     )
-                await websocket.send_json(response_data)
+                await _send_response_with_audio(websocket, response_data)
 
             elif msg_type == "audio":
                 audio_b64 = message_data.get("data", "")
@@ -248,7 +279,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             {"type": "action_started"}
                         ),
                     )
-                    await websocket.send_json(response_data)
+                    await _send_response_with_audio(websocket, response_data)
 
             elif msg_type == "get_state":
                 robot_state = await asyncio.to_thread(_get_robot_state)
@@ -270,14 +301,15 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
         traceback.print_exc()
         try:
-            await websocket.send_json(
+            await _send_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
-                    "content": "Sorry, an error occurred processing your request.",
+                    "content": _CHILD_FRIENDLY_ERRORS["generic"],
                     "waypoints": [],
                     "joint_states": _get_robot_state() or None,
-                }
+                },
             )
         except Exception:
             pass

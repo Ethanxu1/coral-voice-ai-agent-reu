@@ -16,6 +16,44 @@ from app.validation import describe_joint_state
 router = APIRouter()
 
 
+# Example phrases surfaced by the frontend command palette / help overlay.
+EXAMPLE_PHRASES: dict[str, list[str]] = {
+    "movement": [
+        "Raise your right arm",
+        "Turn your head left",
+        "Look up",
+        "Bend your left elbow",
+        "Lower your right arm",
+    ],
+    "capture": [
+        "Capture my pose",
+        "Take a picture of me",
+        "Freeze",
+    ],
+    "follow": [
+        "Follow me",
+        "Mirror my moves",
+        "Stop following",
+    ],
+    "save": [
+        "Save this pose",
+        "Name this pose superhero",
+        "Show my poses",
+    ],
+    "chat": [
+        "What can you do?",
+        "How are you?",
+        "That's cool",
+    ],
+}
+
+
+@router.get("/intent/examples")
+async def intent_examples() -> dict:
+    """Return example utterances the child can say, grouped by category."""
+    return {"examples": EXAMPLE_PHRASES}
+
+
 @router.post("/classify-intent")
 @observe(name="classify_intent")
 async def classify_intent_endpoint(req: IntentRequest) -> dict:

@@ -216,8 +216,10 @@ async def kill():
 
 def main():
     port = int(os.getenv("SPEAKER_PORT", "5002"))
-    print(f"[speaker] starting on 0.0.0.0:{port}", flush=True)
-    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
+    # Default to localhost for school/Electron deployments; containers set CORAL_HOST=0.0.0.0.
+    host = os.getenv("CORAL_HOST", "127.0.0.1")
+    print(f"[speaker] starting on {host}:{port}", flush=True)
+    uvicorn.run(app, host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

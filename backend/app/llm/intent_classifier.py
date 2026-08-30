@@ -1,7 +1,8 @@
 """Hybrid intent classifier for CORAL.
 
 Regex/template matchers handle high-confidence, deterministic commands.
-Anything ambiguous falls back to the LLM classifier.
+Anything ambiguous falls back to the LLM classifier, which is now constrained
+by a strict Pydantic JSON schema.
 """
 
 from __future__ import annotations
@@ -16,17 +17,32 @@ from typing import Any
 from langfuse import observe
 from langfuse.openai import openai
 from loguru import logger
+from pydantic import TypeAdapter, ValidationError
 
 from app.llm.config import LLM_MODEL
+from app.llm.normalize_speech import normalize_for_regex
+from app.schemas.intent import (
+    ClarificationIntent,
+    ConversationIntent,
+    ImmediateIntent,
+    Intent,
+    MotionIntent,
+)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Confidence threshold: above this, the regex/template result is returned directly.
+# Confidence thresholds. High-confidence regex results are returned directly;
+# lower-confidence results are either clarified or sent to the LLM fallback.
 HIGH_CONFIDENCE_THRESHOLD = float(os.getenv("INTENT_HIGH_CONFIDENCE_THRESHOLD", "0.85"))
 
+# Per-category high-confidence gates.
+_IMMEDIATE_HIGH_CONFIDENCE = 0.90
+_MOTION_HIGH_CONFIDENCE = HIGH_CONFIDENCE_THRESHOLD
+_CONVERSATION_HIGH_CONFIDENCE = 0.80
 
-def _compile(pattern: str) -> re.Pattern[str]:
-    return re.compile(pattern, re.IGNORECASE)
+# Floor for a regex motion result to be worth a clarification question when the
+# LLM fallback is unavailable.
+_MOTION_LOW_CONFIDENCE = 0.55
 
 
 @dataclass
@@ -40,7 +56,11 @@ class ClassifiedIntent:
 
     def to_response(self) -> dict[str, Any]:
         """Convert to the response shape expected by /classify-intent."""
-        return {"type": self.type, "classifier": "regex", "reason": self.reason, **self.data}
+        return _classified_to_response(self)
+
+
+def _compile(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern, re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +72,9 @@ _IMMEDIATE_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
     (_compile(r"\b(stop following|stop mirroring|stop copying|don't follow me|stop mimicking|quit following)\b"), "follow_stop", 0.95),
     (_compile(r"\b(take a snapshot|take a picture|capture my pose|copy my pose|mimic my pose|snapshot|capture this|freeze|lock it in|record my pose|picture of me|take a picture of me|i want you to (take a picture|capture my pose|record my pose|copy my pose)|can you (take a picture|capture my pose|record my pose))\b"), "capture", 0.95),
     (_compile(r"\b(my poses|show poses|saved poses|list poses|what poses do i have|pose library)\b"), "library", 0.90),
-    (_compile(r"\b(exit|quit|goodbye|bye|see you|i'm done|we're done|that['\u2019]s all|all done|done)\b"), "exit", 0.90),
+    # "done" must be the whole message (or a known exit phrase) to avoid firing
+    # on unrelated child speech like "I'm almost done".
+    (_compile(r"^\s*(exit|quit|goodbye|bye|see you|i['’]m done|we['’]re done|that['’]s all|all done|done)[\s!.]*$"), "exit", 0.90),
     (_compile(r"\b(save this pose|save current position|save the current position|remember this pose|save it as is|save position|remember this|keep this pose|save the current pose)\b"), "save_robot_pose", 0.95),
 ]
 
@@ -66,10 +88,6 @@ _UNDO_RESET_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
     (_compile(r"\b(go back|step back|previous)\b"), "undo", 0.90),
     (_compile(r"\b(reset|start over|neutral|go to neutral|return to start)\b"), "reset", 0.95),
 ]
-
-# The older BrainBody prompt treated undo/reset as immediate system handlers.
-# The newer demo prompt has no explicit undo/reset output, so we map them to
-# the immediate shape the rest of the demo understands.
 
 
 # ---------------------------------------------------------------------------
@@ -118,11 +136,16 @@ _MOTION_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
     (_compile(rf"\b(rotate|twist)\s+(?:your\s+)?{_SIDE_WORDS}?\s*(?:forearm|forearms|elbow|elbows)\s+(?P<dir>in|out)\b(?:\s+(?:to|by)\s+{_ANGLE_WORDS})?"), "elbow_rotate", 0.90),
 ]
 
+# Corrections are matched after motion patterns so that explicit body-part
+# phrasing (e.g., "lower your right arm") is treated as a direct motion, while
+# bare correction words ("lower", "faster") still adjust the last action.
+# The "lower" pattern uses a negative lookahead to avoid swallowing arm_lower.
+_LOWER_NEGATIVE_LOOKAHEAD = r"(?!\s+(?:your|my|the)?\s*(?:left|right|both)?\s*(?:arm|arms|elbow|elbows))"
 _CORRECTION_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
     (_compile(r"\b(faster|speed up|quicker)\b"), "faster", 0.90),
     (_compile(r"\b(slower|slow down)\b"), "slower", 0.90),
     (_compile(r"\b(a little more|a bit more|more|higher|further|farther)\b"), "more", 0.85),
-    (_compile(r"\b(a little less|a bit less|less|lower|not that much|not so much|too much)\b"), "less", 0.85),
+    (_compile(rf"\b(a little less|a bit less|less|lower|not that much|not so much|too much)\b{_LOWER_NEGATIVE_LOOKAHEAD}"), "less", 0.85),
 ]
 
 _RETRY_PATTERNS: list[re.Pattern[str]] = [
@@ -134,10 +157,13 @@ _RETRY_PATTERNS: list[re.Pattern[str]] = [
 # Matcher helpers
 # ---------------------------------------------------------------------------
 
+def _has_assistant_history(history: list[dict] | None) -> bool:
+    return bool(history and any(m.get("role") == "assistant" for m in history))
+
+
 def _match_immediate(text: str) -> ClassifiedIntent | None:
-    lower = text.lower()
     for pattern, intent, confidence in _IMMEDIATE_PATTERNS:
-        if pattern.search(lower):
+        if pattern.search(text):
             return ClassifiedIntent(
                 type="immediate",
                 confidence=confidence,
@@ -157,7 +183,7 @@ def _match_immediate(text: str) -> ClassifiedIntent | None:
             )
 
     for pattern, intent, confidence in _UNDO_RESET_PATTERNS:
-        if pattern.search(lower):
+        if pattern.search(text):
             return ClassifiedIntent(
                 type="immediate",
                 confidence=confidence,
@@ -169,9 +195,8 @@ def _match_immediate(text: str) -> ClassifiedIntent | None:
 
 
 def _match_conversation(text: str) -> ClassifiedIntent | None:
-    lower = text.lower()
     for pattern in _CONVERSATION_PATTERNS:
-        if pattern.search(lower):
+        if pattern.search(text):
             return ClassifiedIntent(
                 type="conversation",
                 confidence=0.85,
@@ -283,14 +308,13 @@ def _build_motion_description(match: re.Match[str], body_type: str) -> tuple[str
 
 
 def _match_motion(text: str) -> ClassifiedIntent | None:
-    lower = text.lower()
     for pattern, body_type, base_confidence in _MOTION_PATTERNS:
         match = pattern.search(text)
         if match:
             description, conf = _build_motion_description(match, body_type)
             # Side-agnostic commands like "raise your arm" are under-specified.
             side = match.groupdict().get("side")
-            if not side and "both" not in lower and body_type not in {"head_turn", "head_tilt"}:
+            if not side and "both" not in text and body_type not in {"head_turn", "head_tilt"}:
                 conf = max(0.0, conf - 0.35)
             confidence = min(base_confidence, conf)
             return ClassifiedIntent(
@@ -304,10 +328,9 @@ def _match_motion(text: str) -> ClassifiedIntent | None:
 
 def _match_correction(text: str, history: list[dict] | None) -> ClassifiedIntent | None:
     """Corrections need a prior motion to make sense; otherwise treat as conversation."""
-    lower = text.lower()
-    has_history = bool(history and any(m.get("role") == "assistant" for m in history))
+    has_history = _has_assistant_history(history)
     for pattern, correction_type, confidence in _CORRECTION_PATTERNS:
-        if pattern.search(lower):
+        if pattern.search(text):
             if not has_history:
                 return ClassifiedIntent(
                     type="conversation",
@@ -326,10 +349,9 @@ def _match_correction(text: str, history: list[dict] | None) -> ClassifiedIntent
 
 def _match_retry(text: str, history: list[dict] | None) -> ClassifiedIntent | None:
     """Retry/rollback patterns need prior motion context."""
-    lower = text.lower()
-    has_history = bool(history and any(m.get("role") == "assistant" for m in history))
+    has_history = _has_assistant_history(history)
     for pattern in _RETRY_PATTERNS:
-        if pattern.search(lower):
+        if pattern.search(text):
             if not has_history:
                 return ClassifiedIntent(
                     type="conversation",
@@ -348,21 +370,64 @@ def _match_retry(text: str, history: list[dict] | None) -> ClassifiedIntent | No
 
 def _match_regex(text: str, history: list[dict] | None) -> ClassifiedIntent | None:
     """Run regex matchers in order of specificity. Return the best match."""
+    normalized = normalize_for_regex(text)
+
     matchers = [
         _match_immediate,
         _match_retry,
-        _match_correction,
         _match_motion,
+        _match_correction,
         _match_conversation,
     ]
     for matcher in matchers:
-        result = matcher(text) if matcher is not _match_correction and matcher is not _match_retry else matcher(text, history)
+        # retry/correction need history; the rest don't
+        result = (
+            matcher(normalized, history)
+            if matcher in {_match_retry, _match_correction}
+            else matcher(normalized)
+        )
         if result is not None:
             logger.debug(
                 f"Regex intent matched: {result.type} (confidence={result.confidence:.2f})"
             )
             return result
     return None
+
+
+# ---------------------------------------------------------------------------
+# Response conversion
+# ---------------------------------------------------------------------------
+
+_INTENT_ADAPTER = TypeAdapter(Intent)
+
+
+def _classified_to_response(result: ClassifiedIntent) -> dict[str, Any]:
+    """Convert a regex ClassifiedIntent into the validated API response dict."""
+    payload: dict[str, Any] = {"type": result.type, "classifier": "regex", "reason": result.reason}
+    data = result.data
+
+    if result.type == "immediate":
+        payload["intent"] = data["intent"]
+        if data.get("name"):
+            payload["name"] = data["name"]
+    elif result.type == "motion":
+        payload["description"] = data["description"]
+    elif result.type == "clarification":
+        payload["question"] = data["question"]
+    elif result.type == "conversation":
+        payload["text"] = data.get("text", "")
+
+    # Validate once so the API contract is guaranteed.
+    model = _INTENT_ADAPTER.validate_python(payload)
+    return model.model_dump(mode="json")
+
+
+def _threshold_for_type(intent_type: str) -> float:
+    if intent_type == "immediate":
+        return _IMMEDIATE_HIGH_CONFIDENCE
+    if intent_type == "conversation":
+        return _CONVERSATION_HIGH_CONFIDENCE
+    return _MOTION_HIGH_CONFIDENCE
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +439,15 @@ def _load_prompt() -> str:
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
     return "You are an intent classifier for a voice-controlled robot. Respond with JSON only."
+
+
+def _build_intent_json_schema() -> dict[str, Any]:
+    """Build the JSON Schema used to constrain the LLM fallback output."""
+    schema = _INTENT_ADAPTER.json_schema()
+    # OpenAI structured outputs require a top-level object with additionalProperties false.
+    schema["$schema"] = "http://json-schema.org/draft-07/schema#"
+    schema["additionalProperties"] = False
+    return schema
 
 
 @observe(name="classify_intent_llm_fallback")
@@ -408,37 +482,26 @@ def _llm_classify(
     response = openai.chat.completions.create(
         model=model,
         messages=messages,
-        response_format={"type": "json_object"},
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "intent",
+                "schema": _build_intent_json_schema(),
+            },
+        },
         max_completion_tokens=200,
     )
     content = response.choices[0].message.content or "{}"
-    result = json.loads(content)
-    result["classifier"] = "llm"
+    parsed = json.loads(content)
+    parsed["classifier"] = "llm"
     reason = "LLM fallback"
     if regex_result is not None:
         reason += f" (regex {regex_result.type} confidence {regex_result.confidence:.2f})"
-    result["reason"] = reason
-    return result
+    parsed["reason"] = reason
 
-
-def _validate_llm_output(result: dict[str, Any]) -> dict[str, Any] | None:
-    """Ensure the LLM output matches one of the allowed response shapes."""
-    if not isinstance(result, dict):
-        return None
-
-    t = result.get("type")
-    if t == "immediate" and result.get("intent") in {
-        "follow_start", "follow_stop", "capture", "library", "exit",
-        "save_robot_pose", "naming",
-    }:
-        return result
-    if t == "clarification" and result.get("question"):
-        return result
-    if t == "conversation" and "text" in result:
-        return result
-    if t == "motion" and result.get("description"):
-        return result
-    return None
+    # Strict Pydantic validation guarantees the shape matches the API contract.
+    intent_model = _INTENT_ADAPTER.validate_python(parsed)
+    return intent_model.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +523,16 @@ def classify_intent_regex(text: str, history: list[dict] | None = None) -> Class
     return result
 
 
+def _clarification_from_regex(result: ClassifiedIntent) -> dict[str, Any]:
+    description = result.data.get("description", "do that")
+    return {
+        "type": "clarification",
+        "classifier": "regex",
+        "reason": f"regex {result.type} low confidence ({result.confidence:.2f}); LLM failed",
+        "question": f"Do you want me to {description.lower()}?",
+    }
+
+
 @observe(name="classify_intent_hybrid")
 def classify_intent(
     text: str,
@@ -476,12 +549,14 @@ def classify_intent(
     """
     regex_result = classify_intent_regex(text, history=history)
 
-    if regex_result is not None and regex_result.confidence >= HIGH_CONFIDENCE_THRESHOLD:
-        logger.info(
-            f"Intent classified by regex: {regex_result.type} "
-            f"(confidence={regex_result.confidence:.2f})"
-        )
-        return regex_result.to_response()
+    if regex_result is not None:
+        threshold = _threshold_for_type(regex_result.type)
+        if regex_result.confidence >= threshold:
+            logger.info(
+                f"Intent classified by regex: {regex_result.type} "
+                f"(confidence={regex_result.confidence:.2f})"
+            )
+            return regex_result.to_response()
 
     # Regex either missed or is uncertain — ask the LLM.
     logger.info(
@@ -490,7 +565,7 @@ def classify_intent(
     )
 
     try:
-        llm_output = _llm_classify(
+        return _llm_classify(
             text=text,
             follow_active=follow_active,
             state_degrees=state_degrees or {},
@@ -500,24 +575,18 @@ def classify_intent(
             regex_result=regex_result,
             model=model,
         )
-        validated = _validate_llm_output(llm_output)
-        if validated:
-            logger.info(f"Intent classified by LLM: {validated.get('type')}")
-            return validated
-        logger.warning(f"LLM returned unexpected shape: {llm_output}")
+    except (ValidationError, json.JSONDecodeError) as e:
+        logger.warning(f"LLM returned invalid intent shape: {e}")
     except Exception as e:
         logger.error(f"LLM intent classification failed: {e}")
 
     # Final fallback: if regex had a low-confidence motion, use its description
     # as a clarification rather than failing open to conversation.
     if regex_result is not None:
-        if regex_result.type == "motion":
-            return {
-                "type": "clarification",
-                "classifier": "regex",
-                "reason": f"regex {regex_result.type} low confidence ({regex_result.confidence:.2f}); LLM failed",
-                "question": f"Do you want me to {regex_result.data['description'].lower()}?",
-            }
+        if regex_result.type == "motion" and regex_result.confidence >= _MOTION_LOW_CONFIDENCE:
+            return _clarification_from_regex(regex_result)
+        # For non-motion low-confidence results, return the regex result anyway
+        # so the caller gets a best-effort answer instead of silence.
         return regex_result.to_response()
 
     return {

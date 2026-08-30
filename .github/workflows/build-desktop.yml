@@ -26,6 +26,8 @@ jobs:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.4.12"
 
       - name: Install backend dependencies (base only, no extras)
         run: uv sync
@@ -37,7 +39,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Build frontend
+      - name: Install frontend dependencies and type-check/build
         working-directory: frontend
         run: |
           npm ci

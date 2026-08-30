@@ -185,3 +185,49 @@ class TestResponseMetadata:
         assert response["classifier"] == "regex"
         assert response["reason"]
         assert response["type"] == "immediate"
+
+
+class TestRegexPitfalls:
+    def test_lower_your_right_arm_is_motion_not_correction(self):
+        """Regression guard: 'lower your right arm' must be a direct motion."""
+        result = classify_intent_regex("lower your right arm")
+        assert result is not None
+        assert result.type == "motion"
+        assert "right" in result.data["description"].lower()
+
+    def test_bare_done_only_triggers_exit(self):
+        """The exit pattern must not fire on unrelated phrases containing 'done'."""
+        result = classify_intent_regex("I'm almost done thinking")
+        assert result is None or result.data.get("intent") != "exit"
+
+    def test_done_exclamation_triggers_exit(self):
+        result = classify_intent_regex("done!")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "exit"
+
+
+class TestPydanticResponseShape:
+    def test_motion_response_matches_intent_schema(self):
+        result = classify_intent_regex("turn your head left")
+        assert result is not None
+        response = result.to_response()
+        assert response["type"] == "motion"
+        assert "description" in response
+        assert response["classifier"] == "regex"
+        assert "reason" in response
+
+    def test_immediate_response_matches_intent_schema(self):
+        result = classify_intent_regex("follow me")
+        assert result is not None
+        response = result.to_response()
+        assert response["type"] == "immediate"
+        assert response["intent"] == "follow_start"
+
+    def test_naming_response_includes_optional_name(self):
+        result = classify_intent_regex("name this pose superhero")
+        assert result is not None
+        response = result.to_response()
+        assert response["type"] == "immediate"
+        assert response["intent"] == "naming"
+        assert response["name"] == "superhero"
