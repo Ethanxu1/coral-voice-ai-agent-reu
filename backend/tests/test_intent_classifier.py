@@ -102,7 +102,7 @@ class TestImmediateIntents:
         assert result.data["intent"] == "save_robot_pose"
 
     def test_save_robot_pose_remember_keep(self):
-        for phrase in ["remember this", "keep this pose", "save the current pose"]:
+        for phrase in ["remember this", "keep this pose", "save the current pose", "save it as is"]:
             result = classify_intent_regex(phrase)
             assert result is not None, phrase
             assert result.data["intent"] == "save_robot_pose", phrase

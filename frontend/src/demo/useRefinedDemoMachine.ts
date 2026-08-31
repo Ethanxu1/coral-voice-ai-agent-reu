@@ -978,6 +978,7 @@ export function useRefinedDemoMachine() {
                 active()
                 if (!ft.trim()) continue
                 addMsg(childMsg(ft, ftAudioUrl))
+                dispatch({ capturedFrame: null })
                 const ftResult = await classifyIntent(ft, false, msgs, sessionId)
                 active()
                 msgs = updateLastChildMsgIntent(msgs, ftResult)
@@ -1149,6 +1150,7 @@ export function useRefinedDemoMachine() {
             active()
             if (!ft.trim()) continue
             addMsg(childMsg(ft, ftAudioUrl))
+            dispatch({ capturedFrame: null })
             const ftResult = await classifyIntent(ft, false, msgs, sessionId)
             active()
             msgs = updateLastChildMsgIntent(msgs, ftResult)

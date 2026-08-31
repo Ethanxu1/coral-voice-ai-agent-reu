@@ -36,8 +36,14 @@ Examples:
 - "keep this pose"
 - "I like this pose, save it"
 - "save it as is"
+- "that looks good, save it"
+- "let's leave it"
+- "keep it like this"
+- "looks good to me"
 
 This saves whatever position the robot is currently in. The system will confirm with the user first, then ask for a name.
+
+**Post-capture acceptance rule:** If the robot just captured a pose and asked something like "Want to fine-tune it, or save it as is?", a reply such as "that looks good", "let's leave it", "save it", "keep it", or "looks good to me" means the user wants to save the current pose. Classify as `save_position` (or `naming` if they also provide a name), NOT `capture`.
 
 Output: `{"type": "immediate", "intent": "save_robot_pose"}`
 

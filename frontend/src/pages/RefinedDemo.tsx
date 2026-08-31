@@ -287,12 +287,15 @@ export default function RefinedDemo() {
 
           {/* Captured pose thumbnail */}
           {state.capturedFrame && state.stage !== 'LISTENING' && state.stage !== 'FOLLOWING' && (
-            <div className="rd-capture-stage">
-              <img
-                className="rd-capture-frame"
-                src={`data:image/jpeg;base64,${state.capturedFrame}`}
-                alt="Captured pose"
-              />
+            <div className="rd-capture-wrap">
+              <div className="rd-capture-label">Pose I saw</div>
+              <div className="rd-capture-stage">
+                <img
+                  className="rd-capture-frame"
+                  src={`data:image/jpeg;base64,${state.capturedFrame}`}
+                  alt="Captured pose"
+                />
+              </div>
             </div>
           )}
 

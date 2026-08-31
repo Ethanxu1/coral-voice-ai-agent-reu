@@ -4,6 +4,7 @@ const FEED_URL = 'http://localhost:8001/video_feed'
 
 export default function CameraFeed() {
   const [key, setKey] = useState(0)
+  const [aspectRatio, setAspectRatio] = useState<number | null>(null)
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -13,12 +14,22 @@ export default function CameraFeed() {
   }, [])
 
   return (
-    <div style={{ position: 'relative', background: '#111', borderRadius: 8, overflow: 'hidden' }}>
+    <div style={{
+      position: 'relative',
+      background: '#111',
+      borderRadius: 8,
+      overflow: 'hidden',
+      aspectRatio: aspectRatio ? `${aspectRatio}` : undefined,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}>
       <img
         key={key}
         src={FEED_URL}
         alt="Camera feed with pose overlay"
-        style={{ width: '100%', display: 'block' }}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+        onLoad={(e) => setAspectRatio(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)}
         onError={() => setTimeout(() => setKey(k => k + 1), 2000)}
       />
       <div style={{
