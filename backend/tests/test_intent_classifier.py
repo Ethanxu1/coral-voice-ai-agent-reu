@@ -64,6 +64,33 @@ class TestImmediateIntents:
         assert result is not None
         assert result.data["intent"] == "library"
 
+    def test_play_pose_with_name_before_pose(self):
+        result = classify_intent_regex("play my right arm up pose")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "play_pose"
+        assert "right arm up" in result.data["name"]
+
+    def test_play_pose_with_name_after_pose(self):
+        result = classify_intent_regex("do the pose right arm up")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "play_pose"
+        assert "right arm up" in result.data["name"]
+
+    def test_play_pose_without_name(self):
+        result = classify_intent_regex("play my pose")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "play_pose"
+        assert not result.data.get("name")
+
+    def test_perform_pose(self):
+        result = classify_intent_regex("perform the superhero pose")
+        assert result is not None
+        assert result.data["intent"] == "play_pose"
+        assert "superhero" in result.data["name"]
+
     def test_exit(self):
         result = classify_intent_regex("goodbye")
         assert result is not None

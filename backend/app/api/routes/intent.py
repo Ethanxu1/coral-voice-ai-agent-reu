@@ -39,6 +39,10 @@ EXAMPLE_PHRASES: dict[str, list[str]] = {
     "save": [
         "Save this pose",
         "Name this pose superhero",
+    ],
+    "play": [
+        "Play my right arm up pose",
+        "Perform the superhero pose",
         "Show my poses",
     ],
     "chat": [

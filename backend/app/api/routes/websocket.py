@@ -103,7 +103,7 @@ async def _route_text_turn(
     # Fast regex path for clients that send an explicit immediate intent.
     if frontend_intent_type in (None, "immediate"):
         if await try_handle_system_intent(
-            user_message, websocket, save_dialog, clean_logger=clean_logger
+            user_message, websocket, save_dialog, clean_logger=clean_logger, memory=memory
         ):
             return {"type": "handled_by_system_intent"}
 
@@ -147,6 +147,7 @@ async def _route_text_turn(
             save_dialog,
             clean_logger=clean_logger,
             intent_override=intent_result.get("intent"),
+            memory=memory,
         ):
             return {"type": "handled_by_system_intent"}
 

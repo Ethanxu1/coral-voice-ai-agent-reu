@@ -65,7 +65,20 @@ Special rule when `follow_active=true`: the robot is already mirroring the user,
 
 Output: `{"type": "immediate", "intent": "capture"}`
 
-### 3. movement
+### 3. play_pose
+The user wants the robot to perform a pose they previously saved. Match the user's wording to the closest name in SAVED_POSES (case-insensitive, fuzzy). Include the exact stored name in the `name` field.
+
+Examples:
+- "Play my right arm up pose" → `{"type": "immediate", "intent": "play_pose", "name": "Right arm up."}`
+- "Perform the superhero pose" → `{"type": "immediate", "intent": "play_pose", "name": "superhero"}`
+- "Do the pose I saved" (no name given) → `{"type": "immediate", "intent": "play_pose", "name": ""}`
+- "Strike the pose" → `{"type": "immediate", "intent": "play_pose", "name": ""}`
+
+If no name is given, still classify as `play_pose` with an empty `name`; the system will ask the user which pose or show the library.
+
+Output: `{"type": "immediate", "intent": "play_pose", "name": "<exact stored name or empty string>"}`
+
+### 4. movement
 The user wants the robot to move one or more joints. This includes explicit angles, relative changes, directional requests, and compound commands with multiple steps.
 
 Use `movement` for normal movement requests. You can infer reasonable defaults from CURRENT_STATE and conversation history (e.g. a default angle, left/right from context, or a sensible direction). The description you generate will be shown to the user in an approval modal before it runs.
@@ -125,7 +138,7 @@ Keep the description kid-friendly — it will be shown to the user in an approva
 
 Output: `{"type": "motion", "description": "<precise natural-language instruction>"}`
 
-### 4. conversation
+### 5. conversation
 General chat, questions, comments, or anything that does not require robot motion.
 
 Examples:
@@ -137,7 +150,7 @@ Examples:
 
 Output: `{"type": "conversation", "text": "<the user's message>"}`
 
-#### 4a. clarification (specific follow-up question)
+#### 5a. clarification (specific follow-up question)
 Use this only when you have a very specific, short follow-up question that will resolve the ambiguity in one answer. Prefer `conversation` when a natural back-and-forth is better.
 
 Examples:
@@ -149,7 +162,7 @@ Always try to resolve from context first. Only ask if still unresolvable.
 
 Output: `{"type": "clarification", "question": "<short friendly question>"}`
 
-### 5. naming
+### 6. naming
 The user explicitly wants to launch the full save-and-name workflow. This is different from `save_position` because the user is already in the naming/saving mindset and may provide a name.
 
 Examples:
@@ -179,7 +192,7 @@ These are system-level commands that do not need motion planning:
 - `library`: show saved poses (e.g. "my poses", "what poses do I have")
 - `exit`: done/quit/bye
 
-Output: `{"type": "immediate", "intent": "<one of follow_start|follow_stop|capture|library|exit|save_robot_pose|naming>"}`
+Output: `{"type": "immediate", "intent": "<one of follow_start|follow_stop|capture|play_pose|library|exit|save_robot_pose|naming>"}`
 
 ## Important decision rules
 
@@ -197,7 +210,7 @@ Respond with a single JSON object. Do not wrap it in markdown code fences and do
 
 The JSON must match one of these shapes exactly:
 
-- `{"type": "immediate", "intent": "<follow_start|follow_stop|capture|library|exit|save_robot_pose|naming>", "name": "<optional name>"}`
+- `{"type": "immediate", "intent": "<follow_start|follow_stop|capture|play_pose|library|exit|save_robot_pose|naming>", "name": "<optional name>"}`
 - `{"type": "motion", "description": "<precise natural-language instruction>"}`
 - `{"type": "clarification", "question": "<short friendly question>"}`
 - `{"type": "conversation", "text": "<the user's message>"}`

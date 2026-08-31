@@ -34,6 +34,7 @@ class ImmediateIntent(BaseIntent):
         "follow_start",
         "follow_stop",
         "capture",
+        "play_pose",
         "library",
         "exit",
         "save_robot_pose",

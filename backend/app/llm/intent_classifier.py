@@ -83,6 +83,15 @@ _NAMING_PATTERNS: list[tuple[re.Pattern[str], float]] = [
     (_compile(r"\b(save this as|remember this as)\s+['\"]?(.+?)['\"]?\s*$"), 0.90),
 ]
 
+_PLAY_POSE_PATTERNS: list[tuple[re.Pattern[str], float]] = [
+    # "play my <name> pose", "perform the <name> pose" — name comes before "pose".
+    (_compile(r"\b(play|do|perform|strike|show)\s+(?:the\s+)?(?:my\s+)?(.+?)\s+pose\s*$"), 0.92),
+    # "play the pose <name>", "do pose <name>" — name comes after "pose".
+    (_compile(r"\b(play|do|perform|strike|show)\s+(?:the\s+)?pose\s+['\"]?(.+?)['\"]?\s*$"), 0.92),
+    # "play my pose" / "perform the saved pose" with no explicit name
+    (_compile(r"\b(play|do|perform|strike|show)\b.*\b(my\s+)?(pose|saved pose)\b"), 0.88),
+]
+
 _UNDO_RESET_PATTERNS: list[tuple[re.Pattern[str], str, float]] = [
     (_compile(r"\b(undo|undo that|take it back|revert)\b"), "undo", 0.95),
     (_compile(r"\b(go back|step back|previous)\b"), "undo", 0.90),
@@ -195,6 +204,24 @@ def _match_immediate(text: str) -> ClassifiedIntent | None:
                 confidence=confidence,
                 data={"intent": "naming", "name": name},
                 reason="High-confidence naming pattern matched",
+            )
+
+    for pattern, confidence in _PLAY_POSE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            name = ""
+            if match.lastindex and match.lastindex >= 2:
+                name = match.group(2).strip("\"'").strip()
+            # Ignore filler-only captures like "my" or "the" so the downstream
+            # fuzzy resolver can list saved poses instead of searching for "my".
+            if name.lower() in {"my", "the", "a", "an"}:
+                name = ""
+            return ClassifiedIntent(
+                type="immediate",
+                confidence=confidence,
+                data={"intent": "play_pose", "name": name},
+                reason="High-confidence play-pose pattern matched"
+                + (f" (name='{name}')" if name else ""),
             )
 
     for pattern, intent, confidence in _UNDO_RESET_PATTERNS:
@@ -429,6 +456,9 @@ def _classified_to_response(result: ClassifiedIntent) -> dict[str, Any]:
         payload["intent"] = data["intent"]
         if data.get("name"):
             payload["name"] = data["name"]
+        # play_pose may have an empty name from regex; only include non-empty.
+        if data.get("name") == "":
+            payload.pop("name", None)
     elif result.type == "motion":
         payload["description"] = data["description"]
     elif result.type == "clarification":
@@ -485,6 +515,7 @@ def _build_intent_json_schema() -> dict[str, Any]:
                     "follow_start",
                     "follow_stop",
                     "capture",
+                    "play_pose",
                     "library",
                     "exit",
                     "save_robot_pose",
