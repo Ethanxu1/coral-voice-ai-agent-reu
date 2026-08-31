@@ -122,3 +122,73 @@
 .cm-btn.secondary:hover {
   background: rgba(45, 41, 38, 0.14);
 }
+
+.cm-welcome-card {
+  max-width: 720px;
+  padding: 40px 48px 44px;
+}
+
+.cm-welcome-message {
+  font-size: 20px;
+  margin-bottom: 28px;
+}
+
+.cm-steps {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin-bottom: 36px;
+  flex-wrap: wrap;
+}
+
+.cm-step {
+  flex: 1 1 160px;
+  max-width: 180px;
+  background: #FFF9F3;
+  border-radius: 20px;
+  padding: 20px 14px;
+  position: relative;
+  text-align: center;
+}
+
+.cm-step-number {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #FF6B4A;
+  color: #fff;
+  font-weight: 900;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cm-step-emoji {
+  font-size: 34px;
+  margin-bottom: 10px;
+}
+
+.cm-step-text {
+  font-size: 15px;
+  font-weight: 700;
+  color: #4A443F;
+  line-height: 1.35;
+}
+
+.cm-welcome-btns {
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.cm-btn-large {
+  padding: 18px 40px;
+  font-size: 20px;
+  min-width: 240px;
+  justify-content: center;
+}

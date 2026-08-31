@@ -20,6 +20,7 @@ from app.api.router import router as api_router
 from app.collision.collision_checker import CollisionChecker
 from app.collision.stability_checker import StabilityChecker
 from app.config import (
+    CORAL_HOST,
     CORAL_MUJOCO_WINDOW,
     CORAL_NO_VIEWER,
     ENABLE_COLLISION_CHECK,
@@ -52,6 +53,47 @@ def _viewer_opens_on_launch() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Startup validation
+# ---------------------------------------------------------------------------
+def _run_startup_validation() -> None:
+    """Log clear warnings for common deployment misconfigurations.
+
+    These checks are non-fatal: the server stays up so a developer can inspect
+    logs, but each warning is designed to be the first thing staff see when a
+    school deployment is misconfigured.
+    """
+    from app.config import OPENAI_API_KEY, TTS_IS_ENABLED
+
+    assets_dir = resource_path.repo_root() / "assets" / "ainex"
+    if not assets_dir.is_dir() or not any(assets_dir.rglob("*.xml")):
+        logger.warning(
+            "MuJoCo AiNex assets not found under assets/ainex. "
+            "The simulator and browser viewer will not work."
+        )
+
+    if TTS_IS_ENABLED and not OPENAI_API_KEY:
+        logger.warning(
+            "TTS is enabled (TTS_ENABLED=auto and no explicit disable), "
+            "but OPENAI_API_KEY is not set. The robot will not speak."
+        )
+    elif TTS_IS_ENABLED:
+        logger.info("TTS enabled with OpenAI API key present.")
+    else:
+        logger.info("TTS disabled.")
+
+    db_parent = Path(resource_path.user_data_dir())
+    try:
+        db_parent.mkdir(parents=True, exist_ok=True)
+        if not os.access(db_parent, os.W_OK):
+            logger.warning(
+                f"Pose DB directory is not writable: {db_parent}. "
+                "Saved poses will not persist across sessions."
+            )
+    except Exception as exc:
+        logger.warning(f"Could not verify pose DB directory: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # FastAPI lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
@@ -62,6 +104,10 @@ async def lifespan(app: FastAPI):
 
     clear_all_poses()
     logger.info("Pose database cleared for new session.")
+
+    # Startup sanity checks — log clearly so deployment issues are obvious.
+    _run_startup_validation()
+
 
     # Always start the MuJoCo simulator — in robot mode it provides a visualization
     # of what the code wants the robot to do, so we can compare to the physical motion.
@@ -191,7 +237,7 @@ def main():
     logger.info("Starting Coral AI Agent server (sim mode)...")
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host=CORAL_HOST,
         port=8000,
         reload=False,
         log_level="info",
@@ -208,7 +254,7 @@ def main_robot():
     logger.info(f"Make sure robot_server.py is running on the robot at {ROBOT_IP}:9000")
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host=CORAL_HOST,
         port=8000,
         reload=False,
         log_level="info",

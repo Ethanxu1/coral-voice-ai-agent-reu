@@ -16,6 +16,8 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from app import config
+
 from . import geometry, leg_modes, pose_classifier
 from .frame_broadcaster import FrameBroadcaster
 from .pose_estimator import PoseEstimator
@@ -106,7 +108,10 @@ async def lifespan(app: FastAPI):
     _broadcaster = FrameBroadcaster(_loop)
     _vision_thread = threading.Thread(target=_vision_loop, daemon=True)
     _vision_thread.start()
-    logger.info("Vision server ready on port 8001 (models loading in background)")
+    logger.info(
+        "Vision server ready on port 8001 (leg_tracking=%s, models loading in background)",
+        "enabled" if config.ENABLE_LEG_TRACKING else "disabled",
+    )
     yield
     if _estimator:
         _estimator.close()
@@ -282,7 +287,12 @@ async def map_features(leg_mode: str = "buckets"):
     targets = compute_joint_targets(body, head)
     pose_class = None
 
-    if leg_mode != "retarget":
+    if not config.ENABLE_LEG_TRACKING:
+        # Leg tracking is disabled by default for live-demo stability. Keep the
+        # arms/head live retargeting and snap all leg joints back to stand.
+        targets = leg_modes.strip_legs(targets)
+        targets.update(leg_modes.stand_leg_targets())
+    elif leg_mode != "retarget":
         # Arms keep the live retargeting; replace the pelvis-frame legs with the
         # selected mode's legs.
         targets = leg_modes.strip_legs(targets)
@@ -310,13 +320,13 @@ async def map_features(leg_mode: str = "buckets"):
             leg_pulses = leg_modes.classify_leg_pulses(pose_class)
             targets.update(leg_modes.leg_pulses_to_targets(leg_pulses))
 
-    # Mode-independent knee gate: if the knees aren't confidently visible, stand
-    # the legs regardless of leg_mode. compute_joint_targets already does this for
-    # "retarget", but legacy/classify compute their own leg pulses above and would
-    # otherwise drive the legs off an unseen lower body.
-    if not knees_confidently_visible(body):
-        targets = leg_modes.strip_legs(targets)
-        targets.update(leg_modes.stand_leg_targets())
+        # Mode-independent knee gate: if the knees aren't confidently visible, stand
+        # the legs regardless of leg_mode. compute_joint_targets already does this for
+        # "retarget", but legacy/classify compute their own leg pulses above and would
+        # otherwise drive the legs off an unseen lower body.
+        if not knees_confidently_visible(body):
+            targets = leg_modes.strip_legs(targets)
+            targets.update(leg_modes.stand_leg_targets())
 
     # Definitive check: the exact leg-only values about to be dispatched, so we
     # can tell a computation bug (wrong values here) apart from a downstream
@@ -462,7 +472,9 @@ async def subject_selection_tuning_set(updates: dict = Body(...)):
 
 
 def main():
-    uvicorn.run("app.vision.vision_server:app", host="0.0.0.0", port=8001, reload=False)
+    # Default to localhost for school/Electron deployments; containers set CORAL_HOST=0.0.0.0.
+    host = os.getenv("CORAL_HOST", "127.0.0.1")
+    uvicorn.run("app.vision.vision_server:app", host=host, port=8001, reload=False)
 
 
 if __name__ == "__main__":

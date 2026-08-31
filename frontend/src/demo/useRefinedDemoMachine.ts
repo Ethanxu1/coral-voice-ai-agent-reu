@@ -21,6 +21,7 @@ import {
   startSubjectSelection,
   stopSubjectSelection,
   subscribeSubjectSelection,
+  type ActionResult,
   type MoveSafety,
   type ServoCommand,
   type SubjectSelectionState,
@@ -65,6 +66,8 @@ export interface RefinedState {
   error: string | null
   pendingIntent: string | null
   muted: boolean
+  // When true, the robot's spoken responses are silenced (text still shows).
+  audioMuted: boolean
   // When false, intent approval pop-ups are skipped and every classified
   // intent is auto-approved. Useful for demos where the modal interrupts flow.
   approvalsEnabled: boolean
@@ -95,6 +98,7 @@ const INIT: RefinedState = {
   error: null,
   pendingIntent: null,
   muted: false,
+  audioMuted: false,
   approvalsEnabled: false,
   replayIdx: null,
   safetyChecking: false,
@@ -153,6 +157,8 @@ export function useRefinedDemoMachine() {
   // orb sits in "listening" forever until reload.
   const captureAbortRef = useRef<AbortController | null>(null)
   const approvalResolverRef = useRef<((approved: boolean) => void) | null>(null)
+  // Aborts the in-flight voice-approval capture when the user clicks Approve/Reject.
+  const voiceApprovalAbortRef = useRef<AbortController | null>(null)
   // Mirrors state.approvalsEnabled so the async run() loop reads the current
   // setting rather than the value captured when the run started.
   const approvalsEnabledRef = useRef(false)
@@ -162,6 +168,12 @@ export function useRefinedDemoMachine() {
   // without closing over a stale render value. The mic stays hot while muted;
   // muting only discards transcripts.
   const mutedRef = useRef(false)
+  // Output mute ref so async audio callbacks can check it without stale closure.
+  const audioMutedRef = useRef(false)
+  // Currently playing assistant audio element; stopped on new turns or stop().
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
+  // Object URLs for assistant TTS audio; revoked on stop/unmount.
+  const assistantAudioUrlsRef = useRef<string[]>([])
   // When the user asks to re-capture during fine-tune, inject a synthetic
   // "capture my pose" turn so the main loop runs the full capture path again.
   const pendingCaptureRef = useRef(false)
@@ -184,6 +196,15 @@ export function useRefinedDemoMachine() {
     if (typeof fn === 'function') fn()
   }, [])
 
+  const stopCurrentAudio = useCallback(() => {
+    const audio = currentAudioRef.current
+    if (audio) {
+      audio.pause()
+      audio.src = ''
+      currentAudioRef.current = null
+    }
+  }, [])
+
   const revokeAudioUrls = useCallback(() => {
     audioUrlsRef.current.forEach((url) => {
       try {
@@ -193,6 +214,14 @@ export function useRefinedDemoMachine() {
       }
     })
     audioUrlsRef.current = []
+    assistantAudioUrlsRef.current.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url)
+      } catch {
+        // ignore invalid urls
+      }
+    })
+    assistantAudioUrlsRef.current = []
   }, [])
 
   const abortCurrentCapture = useCallback(() => {
@@ -210,6 +239,7 @@ export function useRefinedDemoMachine() {
       window.removeEventListener('pagehide', onHide)
       tokenRef.current++ // abort any in-flight run
       killSpeech()
+      stopCurrentAudio()
       abortCurrentCapture()
       revokeAudioUrls()
       releaseSelectionSubscription()
@@ -227,6 +257,8 @@ export function useRefinedDemoMachine() {
   const approveIntent = useCallback(() => {
     const resolve = approvalResolverRef.current
     approvalResolverRef.current = null
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     dispatch({ pendingIntent: null })
     resolve?.(true)
   }, [])
@@ -234,6 +266,8 @@ export function useRefinedDemoMachine() {
   const rejectIntent = useCallback(() => {
     const resolve = approvalResolverRef.current
     approvalResolverRef.current = null
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     dispatch({ pendingIntent: null })
     resolve?.(false)
   }, [])
@@ -247,6 +281,8 @@ export function useRefinedDemoMachine() {
     if (!next) {
       const resolve = approvalResolverRef.current
       approvalResolverRef.current = null
+      voiceApprovalAbortRef.current?.abort()
+      voiceApprovalAbortRef.current = null
       dispatch({ approvalsEnabled: next, pendingIntent: null })
       resolve?.(true)
     } else {
@@ -280,6 +316,15 @@ export function useRefinedDemoMachine() {
       dispatch({ muted: next })
     }
   }, [state.muted, state.stage, state.followActive])
+
+  const toggleAudioMute = useCallback(() => {
+    const next = !state.audioMuted
+    audioMutedRef.current = next
+    if (next) {
+      stopCurrentAudio()
+    }
+    dispatch({ audioMuted: next })
+  }, [state.audioMuted, stopCurrentAudio])
 
   // End-session replay: strike every saved pose in turn so the child sees each
   // move they taught. Highlight the move, play it on the robot, hold so it's
@@ -413,6 +458,53 @@ export function useRefinedDemoMachine() {
       dispatch({ messages: msgs })
     }
 
+    const handleAssistantAudio = (audioUrl: string) => {
+      assistantAudioUrlsRef.current.push(audioUrl)
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === 'agent') {
+          msgs = [...msgs]
+          msgs[i] = { ...msgs[i], audioUrl }
+          dispatch({ messages: msgs })
+          break
+        }
+      }
+      if (!audioMutedRef.current) {
+        stopCurrentAudio()
+        const audio = new Audio(audioUrl)
+        currentAudioRef.current = audio
+        audio.play().catch(() => {
+          // Browser autoplay policy may block; user can click the replay button.
+        })
+        audio.onended = () => {
+          if (currentAudioRef.current === audio) {
+            currentAudioRef.current = null
+          }
+        }
+      }
+    }
+
+    // Thin wrapper so every backend turn auto-plays its TTS audio.
+    // Failures return a child-friendly fallback instead of crashing the loop.
+    const sendText = async (
+      text: string,
+      intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
+      description?: string,
+      timeoutMs = 30000,
+    ): Promise<ActionResult> => {
+      try {
+        return await session.sendText(text, intentType, description, timeoutMs, handleAssistantAudio)
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'connection hiccup'
+        return {
+          transcript: text,
+          content: `Oops, I lost connection for a second (${detail}). Can you try again?`,
+          hasAction: false,
+          satisfied: null,
+          safety: null,
+        }
+      }
+    }
+
     // Capture voice OR accept an injected chip/button text.
     // A per-call `settled` flag guards against late resolutions leaking into
     // a subsequent turn (e.g. captureUtterance's .then firing after a chip
@@ -477,12 +569,65 @@ export function useRefinedDemoMachine() {
       })
     }
 
+    // Capture a short yes/no answer while the approval modal is visible.
+    // Returns true/false or null when the utterance isn't clearly yes/no.
+    const listenForYesNo = async (signal: AbortSignal): Promise<boolean | null> => {
+      try {
+        const blob = await captureUtterance({
+          silenceMs: 900,
+          maxMs: 7000,
+          signal,
+        })
+        const text = (await sendAudioForTranscript(blob)).trim().toLowerCase()
+        if (!text) return null
+        if (/\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it)\b/.test(text)) return true
+        if (/\b(no|nope|nah|cancel|never mind|nevermind)\b/.test(text)) return false
+        return null
+      } catch {
+        return null
+      }
+    }
+
     const awaitApproval = (description: string): Promise<boolean> => {
       // Pop-ups toggled off: auto-approve without ever showing the modal.
       if (!approvalsEnabledRef.current) return Promise.resolve(true)
       return new Promise<boolean>((resolve) => {
-        approvalResolverRef.current = resolve
+        let resolved = false
+        const doResolve = (val: boolean) => {
+          if (resolved) return
+          resolved = true
+          approvalResolverRef.current = null
+          voiceApprovalAbortRef.current?.abort()
+          voiceApprovalAbortRef.current = null
+          dispatch({ pendingIntent: null })
+          resolve(val)
+        }
+
+        approvalResolverRef.current = doResolve
         dispatch({ pendingIntent: description })
+
+        // Also accept a spoken yes/no. The mic is free because the main run()
+        // loop is blocked on this promise. Loop a few times so a mumbled or
+        // unclear first answer doesn't force the child to use the buttons.
+        const voiceLoop = async () => {
+          for (let attempt = 0; attempt < 3 && !resolved; attempt++) {
+            const ctrl = new AbortController()
+            voiceApprovalAbortRef.current = ctrl
+            const answer = await listenForYesNo(ctrl.signal)
+            if (resolved) return
+            if (answer === true) {
+              doResolve(true)
+              return
+            }
+            if (answer === false) {
+              doResolve(false)
+              return
+            }
+            // Unrecognized answer: keep the modal up and listen once more,
+            // unless this was the last attempt.
+          }
+        }
+        voiceLoop()
       })
     }
 
@@ -591,7 +736,7 @@ export function useRefinedDemoMachine() {
         // ── conversation: chat/question — send to router, no approval modal ──
         if (intentResult.type === 'conversation') {
           dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
-          const chatResult = await session.sendText(intentResult.text, 'conversation')
+          const chatResult = await sendText(intentResult.text, 'conversation')
           active()
           addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
           dispatch({ orbState: 'listening' })
@@ -603,7 +748,7 @@ export function useRefinedDemoMachine() {
           if (!intentResult.description?.trim()) {
             // No concrete movement proposed — fall back to chat instead of a redundant modal.
             dispatch({ orbState: 'thinking', statusText: 'Thinking…' })
-            const chatResult = await session.sendText(transcript, 'conversation')
+            const chatResult = await sendText(transcript, 'conversation')
             active()
             addMsg(agentMsg(chatResult.content || '', ['Follow my movement', 'Capture my pose', 'My Poses']))
             dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
@@ -619,7 +764,7 @@ export function useRefinedDemoMachine() {
             continue
           }
           dispatch({ orbState: 'thinking', statusText: 'Applying…' })
-          const chatResult = await session.sendText(
+          const chatResult = await sendText(
             transcript,
             'motion',
             intentResult.description,
@@ -634,7 +779,7 @@ export function useRefinedDemoMachine() {
         const intent = intentResult.intent
         // ── follow_start ──
         if (intent === 'follow_start') {
-          const result = await session.sendText(transcript, 'immediate')
+          const result = await sendText(transcript, 'immediate')
           active()
           addMsg(agentMsg(
             result.content || "I'm now following your movements!",
@@ -647,7 +792,7 @@ export function useRefinedDemoMachine() {
 
         // ── follow_stop ──
         if (intent === 'follow_stop') {
-          const result = await session.sendText(transcript, 'immediate')
+          const result = await sendText(transcript, 'immediate')
           active()
           addMsg(agentMsg(
             result.content || 'Stopped following.',
@@ -754,7 +899,7 @@ export function useRefinedDemoMachine() {
             if (liResult.type === 'motion') {
               if (!liResult.description?.trim()) {
                 // No concrete movement proposed — chat instead of showing the modal.
-                const lr = await session.sendText(lt, 'conversation')
+                const lr = await sendText(lt, 'conversation')
                 active()
                 addMsg(agentMsg(lr.content || ''))
                 dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
@@ -766,7 +911,7 @@ export function useRefinedDemoMachine() {
                 addMsg(agentMsg("Got it — what would you like to do instead?", ['Make another', 'Follow my movement']))
                 continue
               }
-              const lr = await session.sendText(lt, 'motion', liResult.description)
+              const lr = await sendText(lt, 'motion', liResult.description)
               active()
               addMsg(agentMsg(lr.content || ''))
               dispatch({ stage: followActive ? 'FOLLOWING' : 'LISTENING', savedPoses })
@@ -833,6 +978,7 @@ export function useRefinedDemoMachine() {
                 active()
                 if (!ft.trim()) continue
                 addMsg(childMsg(ft, ftAudioUrl))
+                dispatch({ capturedFrame: null })
                 const ftResult = await classifyIntent(ft, false, msgs, sessionId)
                 active()
                 msgs = updateLastChildMsgIntent(msgs, ftResult)
@@ -864,21 +1010,21 @@ export function useRefinedDemoMachine() {
                     continue
                   }
                   dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-                  const fr = await session.sendText(ft, 'motion', ftResult.description)
+                  const fr = await sendText(ft, 'motion', ftResult.description)
                   active()
                   reportMotionSafety(fr.safety)
                   addMsg(agentMsg(fr.content || ''))
                   if (fr.satisfied === true) satisfied = true
                 } else {
                   dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-                  const fr = await session.sendText(ft, 'conversation')
+                  const fr = await sendText(ft, 'conversation')
                   active()
                   addMsg(agentMsg(fr.content || ''))
                   if (fr.satisfied === true) satisfied = true
                 }
               }
               if (followEscape) {
-                const result = await session.sendText('follow my movement', 'immediate')
+                const result = await sendText('follow my movement', 'immediate')
                 active()
                 addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
                 followActive = true
@@ -918,7 +1064,7 @@ export function useRefinedDemoMachine() {
               continue
             }
             // General command from library view (childMsg already added above)
-            const lr = await session.sendText(
+            const lr = await sendText(
               lt,
               liResult.type === 'conversation' ? 'conversation' : 'immediate',
             )
@@ -938,7 +1084,7 @@ export function useRefinedDemoMachine() {
 
           if (followActive) {
             // Robot already mirrors the user — freeze it in place, skip countdown/camera.
-            await session.sendText('stop following', 'immediate').catch(() => {})
+            await sendText('stop following', 'immediate').catch(() => {})
             followActive = false
             dispatch({ followActive: false })
             active()
@@ -1004,6 +1150,7 @@ export function useRefinedDemoMachine() {
             active()
             if (!ft.trim()) continue
             addMsg(childMsg(ft, ftAudioUrl))
+            dispatch({ capturedFrame: null })
             const ftResult = await classifyIntent(ft, false, msgs, sessionId)
             active()
             msgs = updateLastChildMsgIntent(msgs, ftResult)
@@ -1035,7 +1182,7 @@ export function useRefinedDemoMachine() {
                 continue
               }
               dispatch({ orbState: 'thinking', statusText: 'Applying…', micLevel: 0 })
-              const fr = await session.sendText(ft, 'motion', ftResult.description)
+              const fr = await sendText(ft, 'motion', ftResult.description)
               active()
               reportMotionSafety(fr.safety)
               addMsg(agentMsg(fr.content || ''))
@@ -1044,7 +1191,7 @@ export function useRefinedDemoMachine() {
               // Non-motion turns during fine-tune (conversation, remaining immediate)
               // skip the approval modal entirely.
               dispatch({ orbState: 'thinking', statusText: 'Thinking…', micLevel: 0 })
-              const fr = await session.sendText(ft, 'conversation')
+              const fr = await sendText(ft, 'conversation')
               active()
               addMsg(agentMsg(fr.content || ''))
               if (fr.satisfied === true) satisfied = true
@@ -1052,7 +1199,7 @@ export function useRefinedDemoMachine() {
           }
 
           if (followEscape) {
-            const result = await session.sendText('follow my movement', 'immediate')
+            const result = await sendText('follow my movement', 'immediate')
             active()
             addMsg(agentMsg(result.content || "I'm now following your movement!", ['Capture my pose', 'Stop following']))
             followActive = true
@@ -1112,18 +1259,23 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
+    stopCurrentAudio()
     selectionUnsubRef.current?.()
     selectionUnsubRef.current = null
     revokeAudioUrls()
     setRobotState('IDLE')
     stopSubjectSelection()
     dispatch({ ...INIT })
-  }, [abortCurrentCapture, revokeAudioUrls])
+  }, [abortCurrentCapture, stopCurrentAudio, revokeAudioUrls])
 
   const goToLibrary = useCallback(async () => {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     const names = await listPoses()
     dispatch({ stage: 'LIBRARY', savedPoses: names })
   }, [abortCurrentCapture])
@@ -1132,6 +1284,8 @@ export function useRefinedDemoMachine() {
     tokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
+    voiceApprovalAbortRef.current?.abort()
+    voiceApprovalAbortRef.current = null
     const names = await listPoses()
     dispatch({ stage: 'EXIT_CONFIRM', savedPoses: names, replayIdx: null })
     runExitReplay(names)
@@ -1160,6 +1314,7 @@ export function useRefinedDemoMachine() {
     goToExit,
     startAgain,
     toggleMute,
+    toggleAudioMute,
     skipSubjectSelect,
   }
 }

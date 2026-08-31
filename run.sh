@@ -51,6 +51,45 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# Ports the stack needs. Fail fast if any are already bound so the user gets a
+# clear error instead of three services silently competing.
+REQUIRED_PORTS=(8000 8001 5002)
+if command -v ss >/dev/null 2>&1; then
+    PORT_CHECK_CMD="ss"
+elif command -v netstat >/dev/null 2>&1; then
+    PORT_CHECK_CMD="netstat"
+else
+    PORT_CHECK_CMD=""
+fi
+
+check_port() {
+    local port="$1"
+    if [[ "$PORT_CHECK_CMD" == "ss" ]]; then
+        ss -H -tln "sport = :$port" 2>/dev/null | grep -q .
+    elif [[ "$PORT_CHECK_CMD" == "netstat" ]]; then
+        netstat -an 2>/dev/null | grep -E "^[[:space:]]*tcp[[:space:]]+.*[[:space:]]0\.0\.0\.0\.$port|127\.0\.0\.1\.$port[[:space:]]+.*LISTEN" >/dev/null
+    else
+        # Fallback: try to bind to the port briefly. Non-portable but better than nothing.
+        (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
+    fi
+}
+
+check_required_ports() {
+    local busy=()
+    for port in "${REQUIRED_PORTS[@]}"; do
+        if check_port "$port"; then
+            busy+=("$port")
+        fi
+    done
+    if [[ ${#busy[@]} -gt 0 ]]; then
+        echo "Error: required port(s) already in use: ${busy[*]}" >&2
+        echo "Stop the other process(es) first, or change the stack ports." >&2
+        exit 1
+    fi
+}
+
+check_required_ports
+
 PIDS=()
 CLEANING_UP=0
 

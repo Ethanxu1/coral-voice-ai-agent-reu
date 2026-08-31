@@ -5,11 +5,12 @@
 // only holds the always-on-the-Mac services and demo tuning knobs.
 
 const env = import.meta.env as Record<string, string | undefined>
+const runtime = (typeof window !== 'undefined' && (window as any).__CORAL_RUNTIME__) || {}
 
-export const SPEAKER_BASE = env.VITE_SPEAKER_BASE ?? 'http://localhost:5002'
-export const ACTION_WS = env.VITE_ACTION_WS ?? 'ws://localhost:8000/ws'
+export const SPEAKER_BASE = runtime.SPEAKER_BASE ?? env.VITE_SPEAKER_BASE ?? 'http://localhost:5002'
+export const ACTION_WS = runtime.ACTION_WS ?? env.VITE_ACTION_WS ?? 'ws://localhost:8000/ws'
 // Binary geom-pose stream that drives the in-browser MuJoCo viewer (RobotViewer).
-export const SIM_WS = env.VITE_SIM_WS ?? 'ws://localhost:8000/ws/sim'
+export const SIM_WS = runtime.SIM_WS ?? env.VITE_SIM_WS ?? 'ws://localhost:8000/ws/sim'
 
 // How many times the CLASSIFY → RECORD loop repeats before the OUTRO.
 export const LOOP_COUNT = Number(env.VITE_LOOP_COUNT ?? 1)

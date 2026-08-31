@@ -11,9 +11,10 @@ export interface RobotConfig {
 
 const STORAGE_KEY = 'coral.robotConfig.v3'
 const env = import.meta.env as Record<string, string | undefined>
+const runtime = (typeof window !== 'undefined' && (window as any).__CORAL_RUNTIME__) || {}
 
 const DEFAULT_CONFIG: RobotConfig = {
-  piHost: env.VITE_ROBOT_HOST ?? '192.168.8.219',
+  piHost: env.VITE_ROBOT_HOST ?? runtime.ROBOT_HOST ?? '192.168.8.219',
 }
 
 function loadConfig(): RobotConfig {
@@ -55,22 +56,22 @@ export function useRobotConfig(): RobotConfig {
 
 /** Main backend API base (sim or hardware mode). */
 export function getRobotBase(): string {
-  return env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
+  return runtime.ROBOT_BASE ?? env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
 }
 
 /** Vision / MJPEG stream base. */
 export function getRobotStream(): string {
-  return env.VITE_ROBOT_STREAM ?? 'http://localhost:8001'
+  return runtime.ROBOT_STREAM ?? env.VITE_ROBOT_STREAM ?? 'http://localhost:8001'
 }
 
 /** Vision feature endpoints base. */
 export function getFeaturesBase(): string {
-  return env.VITE_FEATURES_BASE ?? 'http://localhost:8001'
+  return runtime.FEATURES_BASE ?? env.VITE_FEATURES_BASE ?? 'http://localhost:8001'
 }
 
 /** Mac sim server (:8000), regardless of the sim/hardware toggle. */
 export function getSimBase(): string {
-  return env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
+  return runtime.ROBOT_BASE ?? env.VITE_ROBOT_BASE ?? 'http://localhost:8000'
 }
 
 /** Pi robot server (:9000), regardless of the sim/hardware toggle. */

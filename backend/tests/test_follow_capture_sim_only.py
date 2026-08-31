@@ -21,13 +21,13 @@ class _FakeFollowController:
         self.start_follow_calls: list[bool | None] = []
         self.capture_calls: list[bool | None] = []
 
-    async def start_follow(self, status_fn, sim_only=None):
+    async def start_follow(self, status_fn, sim_only=None, clean_logger=None):
         self.start_follow_calls.append(sim_only)
 
-    async def stop_follow(self, status_fn=None):
+    async def stop_follow(self, status_fn=None, reason=None, clean_logger=None):
         pass
 
-    async def trigger_capture_and_mimic(self, status_fn, sim_only=None):
+    async def trigger_capture_and_mimic(self, status_fn, sim_only=None, clean_logger=None):
         self.capture_calls.append(sim_only)
 
 

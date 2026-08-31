@@ -20,6 +20,7 @@ import httpx
 import websockets
 
 from app.robot.interface import ServoCommand
+from app.services.clean_logger import CleanLogger
 from app.vision.pose_to_robot import (
     JointAngleSmoother,
     compute_joint_targets,
@@ -61,7 +62,12 @@ class FollowController:
     def is_capturing(self) -> bool:
         return self._capture_task is not None and not self._capture_task.done()
 
-    async def start_follow(self, status_fn: StatusFn, sim_only: bool | None = None) -> None:
+    async def start_follow(
+        self,
+        status_fn: StatusFn,
+        sim_only: bool | None = None,
+        clean_logger: CleanLogger | None = None,
+    ) -> None:
         if self.is_following:
             return
         # Reset any frozen stability capture so the vision stream goes live again.
@@ -71,9 +77,16 @@ class FollowController:
                 await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
         except Exception as e:
             logger.debug("Vision continue on follow-start failed: %s", e)
-        self._task = asyncio.create_task(self._follow_loop(status_fn, sim_only))
+        self._task = asyncio.create_task(self._follow_loop(status_fn, sim_only, clean_logger))
+        if clean_logger is not None:
+            clean_logger.follow_started()
 
-    async def stop_follow(self, status_fn: Optional[StatusFn] = None) -> None:
+    async def stop_follow(
+        self,
+        status_fn: Optional[StatusFn] = None,
+        reason: Optional[str] = None,
+        clean_logger: CleanLogger | None = None,
+    ) -> None:
         task = self._task
         self._task = None
         if task is not None and not task.done():
@@ -84,8 +97,15 @@ class FollowController:
                 pass
         if status_fn is not None:
             await status_fn({"type": "follow_status", "active": False})
+        if clean_logger is not None:
+            clean_logger.follow_stopped(reason=reason)
 
-    async def _follow_loop(self, status_fn: StatusFn, sim_only: bool | None = None) -> None:
+    async def _follow_loop(
+        self,
+        status_fn: StatusFn,
+        sim_only: bool | None = None,
+        clean_logger: CleanLogger | None = None,
+    ) -> None:
         """Split into reader + dispatcher so stale frames can't queue up.
 
         Sequence:
@@ -122,6 +142,8 @@ class FollowController:
                         raise
                     except Exception as e:
                         logger.warning("Follow reader exited: %s", e)
+                        if clean_logger is not None:
+                            clean_logger.follow_error("vision reader exited", e)
 
                 def _log_dispatch_error(t: asyncio.Task) -> None:
                     if t.cancelled():
@@ -155,9 +177,13 @@ class FollowController:
                         targets = smoother.smooth(targets)
                         seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
                         logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
+                        if clean_logger is not None:
+                            clean_logger.follow_event("seeding initial pose", {"joints": len(seed_cmds)})
                         await self._dispatch(seed_cmds, sim_only)
                         seeded = True
                     logger.info("Follow: initial seed complete, entering live tracking")
+                    if clean_logger is not None:
+                        clean_logger.follow_event("initial seed complete, live tracking")
 
                     # ── Live tracking loop. ──
                     while True:
@@ -188,6 +214,8 @@ class FollowController:
                                 "Follow: %d dispatches, %d skips, %d empty-targets in last 2s",
                                 dispatch_count, skip_count, empty_target_count,
                             )
+                            if clean_logger is not None:
+                                clean_logger.follow_tick(dispatch_count, skip_count, empty_target_count)
                             dispatch_count = skip_count = empty_target_count = 0
                             last_heartbeat = now
                 finally:
@@ -196,25 +224,38 @@ class FollowController:
                         in_flight.cancel()
         except asyncio.CancelledError:
             logger.info("Follow loop cancelled")
+            if clean_logger is not None:
+                clean_logger.follow_stopped(reason="cancelled")
             raise
         except Exception as exc:
             logger.warning("Follow loop error: %s", exc)
+            if clean_logger is not None:
+                clean_logger.follow_error("loop crashed", exc)
             await status_fn({"type": "follow_status", "active": False, "error": str(exc)})
 
     async def trigger_capture_and_mimic(
-        self, status_fn: StatusFn, sim_only: bool | None = None
+        self,
+        status_fn: StatusFn,
+        sim_only: bool | None = None,
+        clean_logger: CleanLogger | None = None,
     ) -> None:
         if self.is_capturing:
             return
-        self._capture_task = asyncio.create_task(self._capture_flow(status_fn, sim_only))
+        self._capture_task = asyncio.create_task(self._capture_flow(status_fn, sim_only, clean_logger))
+        if clean_logger is not None:
+            clean_logger.capture_started()
 
-    async def _capture_flow(self, status_fn: StatusFn, sim_only: bool | None = None) -> None:
+    async def _capture_flow(
+        self, status_fn: StatusFn, sim_only: bool | None = None, clean_logger: CleanLogger | None = None
+    ) -> None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as http:
                 resp = await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/start")
                 resp.raise_for_status()
 
             await status_fn({"type": "capture_status", "stage": "started"})
+            if clean_logger is not None:
+                clean_logger.capture_stage("started")
 
             frozen_landmarks: list[dict] = []
             frozen_head: Optional[dict] = None
@@ -226,20 +267,28 @@ class FollowController:
                         stability = data.get("stability") or {}
                         state = stability.get("state")
                         if state == "countdown":
+                            remaining = stability.get("countdown_remaining")
                             await status_fn({
                                 "type": "capture_status",
                                 "stage": "countdown",
-                                "countdown_remaining": stability.get("countdown_remaining"),
+                                "countdown_remaining": remaining,
                             })
+                            if clean_logger is not None:
+                                clean_logger.capture_stage("countdown", {"remaining": remaining})
                         elif state == "collecting":
+                            progress = stability.get("collection_progress")
                             await status_fn({
                                 "type": "capture_status",
                                 "stage": "collecting",
-                                "progress": stability.get("collection_progress"),
+                                "progress": progress,
                             })
+                            if clean_logger is not None:
+                                clean_logger.capture_stage("collecting", {"progress": progress})
                         elif state == "frozen":
                             frozen_landmarks = data.get("body_landmarks") or []
                             frozen_head = data.get("head_pose")
+                            if clean_logger is not None:
+                                clean_logger.capture_stage("frozen")
                             break
 
             if not frozen_landmarks:
@@ -252,6 +301,8 @@ class FollowController:
                         frozen_head = payload.get("head_pose")
 
             await status_fn({"type": "capture_status", "stage": "frozen"})
+            if clean_logger is not None:
+                clean_logger.capture_stage("frozen")
 
             targets = compute_joint_targets(frozen_landmarks, frozen_head)
             commands = targets_to_servo_commands(targets, _CAPTURE_DURATION_MS)
@@ -266,10 +317,16 @@ class FollowController:
 
             await self._dispatch(commands, sim_only)
             await status_fn({"type": "capture_status", "stage": "done"})
+            if clean_logger is not None:
+                clean_logger.capture_stage("done", {"joints": len(commands)})
 
         except asyncio.TimeoutError:
             logger.warning("Capture flow timed out waiting for frozen frame")
+            if clean_logger is not None:
+                clean_logger.capture_error("timeout waiting for frozen frame")
             await status_fn({"type": "capture_status", "stage": "error", "error": "timeout"})
         except Exception as exc:
             logger.warning("Capture flow error: %s", exc)
+            if clean_logger is not None:
+                clean_logger.capture_error("flow failed", exc)
             await status_fn({"type": "capture_status", "stage": "error", "error": str(exc)})

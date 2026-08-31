@@ -582,17 +582,35 @@
   background: #9E9591;
 }
 
-/* Captured pose thumbnail — matches the tutorial's inline capture-stage box */
-.rd-capture-stage {
-  position: relative; width: auto; aspect-ratio: 4 / 3;
-  border-radius: 20px; overflow: hidden;
+/* Captured pose thumbnail — uses the image's native camera aspect ratio so
+   there is no forced 4:3 or 16:9 crop and no black letterbox bar. */
+.rd-capture-wrap {
   margin: 16px 24px 0;
-  background: #26232F;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rd-capture-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9E9591;
+}
+.rd-capture-stage {
+  position: relative;
+  width: auto;
+  border-radius: 20px;
+  overflow: hidden;
+  background: #26232F;
 }
 .rd-capture-frame {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  border-radius: 18px;
 }
 
 /* ── Chat area ──────────────────────────────────────────────────────────────── */
@@ -982,9 +1000,17 @@
   font-family: 'Baloo 2', cursive;
   font-size: 17px;
   font-weight: 700;
-  margin-bottom: 26px;
+  margin-bottom: 10px;
   text-align: center;
   line-height: 1.4;
+}
+
+.rd-intent-hint {
+  font-size: 13px;
+  font-weight: 700;
+  color: #8A8398;
+  margin-bottom: 18px;
+  text-align: center;
 }
 
 /* Poses gallery in exit overlay */
@@ -1238,7 +1264,7 @@
   border-radius: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .rd-subject-camera-live {
@@ -1338,4 +1364,280 @@
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
   border-color: rgba(255, 255, 255, 0.28);
+}
+
+/* ── Stage badge ────────────────────────────────────────────────────────────── */
+.rd-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  padding: 8px 18px;
+  border-radius: 50px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #2D2926;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(45, 41, 38, 0.1);
+  margin-bottom: 14px;
+  transition: all 0.2s ease;
+}
+
+.rd-stage-badge-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.rd-stage-listening {
+  color: #0E8A7E;
+  background: #E6FAF8;
+}
+.rd-stage-listening .rd-stage-badge-dot {
+  animation: rd-pulse 1.4s ease-in-out infinite;
+}
+
+.rd-stage-thinking {
+  color: #8B5CF6;
+  background: #F3F0FF;
+}
+.rd-stage-thinking .rd-stage-badge-dot {
+  animation: rd-spin 1s linear infinite;
+}
+
+.rd-stage-countdown {
+  color: #FF6B4A;
+  background: #FFF0EC;
+}
+
+.rd-stage-muted {
+  color: #6B625D;
+  background: #F2F0EC;
+}
+
+.rd-stage-success {
+  color: #3FA76B;
+  background: #EAF9F0;
+}
+
+@keyframes rd-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* ── Connection health dot ──────────────────────────────────────────────────── */
+.rd-health-dot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 50px;
+  background: rgba(45, 41, 38, 0.06);
+  font-size: 13px;
+  font-weight: 700;
+  color: #4A443F;
+  cursor: help;
+}
+
+.rd-health-dot-ping {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  position: relative;
+}
+
+.rd-health-dot-ok {
+  background: #3FA76B;
+}
+.rd-health-dot-ok::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid #3FA76B;
+  opacity: 0;
+  animation: rd-ping 2s ease-out infinite;
+}
+
+.rd-health-dot-down {
+  background: #FF6B4A;
+}
+
+.rd-health-dot-pending {
+  background: #F0A93A;
+}
+
+@keyframes rd-ping {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+/* ── Settings menu ──────────────────────────────────────────────────────────── */
+.rd-settings-wrap {
+  position: relative;
+}
+
+.rd-settings-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: #fff;
+  border-radius: 18px;
+  padding: 10px;
+  box-shadow: 0 16px 40px rgba(45, 41, 38, 0.18);
+  z-index: 100;
+  min-width: 200px;
+}
+
+.rd-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #2D2926;
+  cursor: pointer;
+  border-radius: 12px;
+}
+
+.rd-settings-row:hover {
+  background: rgba(45, 41, 38, 0.04);
+}
+
+.rd-toggle {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  border: none;
+  background: #D8D4CF;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.rd-toggle.on {
+  background: #FF6B4A;
+}
+
+.rd-toggle-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s ease;
+}
+
+.rd-toggle.on .rd-toggle-knob {
+  transform: translateX(18px);
+}
+
+/* ── Command palette ────────────────────────────────────────────────────────── */
+.rd-command-btn {
+  font-weight: 800;
+}
+
+.rd-command-card {
+  max-width: 760px;
+  width: 92vw;
+  max-height: 84vh;
+  overflow-y: auto;
+  padding: 32px 36px 28px;
+}
+
+.rd-command-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-bottom: 28px;
+  text-align: left;
+}
+
+.rd-command-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #2D2926;
+  margin-bottom: 12px;
+}
+
+.rd-command-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rd-command-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 50px;
+  border: none;
+  background: #FFF4EF;
+  color: #C44B2F;
+  font-family: 'Nunito', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.rd-command-chip:hover {
+  background: #FFE8DF;
+  transform: translateY(-1px);
+}
+
+.rd-command-chip:focus-visible {
+  outline: 3px solid #FF6B4A;
+  outline-offset: 2px;
+}
+
+/* ── Accessibility helpers ──────────────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #FF6B4A;
+  outline-offset: 2px;
+}
+
+/* ── Empty pose state ───────────────────────────────────────────────────────── */
+.rd-pose-empty {
+  text-align: center;
+  padding: 22px 16px;
+  background: rgba(45, 41, 38, 0.03);
+  border-radius: 18px;
+}
+
+.rd-pose-empty-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #2D2926;
+  margin-bottom: 6px;
+}
+
+.rd-pose-empty-hint {
+  font-size: 14px;
+  font-weight: 600;
+  color: #6B625D;
+  line-height: 1.4;
 }

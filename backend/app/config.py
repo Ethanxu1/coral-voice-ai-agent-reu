@@ -46,6 +46,20 @@ LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
 
 # ---------------------------------------------------------------------------
+# Text-to-speech (OpenAI)
+# ---------------------------------------------------------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+TTS_ENABLED = os.getenv("TTS_ENABLED", "auto").lower()
+# "auto" enables TTS only when an OpenAI API key is present.
+TTS_IS_ENABLED = TTS_ENABLED in ("true", "1", "yes") or (
+    TTS_ENABLED == "auto" and bool(OPENAI_API_KEY)
+)
+TTS_VOICE = os.getenv("TTS_VOICE", "nova")
+TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
+TTS_FORMAT = os.getenv("TTS_FORMAT", "mp3")
+TTS_MAX_CHARS = int(os.getenv("TTS_MAX_CHARS", "4096"))
+
+# ---------------------------------------------------------------------------
 # MuJoCo native viewer
 # ---------------------------------------------------------------------------
 CORAL_MUJOCO_WINDOW = os.getenv("CORAL_MUJOCO_WINDOW", "0").lower() in (
@@ -54,3 +68,23 @@ CORAL_MUJOCO_WINDOW = os.getenv("CORAL_MUJOCO_WINDOW", "0").lower() in (
     "yes",
 )
 CORAL_NO_VIEWER = os.getenv("CORAL_NO_VIEWER", "0").lower() in ("true", "1", "yes")
+
+# ---------------------------------------------------------------------------
+# Vision / pose retargeting
+# ---------------------------------------------------------------------------
+# Leg tracking is experimental and can be unstable in live demos. Default to
+# disabled so the robot only mirrors the upper body, head, and hips; set to
+# "true" to re-enable continuous leg retargeting.
+ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# ---------------------------------------------------------------------------
+# Server binding
+# ---------------------------------------------------------------------------
+# Default to localhost for school/Electron deployments so the backend is not
+# exposed on the classroom network. Docker/containerized runs should set
+# CORAL_HOST=0.0.0.0 explicitly.
+CORAL_HOST = os.getenv("CORAL_HOST", "127.0.0.1")

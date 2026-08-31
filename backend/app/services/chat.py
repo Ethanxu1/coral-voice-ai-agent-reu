@@ -9,6 +9,7 @@ from typing import Awaitable, Callable
 from langfuse import get_client, observe, propagate_attributes
 from langfuse.openai import openai
 from loguru import logger
+from pydantic import TypeAdapter, ValidationError
 
 from app.data.pose_db import get_pose, list_pose_names
 from app.llm.config import LLM_MODEL
@@ -21,6 +22,7 @@ from app.llm.primitives import (
 from app.robot.angle_utils import rad_to_servo_units
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import SERVO_ID_MAP
+from app.schemas.motion_plan import MotionPlan, ParallelGroup, PlainWaypoint
 from app.services.motion import (
     Waypoint,
     _get_robot_state,
@@ -30,16 +32,12 @@ from app.services.motion import (
     execute_parallel_tracks,
     execute_waypoints,
 )
+from app.services.motion_fallback import plan_for_description
 from app.services.recording import ConversationRecorder
 from app.services.transcription import get_router_prompt, get_chat_prompt
 from app.state import state
 from app.state_manager import StateManager
-from app.validation import (
-    correct_motion_sign,
-    describe_joint_state,
-    validate_motion_sign,
-    validate_waypoint,
-)
+from app.validation import ValidationResult, describe_joint_state, validate_waypoint
 
 
 class HierarchicalMemory:
@@ -152,12 +150,12 @@ class HierarchicalMemory:
         return self.action_history[-n:] if self.action_history else []
 
 
-def resolve_wp_entry(entry: dict) -> Waypoint | None:
-    """Resolve a single flat waypoint entry dict into a Waypoint."""
-    primitive_names = entry.get("primitives", [])
-    angle = entry.get("angle")
-    direction = entry.get("direction")
-    speed = entry.get("speed", 1.0)
+def resolve_wp_entry(entry: PlainWaypoint) -> Waypoint | None:
+    """Resolve a single plain waypoint into an executable Waypoint."""
+    primitive_names = entry.primitives
+    angle = entry.angle
+    direction = entry.direction
+    speed = entry.speed
 
     merged_joints: dict[str, float] = {}
     resolved_names: list[str] = []
@@ -165,7 +163,9 @@ def resolve_wp_entry(entry: dict) -> Waypoint | None:
     resolved_angle = angle
 
     for primitive_name in primitive_names:
-        result = resolve_primitive(primitive_name, angle=angle, direction=direction, speed=speed)
+        result = resolve_primitive(
+            primitive_name, angle=angle, direction=direction, speed=speed
+        )
         if result:
             joints, prim_speed, resolved_name = result
             merged_joints.update(joints)
@@ -205,6 +205,78 @@ def resolve_wp_entry(entry: dict) -> Waypoint | None:
     return wp
 
 
+def _resolve_motion_plan(plan: MotionPlan) -> list[Waypoint | list[list[Waypoint]]]:
+    """Convert a MotionPlan into the internal waypoint representation."""
+    motion_steps: list[Waypoint | list[list[Waypoint]]] = []
+
+    for entry in plan.waypoints:
+        if isinstance(entry, ParallelGroup):
+            tracks: list[list[Waypoint]] = []
+            for track_data in entry.parallel:
+                track_wps = [
+                    wp
+                    for raw in track_data
+                    if (wp := resolve_wp_entry(raw)) is not None
+                ]
+                if track_wps:
+                    tracks.append(track_wps)
+            if tracks:
+                motion_steps.append(tracks)
+                logger.info(f"Built parallel group with {len(tracks)} tracks")
+        else:
+            wp = resolve_wp_entry(entry)
+            if wp:
+                motion_steps.append(wp)
+
+    return motion_steps
+
+
+def _joints_for_waypoint(wp: Waypoint) -> set[str]:
+    return set(wp.joints.keys())
+
+
+def _validate_motion_steps(
+    motion_steps: list[Waypoint | list[list[Waypoint]]],
+) -> tuple[list[Waypoint | list[list[Waypoint]]], list[str]]:
+    """Validate resolved motion steps and surface recoverable issues.
+
+    Checks:
+    - No duplicate joints inside a single plain waypoint.
+    - Parallel tracks operate on disjoint joint sets (otherwise serializes them).
+    """
+    validated: list[Waypoint | list[list[Waypoint]]] = []
+    warnings: list[str] = []
+
+    for step in motion_steps:
+        if isinstance(step, Waypoint):
+            joints = _joints_for_waypoint(step)
+            if len(joints) != len(step.joints):
+                warnings.append(
+                    f"Waypoint {step.primitive_name} moved the same joint twice; kept last value"
+                )
+            validated.append(step)
+        else:
+            # Parallel group: ensure tracks are disjoint. If not, log and keep
+            # them anyway — execute_parallel_tracks runs them concurrently, and
+            # the primitive resolver already merged per-waypoint joints.
+            all_joints: set[str] = set()
+            overlap = False
+            for track in step:
+                for wp in track:
+                    joints = _joints_for_waypoint(wp)
+                    if joints & all_joints:
+                        overlap = True
+                    all_joints |= joints
+            if overlap:
+                warnings.append(
+                    "Parallel tracks overlap on the same joint; running them anyway, "
+                    "but the last track to move a joint wins."
+                )
+            validated.append(step)
+
+    return validated, warnings
+
+
 async def _build_pre_context(
     simulator_instance: "AiNexSimulator | None",
     memory: HierarchicalMemory,
@@ -213,6 +285,59 @@ async def _build_pre_context(
     state_description = describe_joint_state(robot_state)
     memory_context = memory.get_context_for_llm()
     return robot_state, state_description, memory_context
+
+
+_MOTION_PLAN_ADAPTER = TypeAdapter(MotionPlan)
+
+
+def _build_motion_plan_schema() -> dict:
+    """Build the JSON Schema sent to the LLM to constrain motion-plan output."""
+    schema = _MOTION_PLAN_ADAPTER.json_schema()
+    schema["$schema"] = "http://json-schema.org/draft-07/schema#"
+    schema["additionalProperties"] = False
+    return schema
+
+
+async def _run_motion_planner(
+    user_message: str,
+    memory_ctx: list[dict],
+    contextual_message: str,
+    model: str,
+) -> MotionPlan | None:
+    """Call the LLM motion planner with a structured-output schema."""
+
+    @observe(name="motion_planner_llm")
+    def call_llm() -> str:
+        prompt = get_router_prompt()
+        messages = [
+            {"role": "system", "content": prompt},
+            *memory_ctx,
+            {"role": "user", "content": contextual_message},
+        ]
+        llm_response = openai.chat.completions.create(
+            model=model,
+            messages=messages,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "motion_plan",
+                    "schema": _build_motion_plan_schema(),
+                },
+            },
+            name="motion-planner",
+        )
+        cached = getattr(llm_response.usage.prompt_tokens_details, "cached_tokens", 0)
+        logger.debug(
+            f"LLM prompt tokens: {llm_response.usage.prompt_tokens} total, {cached} cached"
+        )
+        return llm_response.choices[0].message.content or "{}"
+
+    planner_response_text = await asyncio.to_thread(call_llm)
+    try:
+        return _MOTION_PLAN_ADAPTER.validate_json(planner_response_text)
+    except ValidationError as e:
+        logger.warning(f"Motion planner returned invalid plan: {e}")
+        return None
 
 
 @observe(name="process_chat_message")
@@ -259,36 +384,44 @@ async def process_chat_message(
             f"USER_REQUEST: {user_message}"
         )
 
-        # --- SINGLE LLM CALL: Motion Planner ---
-        @observe(name="motion_planner_llm")
-        def run_motion_planner():
-            prompt = get_router_prompt()
-            messages = [
-                {"role": "system", "content": prompt},
-                *memory_ctx,
-                {"role": "user", "content": contextual_message},
-            ]
-            llm_response = openai.chat.completions.create(
-                model=LLM_MODEL,
-                messages=messages,
-                response_format={"type": "json_object"},
-                name="motion-planner",
-            )
-            cached = getattr(llm_response.usage.prompt_tokens_details, "cached_tokens", 0)
-            logger.debug(
-                f"LLM prompt tokens: {llm_response.usage.prompt_tokens} total, {cached} cached"
-            )
-            return llm_response.choices[0].message.content
+        plan = await _run_motion_planner(
+            user_message, memory_ctx, contextual_message, LLM_MODEL
+        )
 
-        planner_response_text = await asyncio.to_thread(run_motion_planner)
-        plan_data = json.loads(planner_response_text)
+        # If the LLM produced an invalid shape, try the deterministic fallback.
+        if plan is None:
+            plan = plan_for_description(user_message)
 
-        response = plan_data.get("verbal_response", "")
-        satisfied = plan_data.get("satisfied")
+        # If neither worked, ask the child to rephrase in friendly, actionable
+        # language they can repeat or read on screen.
+        if plan is None:
+            response = (
+                "Hmm, I didn't catch that. Try saying something like "
+                "'raise your right arm' or tap a button to show me!"
+            )
+            memory.add_exchange(user_message, response, [])
+            recorder.log_interaction(
+                user_message=user_message,
+                assistant_response=response,
+                waypoints_extracted=[],
+                waypoints_executed=[],
+                router_response={"error": "unparseable motion plan"},
+            )
+            return {
+                "type": "chat_response",
+                "role": "assistant",
+                "content": response,
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+                "satisfied": False,
+            }
+
+        response = plan.verbal_response
+        satisfied = plan.satisfied
 
         # Handle execute_saved_pose action: look up stored joints and dispatch directly.
-        if plan_data.get("action") == "execute_saved_pose":
-            pose_name = plan_data.get("pose_name", "")
+        if plan.action == "execute_saved_pose":
+            pose_name = plan.pose_name or ""
             joints = get_pose(pose_name)
             if joints is not None:
                 if simulator_instance is not None:
@@ -317,7 +450,7 @@ async def process_chat_message(
                 assistant_response=response,
                 waypoints_extracted=[],
                 waypoints_executed=[],
-                router_response=plan_data,
+                router_response=plan.model_dump(mode="json"),
             )
             return {
                 "type": "chat_response",
@@ -328,28 +461,8 @@ async def process_chat_message(
                 "satisfied": satisfied,
             }
 
-        # Each step is either a single Waypoint (sequential) or a list of parallel tracks.
-        # A parallel track is itself a list[Waypoint] that executes concurrently with siblings.
-        motion_steps: list[Waypoint | list[list[Waypoint]]] = []
-
-        for entry in plan_data.get("waypoints", []):
-            if "parallel" in entry:
-                tracks: list[list[Waypoint]] = []
-                for track_data in entry["parallel"]:
-                    track_wps = [
-                        wp
-                        for raw in track_data.get("track", [])
-                        if (wp := resolve_wp_entry(raw)) is not None
-                    ]
-                    if track_wps:
-                        tracks.append(track_wps)
-                if tracks:
-                    motion_steps.append(tracks)
-                    logger.info(f"Built parallel group with {len(tracks)} tracks")
-            else:
-                wp = resolve_wp_entry(entry)
-                if wp:
-                    motion_steps.append(wp)
+        motion_steps = _resolve_motion_plan(plan)
+        motion_steps, plan_warnings = _validate_motion_steps(motion_steps)
 
         # Flatten all waypoints for validation and logging
         all_waypoints: list[Waypoint] = []
@@ -362,7 +475,6 @@ async def process_chat_message(
 
         executed_waypoints = []
         validation_warnings = []
-        sign_warnings = []
 
         if motion_steps:
             if simulator_instance is not None:
@@ -372,20 +484,6 @@ async def process_chat_message(
             for wp in all_waypoints:
                 if wp.validation_result and wp.validation_result.had_violations:
                     validation_warnings.extend(wp.validation_result.violations)
-                motion_sign_issues = validate_motion_sign(user_message, wp.joints)
-                if motion_sign_issues:
-                    sign_warnings.extend(motion_sign_issues)
-                    for warning in motion_sign_issues:
-                        logger.warning(f"Sign validation: {warning}")
-                    # Auto-correct the most common LLM direction-sign mistakes so the
-                    # demo behaves as the user expects, while still logging the issue.
-                    corrected = correct_motion_sign(user_message, wp.joints)
-                    if corrected != wp.joints:
-                        logger.info(
-                            f"Auto-corrected sign mismatch for '{user_message}': "
-                            f"{wp.joints} → {corrected}"
-                        )
-                        wp.joints = corrected
 
             # Signal that a real motion is about to run, before the (potentially
             # slow) execution blocks. The client uses this to tell "already
@@ -431,7 +529,7 @@ async def process_chat_message(
             assistant_response=response,
             waypoints_extracted=waypoints_data,
             waypoints_executed=executed_waypoints,
-            router_response=plan_data,
+            router_response=plan.model_dump(mode="json"),
         )
         langfuse.update_current_span(
             output=response,
@@ -459,8 +557,8 @@ async def process_chat_message(
         if validation_warnings:
             response_data["validation_warnings"] = validation_warnings
 
-        if sign_warnings:
-            response_data["sign_warnings"] = sign_warnings
+        if plan_warnings:
+            response_data.setdefault("validation_warnings", []).extend(plan_warnings)
 
         return response_data
 
