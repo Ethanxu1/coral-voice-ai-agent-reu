@@ -803,6 +803,19 @@ export function useRefinedDemoMachine() {
           continue
         }
 
+        // ── play_pose: strike a saved pose — the backend resolves the spoken
+        // name against the saved-pose library and executes it ──
+        if (intent === 'play_pose') {
+          const result = await sendText(transcript, 'immediate')
+          active()
+          addMsg(agentMsg(
+            result.content || 'Done!',
+            ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
+          continue
+        }
+
         // ── save_robot_pose: save current robot state directly (no camera) ──
         if (intent === 'save_robot_pose') {
           addMsg(agentMsg("What would you like to name this pose?"))
