@@ -70,6 +70,18 @@ CORAL_MUJOCO_WINDOW = os.getenv("CORAL_MUJOCO_WINDOW", "0").lower() in (
 CORAL_NO_VIEWER = os.getenv("CORAL_NO_VIEWER", "0").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
+# Vision / pose retargeting
+# ---------------------------------------------------------------------------
+# Leg tracking is experimental and can be unstable in live demos. Default to
+# disabled so the robot only mirrors the upper body, head, and hips; set to
+# "true" to re-enable continuous leg retargeting.
+ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# ---------------------------------------------------------------------------
 # Server binding
 # ---------------------------------------------------------------------------
 # Default to localhost for school/Electron deployments so the backend is not

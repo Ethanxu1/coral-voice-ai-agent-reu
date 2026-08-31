@@ -18,12 +18,14 @@ hip yaw, and ankles stay at neutral.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from typing import Optional
 
 import numpy as np
 
+from app import config
 from app.robot.angle_utils import rad_to_servo_units
 from app.robot.hardware_angle_utils import HW_STAND_RAD
 from app.robot.interface import ServoCommand
@@ -31,6 +33,8 @@ from app.robot.servo_config import SERVO_ID_MAP
 from app.validation import JOINT_LIMITS
 
 from . import geometry
+
+logger = logging.getLogger(__name__)
 
 # NOTE: OneEuroFilter is imported lazily inside JointAngleSmoother (see __init__)
 # rather than at module load. Pulling it here would drag in pose_estimator ->
@@ -332,7 +336,7 @@ def compute_joint_targets(
     # so leaning at the waist doesn't read as the legs swinging. Hip yaw is
     # unobservable from hip→knee (rotation about the segment's own axis) and
     # is deliberately not emitted.
-    if len(body_landmarks) > _LM_R_ANKLE:
+    if config.ENABLE_LEG_TRACKING and len(body_landmarks) > _LM_R_ANKLE:
         R_pelvis = _pelvis_frame_from(body_landmarks)
 
         # Only retarget the legs when BOTH knees clear the stricter knee gate.

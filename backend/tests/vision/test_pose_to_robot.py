@@ -21,13 +21,27 @@ import math
 
 import pytest
 
+from app import config
 from app.robot.hardware_angle_utils import HW_STAND_RAD
 from app.validation import JOINT_LIMITS
+from app.vision import leg_modes
 from app.vision.pose_to_robot import (
     _STAND_L_SHO_ROLL,
     _STAND_R_SHO_ROLL,
     compute_joint_targets,
 )
+
+
+@pytest.fixture(autouse=True)
+def _enable_leg_tracking_for_tests(monkeypatch):
+    """Existing pose-to-robot tests exercise leg retargeting; keep it enabled.
+
+    The live demo default is `CORAL_ENABLE_LEG_TRACKING=false`, so the module
+    under test disables leg joints by default. We patch it back on here to
+    preserve the original test coverage, and add separate tests for the
+    disabled path.
+    """
+    monkeypatch.setattr(config, "ENABLE_LEG_TRACKING", True)
 
 
 def _empty_landmark() -> dict:
@@ -377,3 +391,32 @@ def test_hidden_hips_stand_legs():
     assert targets["r_hip_pitch"] == pytest.approx(HW_STAND_RAD["r_hip_pitch"])
     assert targets["l_knee"] == pytest.approx(HW_STAND_RAD["l_knee"])
     assert targets["r_knee"] == pytest.approx(HW_STAND_RAD["r_knee"])
+
+
+# ── Leg tracking toggle ────────────────────────────────────────────────────────
+
+
+def test_leg_tracking_disabled_omits_leg_joints(monkeypatch):
+    """When CORAL_ENABLE_LEG_TRACKING is false, compute_joint_targets emits no
+    leg joints so the robot only mirrors upper body + head."""
+    monkeypatch.setattr(config, "ENABLE_LEG_TRACKING", False)
+    body = _build_body()  # default standing pose with visible knees/ankles
+    targets = compute_joint_targets(body, head_pose=None)
+
+    # Arms and head should still be retargeted.
+    assert "l_sho_pitch" in targets
+    assert "r_sho_pitch" in targets
+
+    # No leg joints should be emitted.
+    for joint in ("l_hip_pitch", "r_hip_pitch", "l_hip_roll", "r_hip_roll",
+                  "l_knee", "r_knee"):
+        assert joint not in targets, joint
+
+
+def test_leg_tracking_disabled_does_not_emit_stand_leg_targets(monkeypatch):
+    """The low-level retargeter leaves leg handling to the caller when disabled;
+    it does not even emit the partial stand-leg targets used by the knee gate."""
+    monkeypatch.setattr(config, "ENABLE_LEG_TRACKING", False)
+    body = _build_body()
+    targets = compute_joint_targets(body, head_pose=None)
+    assert not any(k in leg_modes.LEG_JOINTS for k in targets)
