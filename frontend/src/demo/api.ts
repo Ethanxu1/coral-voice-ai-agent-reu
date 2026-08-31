@@ -527,12 +527,17 @@ export function sendAudioForAction(
 // ActionSession keeps one socket open across the whole ADJUST loop so memory
 // (and the Langfuse trace) span every turn.
 export interface ActionSession {
-  sendAudio(blob: Blob, timeoutMs?: number): Promise<ActionResult>
+  sendAudio(
+    blob: Blob,
+    timeoutMs?: number,
+    onAudio?: (audioUrl: string) => void,
+  ): Promise<ActionResult>
   sendText(
     text: string,
     intentType?: 'motion' | 'conversation' | 'immediate' | 'clarification',
     description?: string,
     timeoutMs?: number,
+    onAudio?: (audioUrl: string) => void,
   ): Promise<ActionResult>
   close(): void
 }
@@ -557,9 +562,12 @@ export function openActionSession(sessionId?: string): ActionSession {
     resolve: (r: ActionResult) => void
     reject: (e: Error) => void
     timer: ReturnType<typeof setTimeout>
+    onAudio?: (audioUrl: string) => void
   }
   let pending: Pending | null = null
   let closed = false
+  // Object URLs for assistant TTS audio; revoked when the session closes.
+  const audioUrls: string[] = []
 
   const failPending = (err: Error) => {
     if (pending) {
@@ -570,8 +578,20 @@ export function openActionSession(sessionId?: string): ActionSession {
   }
 
   ws.addEventListener('message', (event) => {
-    if (!pending) return
     const data = JSON.parse(event.data)
+    if (data.type === 'audio_response' && data.audio_base64) {
+      try {
+        const bytes = Uint8Array.from(atob(data.audio_base64), (c) => c.charCodeAt(0))
+        const blob = new Blob([bytes], { type: `audio/${data.format ?? 'mpeg'}` })
+        const url = URL.createObjectURL(blob)
+        audioUrls.push(url)
+        pending?.onAudio?.(url)
+      } catch {
+        /* malformed audio frame — ignore */
+      }
+      return
+    }
+    if (!pending) return
     if (data.type === 'transcription') {
       pending.transcript = data.text ?? ''
     } else if (data.type === 'chat_response') {
@@ -600,7 +620,12 @@ export function openActionSession(sessionId?: string): ActionSession {
     failPending(new Error('action session ws error'))
   })
 
-  const send = async (payload: object, timeoutMs: number, initialTranscript = ''): Promise<ActionResult> => {
+  const send = async (
+    payload: object,
+    timeoutMs: number,
+    initialTranscript = '',
+    onAudio?: (audioUrl: string) => void,
+  ): Promise<ActionResult> => {
     if (closed) throw new Error('action session already closed')
     if (pending) throw new Error('action session busy')
     await openPromise
@@ -610,7 +635,7 @@ export function openActionSession(sessionId?: string): ActionSession {
         pending = null
         reject(new Error('action session timed out'))
       }, timeoutMs)
-      pending = { transcript: initialTranscript, resolve, reject, timer }
+      pending = { transcript: initialTranscript, resolve, reject, timer, onAudio }
       try {
         ws.send(JSON.stringify(payload))
       } catch (err) {
@@ -622,21 +647,25 @@ export function openActionSession(sessionId?: string): ActionSession {
   }
 
   return {
-    async sendAudio(blob, timeoutMs = 30000) {
+    async sendAudio(blob, timeoutMs = 30000, onAudio) {
       const base64 = await blobToBase64(blob)
-      return send({ type: 'audio', data: base64, format: 'webm' }, timeoutMs)
+      return send({ type: 'audio', data: base64, format: 'webm' }, timeoutMs, '', onAudio)
     },
-    async sendText(text, intentType, description, timeoutMs = 30000) {
+    async sendText(text, intentType, description, timeoutMs = 30000, onAudio) {
       // Server won't emit a 'transcription' frame for text; seed it locally so the
       // caller sees what they typed as the "transcript" for UI parity with audio.
       const payload: Record<string, unknown> = { type: 'chat', content: text }
       if (intentType) payload.intent_type = intentType
       if (description) payload.description = description
-      return send(payload, timeoutMs, text)
+      return send(payload, timeoutMs, text, onAudio)
     },
     close() {
       closed = true
       failPending(new Error('action session closed'))
+      audioUrls.forEach((url) => {
+        try { URL.revokeObjectURL(url) } catch { /* ignore */ }
+      })
+      audioUrls.length = 0
       try { ws.close() } catch { /* ignore */ }
     },
   }
@@ -743,6 +772,27 @@ export async function listPoses(): Promise<string[]> {
   if (!res.ok) return []
   const data = await res.json()
   return data.poses ?? []
+}
+
+// Canonical example phrases grouped by intent category, returned by the
+// Phase 1 /intent/examples endpoint for the in-demo command palette.
+export interface IntentExamples {
+  motion: string[]
+  immediate: string[]
+  conversation: string[]
+}
+
+export async function fetchIntentExamples(): Promise<IntentExamples> {
+  const res = await fetch('http://localhost:8000/intent/examples')
+  if (!res.ok) {
+    return { motion: [], immediate: [], conversation: [] }
+  }
+  const data = await res.json().catch(() => ({}))
+  return {
+    motion: Array.isArray(data.motion) ? data.motion : [],
+    immediate: Array.isArray(data.immediate) ? data.immediate : [],
+    conversation: Array.isArray(data.conversation) ? data.conversation : [],
+  }
 }
 
 export async function saveCurrentPose(name: string): Promise<void> {

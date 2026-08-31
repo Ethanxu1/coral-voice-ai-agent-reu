@@ -14,6 +14,26 @@ class TestImmediateIntents:
         assert result.data["intent"] == "follow_start"
         assert result.confidence >= HIGH_CONFIDENCE_THRESHOLD
 
+    def test_follow_start_movement_phrasing(self):
+        for phrase in [
+            "follow my movement",
+            "follow my movements",
+            "Follow my movement.",
+            "mirror my movement",
+            "copy my movement",
+            "mimic my movement",
+        ]:
+            result = classify_intent_regex(phrase)
+            assert result is not None, phrase
+            assert result.type == "immediate", phrase
+            assert result.data["intent"] == "follow_start", phrase
+
+    def test_follow_start_with_greeting_prefix(self):
+        result = classify_intent_regex("Hey, can you follow my movement?")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "follow_start"
+
     def test_follow_stop(self):
         result = classify_intent_regex("stop following")
         assert result is not None
@@ -43,6 +63,33 @@ class TestImmediateIntents:
         result = classify_intent_regex("my poses")
         assert result is not None
         assert result.data["intent"] == "library"
+
+    def test_play_pose_with_name_before_pose(self):
+        result = classify_intent_regex("play my right arm up pose")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "play_pose"
+        assert "right arm up" in result.data["name"]
+
+    def test_play_pose_with_name_after_pose(self):
+        result = classify_intent_regex("do the pose right arm up")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "play_pose"
+        assert "right arm up" in result.data["name"]
+
+    def test_play_pose_without_name(self):
+        result = classify_intent_regex("play my pose")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "play_pose"
+        assert not result.data.get("name")
+
+    def test_perform_pose(self):
+        result = classify_intent_regex("perform the superhero pose")
+        assert result is not None
+        assert result.data["intent"] == "play_pose"
+        assert "superhero" in result.data["name"]
 
     def test_exit(self):
         result = classify_intent_regex("goodbye")
@@ -130,6 +177,23 @@ class TestMotionIntents:
         assert result is not None
         assert "45" in result.data["description"]
 
+    def test_put_arm_up(self):
+        result = classify_intent_regex("put your left arm up")
+        assert result is not None
+        assert result.type == "motion"
+        assert "left" in result.data["description"].lower()
+
+    def test_put_arm_down(self):
+        result = classify_intent_regex("put your right arm down")
+        assert result is not None
+        assert result.type == "motion"
+        assert "right" in result.data["description"].lower()
+
+    def test_compound_command_skips_regex_motion(self):
+        """Compound sequential commands should fall through to the LLM."""
+        result = classify_intent_regex("raise your left arm and then lower your right arm")
+        assert result is None
+
 
 class TestConversationIntents:
     def test_greeting(self):
@@ -185,3 +249,63 @@ class TestResponseMetadata:
         assert response["classifier"] == "regex"
         assert response["reason"]
         assert response["type"] == "immediate"
+
+
+class TestRegexPitfalls:
+    def test_lower_your_right_arm_is_motion_not_correction(self):
+        """Regression guard: 'lower your right arm' must be a direct motion."""
+        result = classify_intent_regex("lower your right arm")
+        assert result is not None
+        assert result.type == "motion"
+        assert "right" in result.data["description"].lower()
+
+    def test_bare_done_only_triggers_exit(self):
+        """The exit pattern must not fire on unrelated phrases containing 'done'."""
+        result = classify_intent_regex("I'm almost done thinking")
+        assert result is None or result.data.get("intent") != "exit"
+
+    def test_done_exclamation_triggers_exit(self):
+        result = classify_intent_regex("done!")
+        assert result is not None
+        assert result.type == "immediate"
+        assert result.data["intent"] == "exit"
+
+
+class TestLLMSchemaShape:
+    def test_intent_json_schema_is_openai_compatible(self):
+        """OpenAI structured outputs reject oneOf/anyOf/allOf at the top level."""
+        from app.llm.intent_classifier import _build_intent_json_schema
+
+        schema = _build_intent_json_schema()
+        assert schema.get("type") == "object"
+        assert "oneOf" not in schema
+        assert "anyOf" not in schema
+        assert "allOf" not in schema
+        assert schema.get("additionalProperties") is False
+        assert "type" in schema.get("properties", {})
+
+
+class TestPydanticResponseShape:
+    def test_motion_response_matches_intent_schema(self):
+        result = classify_intent_regex("turn your head left")
+        assert result is not None
+        response = result.to_response()
+        assert response["type"] == "motion"
+        assert "description" in response
+        assert response["classifier"] == "regex"
+        assert "reason" in response
+
+    def test_immediate_response_matches_intent_schema(self):
+        result = classify_intent_regex("follow me")
+        assert result is not None
+        response = result.to_response()
+        assert response["type"] == "immediate"
+        assert response["intent"] == "follow_start"
+
+    def test_naming_response_includes_optional_name(self):
+        result = classify_intent_regex("name this pose superhero")
+        assert result is not None
+        response = result.to_response()
+        assert response["type"] == "immediate"
+        assert response["intent"] == "naming"
+        assert response["name"] == "superhero"

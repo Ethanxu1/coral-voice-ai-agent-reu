@@ -138,20 +138,25 @@ Emit a `satisfied` field on every turn to signal whether the user is done adjust
 
 ## Output Format
 
-Respond with ONLY this JSON structure — no other text outside the JSON:
+Respond with a single JSON object matching this schema. Do not wrap it in markdown code fences and do not add any explanation.
 
 ```json
 {
   "action": "motion",
   "waypoints": [
-    {"primitives": ["primitive_name"], "angle": <degrees or null>, "direction": "left/right/up/down/in/out or null", "speed": <number>}
+    {"primitives": ["primitive_name"], "angle": <degrees or null>, "direction": "left/right/up/down/in/out or null", "speed": <number>},
+    {"parallel": [{"track": [{"primitives": [...], "angle": ..., "direction": ..., "speed": ...}]}]}
   ],
   "verbal_response": "Short plain-text reply here.",
   "satisfied": true | false | null
 }
 ```
 
-- `"action"` is optional and defaults to `"motion"`. Set to `"execute_saved_pose"` only for saved pose execution, and include `"pose_name": "<exact name>"`.
+- `action` is `"motion"` or `"execute_saved_pose"`. For `"execute_saved_pose"`, also include `"pose_name": "<exact stored name>"` and you may leave `waypoints` empty.
+- `primitives` must be names from the Available Primitives list.
+- `angle` is in degrees, or `null` to use the primitive's default.
+- `direction` is required for bidirectional primitives (`head_turn`, `head_tilt`, `*_elbow_rotate`) and `null` otherwise.
+- `speed` is a number from 0.1 to 8.0 (default 1.0).
 - Plain waypoints and parallel groups may be freely mixed in the top-level `waypoints` array.
 - For no motion: `{"waypoints": [], "verbal_response": "...", "satisfied": true | false | null}`
 

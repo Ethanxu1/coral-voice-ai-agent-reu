@@ -3,13 +3,19 @@ import { getFeaturesBase, getRobotBase } from '../demo/robotConfig'
 import { SPEAKER_BASE } from '../demo/config'
 import './ConnectionStatus.css'
 
-interface ServiceStatus {
+export interface ServiceStatus {
   name: string
   ok: boolean | null
   url: string
 }
 
-async function checkHealth(url: string): Promise<boolean> {
+export const SERVICES: ServiceStatus[] = [
+  { name: 'Server', ok: null, url: getRobotBase() },
+  { name: 'Vision', ok: null, url: getFeaturesBase() },
+  { name: 'Speaker', ok: null, url: SPEAKER_BASE },
+]
+
+export async function checkHealth(url: string): Promise<boolean> {
   try {
     const res = await fetch(`${url}/health`, {
       method: 'GET',
@@ -22,12 +28,8 @@ async function checkHealth(url: string): Promise<boolean> {
   }
 }
 
-export default function ConnectionStatus() {
-  const [services, setServices] = useState<ServiceStatus[]>([
-    { name: 'Server', ok: null, url: getRobotBase() },
-    { name: 'Vision', ok: null, url: getFeaturesBase() },
-    { name: 'Speaker', ok: null, url: SPEAKER_BASE },
-  ])
+export function useConnectionStatus(services = SERVICES) {
+  const [statuses, setStatuses] = useState<ServiceStatus[]>(services)
 
   useEffect(() => {
     let cancelled = false
@@ -39,7 +41,7 @@ export default function ConnectionStatus() {
           ok: await checkHealth(s.url),
         }))
       )
-      if (!cancelled) setServices(next)
+      if (!cancelled) setStatuses(next)
     }
 
     tick()
@@ -48,7 +50,13 @@ export default function ConnectionStatus() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [])
+  }, [services])
+
+  return statuses
+}
+
+export default function ConnectionStatus() {
+  const services = useConnectionStatus()
 
   return (
     <div className="cs-root">

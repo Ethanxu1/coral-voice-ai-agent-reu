@@ -9,10 +9,10 @@
   --warn: #F0A93A;
   --bad: #EF6560;
   min-height: 100vh;
-  padding: 22px 22px 84px;
+  padding: 16px 16px 24px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
   color: #2C2740;
   background: #EFE8DA;
   font-family: 'Nunito', system-ui, sans-serif;
@@ -230,17 +230,17 @@
 }
 .tut-right-scroll {
   flex: 1; min-height: 0; overflow-y: auto;
-  padding: 24px; display: flex; flex-direction: column; gap: 18px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
 }
 
 /* agent bubble in concept */
 .tut-agent-bubble {
   position: relative; background: #fff; border: 1.5px solid #F2E9DA;
-  border-radius: 22px 22px 22px 8px; padding: 18px 20px;
+  border-radius: 22px 22px 22px 8px; padding: 14px 16px;
   box-shadow: 0 3px 12px rgba(80,60,30,.05); animation: fadeUp .35s ease both;
 }
 .tut-agent-header {
-  display: flex; align-items: center; gap: 9px; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 9px; margin-bottom: 6px;
 }
 .tut-agent-dot {
   width: 9px; height: 9px; border-radius: 50%;
@@ -250,37 +250,37 @@
   font-weight: 800; font-size: 12px; color: #A69FB0; letter-spacing: .06em;
 }
 .tut-agent-script {
-  font-family: 'Baloo 2'; font-weight: 600; font-size: 20px; line-height: 1.4;
+  font-family: 'Baloo 2'; font-weight: 600; font-size: 18px; line-height: 1.35;
 }
 
 /* transcript box */
 .tut-transcript {
-  width: 100%; background: #F6EFE2; border-radius: 16px; padding: 15px 18px;
+  width: 100%; background: #F6EFE2; border-radius: 16px; padding: 12px 14px;
 }
 .tut-transcript-label {
-  font-weight: 800; font-size: 11px; color: #B0A9B8; letter-spacing: .08em; margin-bottom: 5px;
+  font-weight: 800; font-size: 11px; color: #B0A9B8; letter-spacing: .08em; margin-bottom: 4px;
 }
 .tut-transcript-text {
-  font-family: 'Baloo 2'; font-weight: 700; font-size: 20px; color: #2C2740;
+  font-family: 'Baloo 2'; font-weight: 700; font-size: 18px; color: #2C2740;
 }
 
 /* mic orb */
 .tut-mic-wrap {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
 }
 .tut-orb-container {
-  position: relative; width: 120px; height: 120px;
+  position: relative; width: 90px; height: 90px;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .tut-orb-ring {
-  position: absolute; width: 104px; height: 104px; border-radius: 50%;
+  position: absolute; width: 78px; height: 78px; border-radius: 50%;
   border: 2px solid var(--accent); animation: orbPulse 2.6s ease-out infinite;
 }
 .tut-orb-ring2 { animation-delay: 1.3s; }
 .tut-orb-core {
-  width: 104px; height: 104px; border-radius: 50%;
+  width: 78px; height: 78px; border-radius: 50%;
   background: radial-gradient(circle at 34% 28%, #fff, var(--accent) 50%, #E24E2E);
-  box-shadow: 0 10px 30px rgba(226,78,46,.45);
+  box-shadow: 0 8px 22px rgba(226,78,46,.45);
   display: flex; align-items: center; justify-content: center;
 }
 .tut-orb-mic {
@@ -301,89 +301,89 @@
 /* intent card */
 .tut-intent-card {
   background: #FFF3EE; border: 2px solid var(--accent); border-radius: 20px;
-  padding: 18px 20px; box-shadow: 0 6px 18px rgba(226,78,46,.12);
+  padding: 14px 16px; box-shadow: 0 6px 18px rgba(226,78,46,.12);
   animation: expandIn .22s ease both;
 }
 .tut-intent-header {
-  display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 9px; margin-bottom: 8px;
 }
 .tut-intent-icon {
-  width: 26px; height: 26px; border-radius: 9px; background: var(--accent);
+  width: 24px; height: 24px; border-radius: 8px; background: var(--accent);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 800; font-size: 15px;
+  color: #fff; font-weight: 800; font-size: 14px;
 }
 .tut-intent-label {
   font-weight: 800; font-size: 12px; color: #D8451F; letter-spacing: .05em;
 }
 .tut-intent-text {
-  font-family: 'Baloo 2'; font-weight: 600; font-size: 19px; line-height: 1.4;
+  font-family: 'Baloo 2'; font-weight: 600; font-size: 17px; line-height: 1.35;
 }
 .tut-intent-btns {
-  display: flex; gap: 10px; margin-top: 14px;
+  display: flex; gap: 10px; margin-top: 12px;
 }
 .tut-intent-tip {
   display: flex; gap: 9px; align-items: flex-start;
-  color: #8A8398; font-weight: 700; font-size: 14px; line-height: 1.4;
+  color: #8A8398; font-weight: 700; font-size: 13px; line-height: 1.35;
 }
 .tut-intent-tip-dot {
   flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--teal); margin-top: 5px;
+  background: var(--teal); margin-top: 4px;
 }
 
 /* success card */
 .tut-success-card {
   background: #F4F8F5; border: 1.5px solid #DCEBE1; border-radius: 20px;
-  padding: 18px 20px; display: flex; align-items: center; gap: 13px;
+  padding: 14px 16px; display: flex; align-items: center; gap: 12px;
   animation: expandIn .22s ease both;
 }
 .tut-check-icon {
-  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 11px;
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 10px;
   background: var(--ok); display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 800; font-size: 18px; animation: popIn .3s ease both;
+  color: #fff; font-weight: 800; font-size: 16px; animation: popIn .3s ease both;
 }
 .tut-success-text {
-  font-family: 'Baloo 2'; font-weight: 600; font-size: 18px; line-height: 1.35;
+  font-family: 'Baloo 2'; font-weight: 600; font-size: 16px; line-height: 1.35;
 }
 
 /* safety blocked */
 .tut-safety-card {
   background: #FDEEED; border: 2px solid var(--bad); border-radius: 20px;
-  padding: 18px 20px; animation: shake .5s ease;
+  padding: 14px 16px; animation: shake .5s ease;
 }
 .tut-safety-header {
-  display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 9px; margin-bottom: 8px;
 }
 .tut-safety-icon {
-  width: 26px; height: 26px; border-radius: 9px; background: var(--bad);
+  width: 24px; height: 24px; border-radius: 8px; background: var(--bad);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 800; font-size: 15px;
+  color: #fff; font-weight: 800; font-size: 14px;
 }
 .tut-safety-label {
   font-weight: 800; font-size: 12px; color: #C4453F; letter-spacing: .05em;
 }
 .tut-safety-text {
-  font-family: 'Baloo 2'; font-weight: 600; font-size: 19px; line-height: 1.4; color: #C4453F;
+  font-family: 'Baloo 2'; font-weight: 600; font-size: 17px; line-height: 1.35; color: #C4453F;
 }
 
 /* safety checking */
 .tut-checking-card {
   background: #FFF8F2; border: 2px solid var(--warn); border-radius: 20px;
-  padding: 18px 20px; display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; display: flex; align-items: center; gap: 12px;
   animation: fadeUp .22s ease both;
 }
 .tut-checking-spinner {
-  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
+  flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%;
   border: 3px solid rgba(240,169,58,.3); border-top-color: var(--warn);
   animation: ringspin .9s linear infinite;
 }
 .tut-checking-text {
-  font-family: 'Baloo 2'; font-weight: 700; font-size: 18px; color: #9A6800;
+  font-family: 'Baloo 2'; font-weight: 700; font-size: 16px; color: #9A6800;
 }
 
 /* next button */
 .tut-next-btn {
-  flex: 0 0 auto; font-family: 'Nunito'; font-weight: 800; font-size: 18px;
-  color: #fff; background: var(--accent); border: none; padding: 15px;
+  flex: 0 0 auto; font-family: 'Nunito'; font-weight: 800; font-size: 16px;
+  color: #fff; background: var(--accent); border: none; padding: 12px;
   border-radius: 999px; cursor: pointer; box-shadow: 0 5px 0 rgba(216,69,31,.28);
 }
 .tut-next-btn:hover { transform: translateY(-1px); }
@@ -577,7 +577,7 @@
 
 /* ---- WELCOME ---- */
 .tut-welcome {
-  flex: 1; min-height: 0; position: relative; border-radius: 32px; overflow: hidden;
+  flex: 1; min-height: 0; position: relative; border-radius: 32px;
   background: radial-gradient(circle at 50% 22%, #FFFDF8, #F3ECDD 70%);
   box-shadow: 0 22px 55px rgba(40,30,20,.12);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -630,7 +630,7 @@
 
 /* ---- READINESS GATE ---- */
 .tut-ready {
-  flex: 1; min-height: 0; position: relative; border-radius: 32px; overflow: hidden;
+  flex: 1; min-height: 0; position: relative; border-radius: 32px;
   background: radial-gradient(circle at 50% 30%, #FFF4E9, #F3ECDD 72%);
   box-shadow: 0 22px 55px rgba(40,30,20,.12);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -740,7 +740,7 @@
 
 /* ---- POSE CAPTURE STAGE ---- */
 .tut-capture-stage {
-  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  position: relative; width: 100%; aspect-ratio: 16 / 9;
   border-radius: 20px; overflow: hidden; margin-bottom: 22px;
   background: #26232F;
 }
@@ -752,8 +752,9 @@
 /* Thumbnail shown inside the right panel after a capture. */
 .tut-capture-thumb {
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 9;
   object-fit: cover;
+  object-position: top center;
   border-radius: 18px;
   border: 2px solid #F2E9DA;
   box-shadow: 0 8px 22px rgba(40,30,20,.1);

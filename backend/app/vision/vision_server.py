@@ -462,7 +462,9 @@ async def subject_selection_tuning_set(updates: dict = Body(...)):
 
 
 def main():
-    uvicorn.run("app.vision.vision_server:app", host="0.0.0.0", port=8001, reload=False)
+    # Default to localhost for school/Electron deployments; containers set CORAL_HOST=0.0.0.0.
+    host = os.getenv("CORAL_HOST", "127.0.0.1")
+    uvicorn.run("app.vision.vision_server:app", host=host, port=8001, reload=False)
 
 
 if __name__ == "__main__":

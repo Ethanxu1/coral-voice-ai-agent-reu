@@ -16,7 +16,9 @@ files:
 
 extraResources:
   # PyInstaller onedir COLLECT output (packaging/backend.spec, name="backend").
-  - from: ../packaging/dist/backend
+  # Run `uv run pyinstaller packaging/backend.spec --clean --noconfirm` from the
+  # repo root; this writes the bundle to dist/backend.
+  - from: ../dist/backend
     to: backend
   # Built React/Vite frontend.
   - from: ../frontend/dist

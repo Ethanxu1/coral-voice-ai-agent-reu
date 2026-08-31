@@ -38,15 +38,21 @@ function showOnboarding(prefill) {
   onboardingWindow.loadFile(path.join(__dirname, "onboarding", "index.html"));
 }
 
-function showError({ failed, reason, exitCode }) {
+function showError({ failed, reason, exitCode, message, lastLogs }) {
   errorWindow = new BrowserWindow({
-    width: 420,
-    height: 420,
-    resizable: false,
+    width: 520,
+    height: 560,
+    resizable: true,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false },
   });
   errorWindow.setMenuBarVisibility(false);
-  const params = new URLSearchParams({ failed: failed || "", reason: reason || "", exitCode: exitCode ?? "" });
+  const params = new URLSearchParams({
+    failed: failed || "",
+    reason: reason || "",
+    exitCode: exitCode ?? "",
+    message: message || "",
+    lastLogs: lastLogs || "",
+  });
   errorWindow.loadFile(path.join(__dirname, "error.html"), { search: params.toString() });
 }
 
