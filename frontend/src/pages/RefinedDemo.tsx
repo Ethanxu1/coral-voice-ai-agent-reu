@@ -28,10 +28,14 @@ export default function RefinedDemo() {
     toggleMute,
     toggleAudioMute,
     skipSubjectSelect,
+    startDance,
+    pauseDance,
+    reorderDance,
   } = useRefinedDemoMachine()
 
   const [showCommands, setShowCommands] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [namingInput, setNamingInput] = useState('')
   const [examples, setExamples] = useState<{ motion: string[]; immediate: string[]; conversation: string[] }>({
     motion: [],
     immediate: [],
@@ -54,6 +58,10 @@ export default function RefinedDemo() {
       stop()
     }
   }, [])
+
+  useEffect(() => {
+    if (state.stage !== 'NAMING') setNamingInput('')
+  }, [state.stage])
 
   useEffect(() => {
     if (!showCommands) return
@@ -255,11 +263,31 @@ export default function RefinedDemo() {
             <div className="rd-naming-overlay">
               <div className="rd-naming-card">
                 <div className="rd-naming-tag">NAMING YOUR POSE</div>
-                <div className="rd-naming-title">What should we call it?</div>
+                <div className="rd-naming-title">{state.statusText || 'What should we call it?'}</div>
                 <div className="rd-naming-hint">
                   <span className="rd-naming-dot" />
-                  Just say a name out loud
+                  Say a name, or type it below
                 </div>
+                <form
+                  className="rd-naming-input-row"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    const value = namingInput.trim()
+                    if (!value) return
+                    injectText(value)
+                    setNamingInput('')
+                  }}
+                >
+                  <input
+                    className="rd-naming-input"
+                    type="text"
+                    value={namingInput}
+                    onChange={(e) => setNamingInput(e.target.value)}
+                    placeholder="Type a name…"
+                    autoFocus
+                  />
+                  <button type="submit" className="rd-naming-submit">Go</button>
+                </form>
               </div>
             </div>
           )}
@@ -418,16 +446,41 @@ export default function RefinedDemo() {
                   )}
                   <div className="rd-exit-stage-caption">
                     {state.replayIdx !== null
-                      ? `Performing "${state.savedPoses[state.replayIdx]}" · ${state.replayIdx + 1} of ${state.savedPoses.length}`
+                      ? `Performing "${state.danceOrder[state.replayIdx]}" · ${state.replayIdx + 1} of ${state.danceOrder.length}`
                       : "That's every move you taught me!"}
                   </div>
                 </div>
+                <div className="rd-exit-controls">
+                  <button
+                    className="rd-overlay-btn secondary"
+                    onClick={state.isDancePlaying ? pauseDance : startDance}
+                  >
+                    {state.isDancePlaying ? 'Pause' : 'Play'}
+                  </button>
+                </div>
                 <div className="rd-exit-poses">
-                  {state.savedPoses.map((name, i) => (
+                  {state.danceOrder.map((name, i) => (
                     <span
                       key={name}
-                      className={`rd-exit-pose-tag${i === state.replayIdx ? ' rd-exit-pose-tag-active' : ''}`}
+                      className={`rd-exit-pose-tag${i === state.replayIdx ? ' rd-exit-pose-tag-active' : ''}${!state.isDancePlaying ? ' rd-exit-pose-tag-draggable' : ''}`}
+                      draggable={!state.isDancePlaying}
+                      onDragStart={(e) => {
+                        if (state.isDancePlaying) return
+                        e.dataTransfer.effectAllowed = 'move'
+                        e.dataTransfer.setData('text/plain', String(i))
+                      }}
+                      onDragOver={(e) => {
+                        if (state.isDancePlaying) return
+                        e.preventDefault()
+                      }}
+                      onDrop={(e) => {
+                        if (state.isDancePlaying) return
+                        e.preventDefault()
+                        const from = Number(e.dataTransfer.getData('text/plain'))
+                        if (!Number.isNaN(from)) reorderDance(from, i)
+                      }}
                     >
+                      {!state.isDancePlaying && <span className="rd-exit-pose-drag-handle">⠿</span>}
                       {name}
                     </span>
                   ))}

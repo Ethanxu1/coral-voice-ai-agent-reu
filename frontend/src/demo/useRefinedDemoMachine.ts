@@ -6,6 +6,7 @@ import { beginHardwareDispatch } from './hardwareDispatchStatus'
 import {
   captureUtterance,
   classifyIntent,
+  extractName,
   killSpeech,
   listPoses,
   mapFeatures,
@@ -74,6 +75,12 @@ export interface RefinedState {
   // Index of the saved pose currently being performed on the end-session
   // replay screen, or null when not replaying.
   replayIdx: number | null
+  // The child-reorderable move sequence for the end-session dance, seeded
+  // from savedPoses on entering EXIT_CONFIRM. savedPoses itself stays in its
+  // original (alphabetical) order for the "you saved N poses" count text.
+  danceOrder: string[]
+  // True while the dance loop is actively cycling through danceOrder.
+  isDancePlaying: boolean
   // True while the backend collision + fall checks run on a captured pose —
   // drives the "Safety check…" badge over the sim panel.
   safetyChecking: boolean
@@ -101,6 +108,8 @@ const INIT: RefinedState = {
   audioMuted: false,
   approvalsEnabled: false,
   replayIdx: null,
+  danceOrder: [],
+  isDancePlaying: false,
   safetyChecking: false,
   selectionState: 'idle',
   selectionSubjectsCount: 0,
@@ -113,9 +122,18 @@ function reducer(s: RefinedState, p: Partial<RefinedState>): RefinedState {
 
 const CANCELLED = Symbol('cancelled')
 
-// Exit-replay pacing: each saved pose is played over this long, then the loop
-// waits the same again before the next one so the moves never overlap.
-const REPLAY_POSE_MS = 1000
+// Dance pacing: real servo travel time (hardware-relevant) for each move,
+// kept close to the 1.0s safety reference StabilityChecker's ramp_seconds
+// assumes (see backend memory), plus a much shorter pure-UX pause between
+// moves so the sequence reads as a continuous dance rather than stop-and-go.
+const DANCE_POSE_MS = 750
+const DANCE_PAUSE_MS = 280
+
+// Shared yes/no matchers, used for both the intent-approval modal and the
+// pose-naming confirmation loop. Mirrors backend/app/services/intent.py's
+// _YES_RE/_NO_RE — keep in sync.
+const YES_RE = /\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it)\b/i
+const NO_RE = /\b(no|nope|nah|cancel|never mind|nevermind|stop)\b/i
 
 function agentMsg(text: string, chips?: string[]): RefinedChatMsg {
   return { role: 'agent', text, chips }
@@ -184,6 +202,15 @@ export function useRefinedDemoMachine() {
   // Set while run() is blocked in the SUBJECT_SELECT stage; calling it
   // resolves the wait so the demo proceeds into LISTENING without a lock.
   const skipSelectionRef = useRef<(() => void) | null>(null)
+  // Mirrors state.danceOrder so the async dance loop always reads the latest
+  // reorder without a stale closure — a reorder made while paused takes
+  // effect the next time startDance() is called.
+  const danceOrderRef = useRef<string[]>([])
+  // Cancellation token for the end-session dance loop, separate from the main
+  // run() loop's tokenRef: pausing the dance must not look like the whole
+  // session was cancelled, and resuming it must not touch unrelated in-flight
+  // work guarded by tokenRef.
+  const danceTokenRef = useRef(0)
 
   // Wrapped in a plain helper because TypeScript's control-flow narrowing
   // insists selectionUnsubRef.current is `null` at the finally/stop call sites
@@ -238,6 +265,7 @@ export function useRefinedDemoMachine() {
     return () => {
       window.removeEventListener('pagehide', onHide)
       tokenRef.current++ // abort any in-flight run
+      danceTokenRef.current++ // stop any in-flight end-session dance loop
       killSpeech()
       stopCurrentAudio()
       abortCurrentCapture()
@@ -326,62 +354,61 @@ export function useRefinedDemoMachine() {
     dispatch({ audioMuted: next })
   }, [state.audioMuted, stopCurrentAudio])
 
-  // End-session replay: strike every saved pose in turn so the child sees each
-  // move they taught. Highlight the move, play it on the robot, hold so it's
-  // visible, reset to stand, then move on. Runs on its own cancellation token
-  // (bumped by stop()/goToExit()/run()) so it halts the moment the user leaves
-  // the exit screen.
-  const runExitReplay = useCallback(async (names: string[]) => {
-    abortCurrentCapture()
-    const token = ++tokenRef.current
-    const alive = () => tokenRef.current === token
+  // End-session dance: loops the child's saved moves continuously (like a
+  // dance routine) until paused. pauseDance() lets the in-flight move finish,
+  // then stops scheduling further ones — the robot freezes wherever it is,
+  // no reset to stand, so the frozen pose stays visible while reordering.
+  // startDance() begins a fresh, independently-cancellable loop that re-reads
+  // danceOrderRef at the top of every lap, so a reorder made while paused
+  // takes effect the next time it's called.
+  const pauseDance = useCallback(() => {
+    danceTokenRef.current++
+    dispatch({ isDancePlaying: false })
+  }, [])
 
-    if (!names.length) {
-      dispatch({ replayIdx: null })
-      return
-    }
+  const startDance = useCallback(async () => {
+    const token = ++danceTokenRef.current
+    const alive = () => danceTokenRef.current === token
+    dispatch({ isDancePlaying: true })
 
-    await setRobotState('IDLE')
-    // Begin from a clean stand, then chain the moves directly (no reset between).
-    await resetPose().catch(() => {})
-    if (!alive()) return
-    await sleep(700)
-
-    // One dispatch "in flight" for the whole sequence, not per-pose — playPose()
-    // itself only covers the network round-trip, but the pose is still visibly
-    // holding through the sleep below, so a per-call wrap would flicker the
-    // "Executing on robot…" pill off between poses.
-    const endDispatch = beginHardwareDispatch()
-    try {
-      for (let i = 0; i < names.length; i++) {
-        if (!alive()) return
-        dispatch({ replayIdx: i, statusText: `Performing "${names[i]}"` })
-        try {
-          // Transition straight from the current sim pose into the next move —
-          // no reset to stand in between.
-          await playPose(names[i], REPLAY_POSE_MS)
-        } catch {
-          // A pose that fails to play (e.g. deleted) shouldn't stall the show.
-        }
-        if (!alive()) return
-        // The sim dispatch blocks for the full duration, but the hardware POST
-        // returns as soon as the robot server accepts it — the servos are still
-        // travelling. Waiting the pose duration again keeps consecutive poses from
-        // overlapping on hardware, and holds the pose long enough to be seen.
-        await sleep(REPLAY_POSE_MS)
+    while (alive()) {
+      const names = danceOrderRef.current
+      if (!names.length) {
+        dispatch({ isDancePlaying: false, replayIdx: null })
+        return
       }
-    } finally {
-      endDispatch()
+      // One dispatch "in flight" for the whole lap, not per-pose — playPose()
+      // itself only covers the network round-trip, but the pose is still
+      // visibly holding through the sleep below, so a per-call wrap would
+      // flicker the "Executing on robot…" pill off between poses.
+      const endDispatch = beginHardwareDispatch()
+      try {
+        for (let i = 0; i < names.length; i++) {
+          if (!alive()) return
+          dispatch({ replayIdx: i, statusText: `Performing "${names[i]}"` })
+          try {
+            // Transition straight from the current pose into the next move —
+            // no reset to stand in between, so the dance flows continuously.
+            await playPose(names[i], DANCE_POSE_MS)
+          } catch {
+            // A pose that fails to play (e.g. deleted) shouldn't stall the show.
+          }
+          if (!alive()) return
+          await sleep(DANCE_PAUSE_MS)
+        }
+      } finally {
+        endDispatch()
+      }
+      // Loop back to the top and keep dancing until paused.
     }
-
-    if (!alive()) return
-    dispatch({ replayIdx: null, statusText: '' })
-  }, [abortCurrentCapture])
+  }, [])
 
   const run = useCallback(async () => {
     // Kill any capture left over from a prior run() invocation (strict-mode
     // double-mount, "Start Session" from ERROR/EXIT, etc.) before starting.
     abortCurrentCapture()
+    // Stop any dance loop left over from a prior session's exit screen.
+    danceTokenRef.current++
     // Any previous selection subscription is dead now — drop it before this
     // run opens its own.
     selectionUnsubRef.current?.()
@@ -580,8 +607,8 @@ export function useRefinedDemoMachine() {
         })
         const text = (await sendAudioForTranscript(blob)).trim().toLowerCase()
         if (!text) return null
-        if (/\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it)\b/.test(text)) return true
-        if (/\b(no|nope|nah|cancel|never mind|nevermind)\b/.test(text)) return false
+        if (YES_RE.test(text)) return true
+        if (NO_RE.test(text)) return false
         return null
       } catch {
         return null
@@ -689,6 +716,64 @@ export function useRefinedDemoMachine() {
         addMsg(sysMsg('Safety check passed!'))
       }
       return true
+    }
+
+    // Resolve a confirmed, filtered pose name: ask (unless a name was already
+    // suggested by the classifier), filter the raw answer through the backend
+    // LLM extractor (strips filler like "let's name it X" -> "X"), then loop
+    // asking for confirmation until the child says yes — a bare "no" prompts
+    // a fresh answer, anything else is treated as the corrected name.
+    const resolveConfirmedPoseName = async (suggestedName?: string): Promise<string> => {
+      let candidate: string
+      if (suggestedName?.trim()) {
+        candidate = suggestedName.trim()
+      } else {
+        addMsg(agentMsg("What would you like to name this pose?"))
+        dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name or type it below…', micLevel: 0 })
+        const { text: nameText, audioUrl } = await listenOrInject()
+        active()
+        dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+        addMsg(childMsg(nameText, audioUrl))
+        candidate = nameText.trim() || `Pose ${Date.now()}`
+      }
+
+      while (true) {
+        let filtered: string
+        try {
+          filtered = (await extractName(candidate)).trim() || candidate
+        } catch {
+          filtered = candidate
+        }
+        active()
+
+        addMsg(agentMsg(`Should I call it "${filtered}"? Say yes, or tell me the right name.`))
+        dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say yes, or say/type the correct name…', micLevel: 0 })
+        const { text: replyText, audioUrl: replyAudioUrl } = await listenOrInject()
+        active()
+        dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+
+        const reply = replyText.trim()
+        if (!reply) return filtered // silence/timeout: don't stall the demo
+        addMsg(childMsg(reply, replyAudioUrl))
+
+        if (YES_RE.test(reply)) return filtered
+
+        const strippedOfNo = reply.replace(new RegExp(NO_RE.source, 'gi'), '').trim()
+        if (NO_RE.test(reply) && strippedOfNo.length === 0) {
+          addMsg(agentMsg("Okay, what should I call it instead?"))
+          dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name or type it below…', micLevel: 0 })
+          const { text: retryText, audioUrl: retryAudioUrl } = await listenOrInject()
+          active()
+          dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
+          addMsg(childMsg(retryText, retryAudioUrl))
+          candidate = retryText.trim() || filtered
+          continue
+        }
+
+        // Anything else ("no, call it X", or the corrected name directly)
+        // becomes the next candidate.
+        candidate = reply
+      }
     }
 
     try {
@@ -803,15 +888,23 @@ export function useRefinedDemoMachine() {
           continue
         }
 
+        // ── play_pose: strike a saved pose — the backend resolves the spoken
+        // name against the saved-pose library and executes it ──
+        if (intent === 'play_pose') {
+          const result = await sendText(transcript, 'immediate')
+          active()
+          addMsg(agentMsg(
+            result.content || 'Done!',
+            ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
+          continue
+        }
+
         // ── save_robot_pose: save current robot state directly (no camera) ──
         if (intent === 'save_robot_pose') {
-          addMsg(agentMsg("What would you like to name this pose?"))
-          dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-          const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
+          const poseName = await resolveConfirmedPoseName()
           active()
-          dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-          addMsg(childMsg(nameText, nameAudioUrl))
-          const poseName = nameText.trim() || `Pose ${Date.now()}`
           await saveCurrentPose(poseName)
           active()
           savedPoses = await listPoses()
@@ -828,19 +921,8 @@ export function useRefinedDemoMachine() {
         // ── naming: launch the full save-and-name workflow ──
         if (intent === 'naming') {
           const suggestedName = (intentResult as { name?: string }).name?.trim()
-          let poseName: string
-          if (suggestedName) {
-            poseName = suggestedName
-            addMsg(sysMsg(`Saving as "${poseName}"!`))
-          } else {
-            addMsg(agentMsg("What would you like to name this pose?"))
-            dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-            const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
-            active()
-            dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-            addMsg(childMsg(nameText, nameAudioUrl))
-            poseName = nameText.trim() || `Pose ${Date.now()}`
-          }
+          const poseName = await resolveConfirmedPoseName(suggestedName)
+          active()
           await saveCurrentPose(poseName)
           active()
           savedPoses = await listPoses()
@@ -858,8 +940,13 @@ export function useRefinedDemoMachine() {
         if (intent === 'exit') {
           savedPoses = await listPoses()
           active()
-          dispatch({ stage: 'EXIT_CONFIRM', savedPoses })
-          runExitReplay(savedPoses)
+          danceOrderRef.current = savedPoses
+          dispatch({ stage: 'EXIT_CONFIRM', savedPoses, danceOrder: savedPoses, replayIdx: null })
+          await setRobotState('IDLE')
+          await resetPose().catch(() => {})
+          active()
+          await sleep(700)
+          startDance()
           return
         }
 
@@ -922,8 +1009,13 @@ export function useRefinedDemoMachine() {
             if (li === 'exit') {
               savedPoses = await listPoses()
               active()
-              dispatch({ stage: 'EXIT_CONFIRM', savedPoses })
-              runExitReplay(savedPoses)
+              danceOrderRef.current = savedPoses
+              dispatch({ stage: 'EXIT_CONFIRM', savedPoses, danceOrder: savedPoses, replayIdx: null })
+              await setRobotState('IDLE')
+              await resetPose().catch(() => {})
+              active()
+              await sleep(700)
+              startDance()
               return
             }
             if (li === 'capture') {
@@ -1037,18 +1129,8 @@ export function useRefinedDemoMachine() {
                 dispatch({ capturedFrame: null })
                 break  // exit library inner loop; injected capture runs next
               }
-              let poseName: string
-              if (suggestedName) {
-                poseName = suggestedName
-                addMsg(sysMsg(`Saving as "${poseName}"!`))
-              } else {
-                dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-                const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
-                active()
-                dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-                addMsg(childMsg(nameText, nameAudioUrl))
-                poseName = nameText.trim() || `Pose ${Date.now()}`
-              }
+              const poseName = await resolveConfirmedPoseName(suggestedName ?? undefined)
+              active()
               await saveCurrentPose(poseName)
               active()
               savedPoses = await listPoses()
@@ -1215,18 +1297,8 @@ export function useRefinedDemoMachine() {
           }
 
           // NAMING
-          let poseName: string
-          if (suggestedName) {
-            poseName = suggestedName
-            addMsg(sysMsg(`Saving as "${poseName}"!`))
-          } else {
-            dispatch({ stage: 'NAMING', orbState: 'listening', statusText: 'Say a name…', micLevel: 0 })
-            const { text: nameText, audioUrl: nameAudioUrl } = await listenOrInject()
-            active()
-            dispatch({ orbState: 'thinking', statusText: 'Got it!', micLevel: 0 })
-            addMsg(childMsg(nameText, nameAudioUrl))
-            poseName = nameText.trim() || `Pose ${Date.now()}`
-          }
+          const poseName = await resolveConfirmedPoseName(suggestedName ?? undefined)
+          active()
 
           await saveCurrentPose(poseName)
           active()
@@ -1253,10 +1325,11 @@ export function useRefinedDemoMachine() {
       releaseSelectionSubscription()
       session.close()
     }
-  }, [abortCurrentCapture, runExitReplay])
+  }, [abortCurrentCapture, startDance])
 
   const stop = useCallback(() => {
     tokenRef.current++
+    danceTokenRef.current++
     chipResolverRef.current = null
     abortCurrentCapture()
     voiceApprovalAbortRef.current?.abort()
@@ -1287,9 +1360,22 @@ export function useRefinedDemoMachine() {
     voiceApprovalAbortRef.current?.abort()
     voiceApprovalAbortRef.current = null
     const names = await listPoses()
-    dispatch({ stage: 'EXIT_CONFIRM', savedPoses: names, replayIdx: null })
-    runExitReplay(names)
-  }, [abortCurrentCapture, runExitReplay])
+    danceOrderRef.current = names
+    dispatch({ stage: 'EXIT_CONFIRM', savedPoses: names, danceOrder: names, replayIdx: null })
+    await setRobotState('IDLE')
+    await resetPose().catch(() => {})
+    await sleep(700)
+    startDance()
+  }, [abortCurrentCapture, startDance])
+
+  const reorderDance = useCallback((fromIndex: number, toIndex: number) => {
+    const next = [...danceOrderRef.current]
+    const [moved] = next.splice(fromIndex, 1)
+    if (moved === undefined) return
+    next.splice(toIndex, 0, moved)
+    danceOrderRef.current = next
+    dispatch({ danceOrder: next })
+  }, [])
 
   const startAgain = useCallback(() => {
     run()
@@ -1316,5 +1402,8 @@ export function useRefinedDemoMachine() {
     toggleMute,
     toggleAudioMute,
     skipSubjectSelect,
+    startDance,
+    pauseDance,
+    reorderDance,
   }
 }
