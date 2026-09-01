@@ -1,17 +1,28 @@
 """Motion, pose, and saved-pose API routes."""
 
 import asyncio
+import json
+import re
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from langfuse.openai import openai
 from loguru import logger
 
 from app.data.pose_db import get_pose, list_pose_names, save_pose
+from app.llm.config import LLM_MODEL
 from app.robot.angle_utils import rad_to_servo_units, servo_units_to_rad
 from app.robot.hardware_angle_utils import hardware_units_to_rad
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import JOINT_NAME_MAP, SERVO_ID_MAP
-from app.schemas.requests import MoveRequest, PlayPoseRequest, SaveCurrentPoseRequest, SetPoseRequest
+from app.schemas.requests import (
+    ExtractNameRequest,
+    MoveRequest,
+    PlayPoseRequest,
+    SaveCurrentPoseRequest,
+    SetPoseRequest,
+)
 from app.services.motion import (
     RESET_TO_STAND_MS,
     RobotServerUnavailable,
@@ -23,6 +34,23 @@ from app.services.motion import (
 from app.state import state
 
 router = APIRouter()
+
+_NAME_PROMPT_PATH = Path(__file__).parent.parent.parent / "llm" / "prompts" / "name_extraction.md"
+_NAME_SANITIZE_RE = re.compile(r"[^\w\s\-]")
+
+
+def _sanitize_name(raw: str) -> str:
+    return _NAME_SANITIZE_RE.sub("", raw).strip()
+
+
+def _load_name_extraction_prompt() -> str:
+    if _NAME_PROMPT_PATH.exists():
+        return _NAME_PROMPT_PATH.read_text(encoding="utf-8")
+    return (
+        "Extract just the intended name from the child's naming answer, "
+        "stripping filler like \"let's name it\". Respond with strict JSON: "
+        '{"name": "<extracted name>"}.'
+    )
 
 
 @router.post("/move")
@@ -198,3 +226,49 @@ async def play_pose_endpoint(req: PlayPoseRequest) -> dict[str, Any]:
     await dispatch_servo_commands(commands, sim_only=req.sim_only)
     logger.info(f"Played saved pose '{clean_name}' ({len(commands)} joints)")
     return {"name": clean_name, "joints_played": len(commands), "status": "played"}
+
+
+@router.post("/poses/extract-name")
+async def extract_name_endpoint(req: ExtractNameRequest) -> dict[str, str]:
+    """Extract a clean pose name from a child's free-form naming answer.
+
+    Tries an LLM extraction (strips filler like "let's name it X" -> "X").
+    On any LLM/parse failure, falls back to the sanitized verbatim input.
+    Never raises for LLM problems -- only for empty input (400).
+    """
+    raw = req.text.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Name text cannot be empty")
+
+    def call_llm() -> str:
+        response = openai.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": _load_name_extraction_prompt()},
+                {"role": "user", "content": raw},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "pose_name",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            max_completion_tokens=30,
+        )
+        return response.choices[0].message.content or "{}"
+
+    try:
+        content = await asyncio.to_thread(call_llm)
+        extracted = json.loads(content).get("name", "")
+        name = _sanitize_name(extracted) or _sanitize_name(raw)
+    except Exception as e:
+        logger.warning(f"/poses/extract-name: LLM extraction failed, using sanitized verbatim: {e}")
+        name = _sanitize_name(raw)
+
+    return {"name": name}

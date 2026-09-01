@@ -826,6 +826,19 @@ export async function playPose(name: string, durationMs = 1000): Promise<void> {
   }
 }
 
+// Filter a child's free-form naming answer down to just the intended name
+// (e.g. "let's name it Buddy" -> "Buddy") via a small backend LLM call.
+export async function extractName(text: string): Promise<string> {
+  const res = await fetch('http://localhost:8000/poses/extract-name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) throw new Error(`extract name failed: ${res.status}`)
+  const data = await res.json()
+  return data.name
+}
+
 // Short camera-shutter blip via WebAudio (no asset needed).
 export function playShutter(): void {
   try {

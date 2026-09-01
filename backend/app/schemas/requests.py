@@ -53,3 +53,7 @@ class PlayPoseRequest(BaseModel):
     # it, regardless of the composing-only sim/hardware toggle. A caller can
     # still force sim-only (True) or force hardware (False) explicitly.
     sim_only: bool | None = None
+
+
+class ExtractNameRequest(BaseModel):
+    text: str
