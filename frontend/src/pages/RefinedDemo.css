@@ -1038,6 +1038,24 @@
   box-shadow: 0 4px 14px rgba(23,190,187,0.4);
 }
 
+.rd-exit-pose-tag-draggable {
+  cursor: grab;
+}
+.rd-exit-pose-tag-draggable:active {
+  cursor: grabbing;
+}
+.rd-exit-pose-drag-handle {
+  margin-right: 4px;
+  opacity: 0.5;
+  font-size: 11px;
+}
+
+.rd-exit-controls {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
 /* End-session replay stage: live sim + caption. */
 .rd-exit-stage {
   position: relative;
@@ -1120,6 +1138,46 @@
   border-radius: 50%;
   background: #17BEBB;
   animation: rd-pulse 1.3s ease-in-out infinite;
+}
+
+.rd-naming-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.rd-naming-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 50px;
+  border: 1.5px solid rgba(45, 41, 38, 0.15);
+  font-family: 'Nunito', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: #2D2926;
+  outline: none;
+}
+
+.rd-naming-input:focus {
+  border-color: #17BEBB;
+}
+
+.rd-naming-submit {
+  padding: 10px 20px;
+  border-radius: 50px;
+  border: none;
+  background: #FF6B4A;
+  color: #fff;
+  font-family: 'Nunito', sans-serif;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rd-naming-submit:hover {
+  background: #e55c3b;
 }
 
 /* ── IDLE / startup ─────────────────────────────────────────────────────────── */

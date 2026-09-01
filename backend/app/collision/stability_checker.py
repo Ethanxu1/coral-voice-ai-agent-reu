@@ -7,11 +7,16 @@ kinematics alone the free-floating base stays pinned wherever the keyframe put
 it and the head height never changes no matter how unstable the stance is.
 
 A headless copy of the model is driven through its position actuators toward
-the target pose and stepped forward under gravity + floor contact for a fixed
-settle time (simulated seconds — the wall-clock cost is ~tens of ms). If the
-head body settles below a fraction of its standing height, the robot toppled
-and the move is reported as a fall: callers block it entirely (0% of the move)
-rather than clamping, since there is no "safe fraction" of falling over.
+the target pose and stepped forward under gravity + floor contact. The targets
+are RAMPED from the current pose to the target over ~1s (matching the paced
+servo slew of a real dispatch, e.g. duration_ms=1000) and then held for the
+settle window — applying them as an instantaneous step injects unrealistic
+momentum: a fast full-body arm swing can topple the model even when both the
+start and target poses are stable and the real paced motion is safe (the
+2026-08-31 "Do thumbs up!" false-positive fall). If the head body settles
+below a fraction of its standing height, the robot toppled and the move is
+reported as a fall: callers block it entirely (0% of the move) rather than
+clamping, since there is no "safe fraction" of falling over.
 
 Same physics approach as collision/leg_bucket_test.py's _DynamicsModel,
 promoted here so the live server can use it per-move.
@@ -32,6 +37,13 @@ _HEAD_BODY_NAME = "head_tilt_link"
 # leg_bucket_test's empirically-sufficient settle window.
 _SETTLE_SECONDS = 1.5
 
+# Simulated seconds over which actuator targets are ramped from the current
+# pose to the target before the settle-hold begins. 1.0s matches the paced
+# servo slew of a real dispatch (duration_ms=1000 in pose playback); a step
+# input instead topples the model on fast multi-joint transitions between two
+# individually stable poses — a false-positive fall.
+_RAMP_SECONDS = 1.0
+
 # A pose "fell" when the settled head height drops below this fraction of the
 # settled STAND head height. Calibration points (from leg_bucket_test runs):
 # stand head_z ≈ 0.358, deepest legitimate crouch ("low" bucket) ≈ 0.322 (~0.90x),
@@ -46,6 +58,7 @@ class StabilityChecker:
         model_path: str | None = None,
         settle_seconds: float = _SETTLE_SECONDS,
         fall_head_frac: float = _DEFAULT_FALL_HEAD_FRAC,
+        ramp_seconds: float = _RAMP_SECONDS,
     ):
         if model_path is None:
             model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
@@ -54,6 +67,7 @@ class StabilityChecker:
         self.data = mujoco.MjData(self.model)
         self.fall_head_frac = fall_head_frac
         self.settle_steps = max(1, round(settle_seconds / float(self.model.opt.timestep)))
+        self.ramp_steps = max(1, round(ramp_seconds / float(self.model.opt.timestep)))
 
         self._qpos_addr: dict[str, int] = {}
         self._actuator_id: dict[str, int] = {}
@@ -78,7 +92,7 @@ class StabilityChecker:
         logger.info(
             f"StabilityChecker ready — stand head_z={self.stand_head_z:.4f}, "
             f"fall threshold {fall_head_frac:.0%} ({self.fall_threshold_z:.4f}), "
-            f"{self.settle_steps} steps per settle"
+            f"{self.settle_steps} settle steps after {self.ramp_steps} ramp steps"
         )
 
     @property
@@ -91,9 +105,10 @@ class StabilityChecker:
         current_joints: dict[str, float] | None = None,
     ) -> float:
         """Reset to the stand keyframe (optionally overridden to the robot's
-        current joints), drive every actuator toward stand+targets, step under
-        gravity + floor contact for the settle window, and return the head's
-        settled world Z."""
+        current joints), ramp every actuator from the current pose toward
+        stand+targets over the ramp window (paced like a real servo dispatch),
+        then hold and step under gravity + floor contact for the settle
+        window, and return the head's settled world Z."""
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)  # qpos/qvel/ctrl reset
         if current_joints:
@@ -102,14 +117,28 @@ class StabilityChecker:
                 if addr is not None:
                     self.data.qpos[addr] = val
 
-        ctrl_targets = dict(self._stand_joints)
-        ctrl_targets.update(target_joints)
-        for name, val in ctrl_targets.items():
+        start_ctrl = dict(self._stand_joints)
+        if current_joints:
+            start_ctrl.update(current_joints)
+        end_ctrl = dict(self._stand_joints)
+        end_ctrl.update(target_joints)
+
+        # Hold the start pose at t=0 so the ramp begins from the seeded state.
+        for name, val in start_ctrl.items():
             act_id = self._actuator_id.get(name)
             if act_id is not None:
                 self.data.ctrl[act_id] = val
 
-        for _ in range(self.settle_steps):
+        for step in range(self.ramp_steps + self.settle_steps):
+            if step < self.ramp_steps:
+                f = (step + 1) / self.ramp_steps
+                for name, end_val in end_ctrl.items():
+                    start_val = start_ctrl.get(name, 0.0)
+                    if start_val == end_val:
+                        continue
+                    act_id = self._actuator_id.get(name)
+                    if act_id is not None:
+                        self.data.ctrl[act_id] = start_val + (end_val - start_val) * f
             mujoco.mj_step(self.model, self.data)
         return float(self.data.xpos[self._head_body_id][2])
 
