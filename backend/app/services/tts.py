@@ -6,6 +6,10 @@ are logged and swallowed so a TTS hiccup never blocks robot motion.
 
 from __future__ import annotations
 
+import asyncio
+import base64
+
+from fastapi import WebSocket
 from loguru import logger
 
 from app.config import (
@@ -15,6 +19,7 @@ from app.config import (
     TTS_IS_ENABLED,
     TTS_MAX_CHARS,
     TTS_MODEL,
+    TTS_SPEED,
     TTS_VOICE,
 )
 
@@ -73,6 +78,7 @@ def generate_speech(text: str) -> bytes | None:
             voice=TTS_VOICE,  # type: ignore[arg-type]
             input=text,
             response_format=TTS_FORMAT,  # type: ignore[arg-type]
+            speed=TTS_SPEED,
         )
         data = response.content
         logger.debug(f"Generated {len(data)} bytes of {TTS_FORMAT} TTS audio")
@@ -80,6 +86,30 @@ def generate_speech(text: str) -> bytes | None:
     except Exception as e:
         logger.warning(f"OpenAI TTS failed: {e}")
         return None
+
+
+async def send_chat_response_with_audio(websocket: WebSocket, response_data: dict) -> None:
+    """Send a ``chat_response``-shaped dict, then synthesize and send its TTS audio.
+
+    Single chokepoint for every *spoken* assistant reply sent over ``/ws`` —
+    both the LLM-driven chat/motion/clarification turns and the regex-handled
+    system-intent turns (follow, capture, save dialog, play pose, library)
+    must go through this, not a bare ``websocket.send_json``, or that reply
+    is silently text-only. A TTS failure (``generate_speech`` returns
+    ``None``) still leaves the text reply sent — audio is a nicety, never a
+    blocker.
+    """
+    await websocket.send_json(response_data)
+    text = response_data.get("content", "")
+    audio = await asyncio.to_thread(generate_speech, text)
+    if audio is not None:
+        await websocket.send_json(
+            {
+                "type": "audio_response",
+                "audio_base64": base64.b64encode(audio).decode("utf-8"),
+                "format": "mp3",
+            }
+        )
 
 
 def invalidate_client() -> None:

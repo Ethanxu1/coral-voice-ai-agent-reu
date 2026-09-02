@@ -35,7 +35,7 @@ from app.services.motion import (
 from app.services.clean_logger import close_logger, get_or_create_logger
 from app.services.recording import ConversationRecorder
 from app.services.transcription import transcribe_audio
-from app.services.tts import generate_speech
+from app.services.tts import send_chat_response_with_audio
 from app.simulator.mujoco_sim import execute_command
 from app.state import state
 from app.state_manager import StateManager
@@ -60,24 +60,6 @@ _CHILD_FRIENDLY_ERRORS = {
         "Oops, my brain hiccuped. Can you try that again?"
     ),
 }
-
-
-async def _send_response_with_audio(
-    websocket: WebSocket, response_data: dict
-) -> None:
-    """Send a chat response, then synthesize and send audio for its text."""
-    await websocket.send_json(response_data)
-
-    text = response_data.get("content", "")
-    audio = await asyncio.to_thread(generate_speech, text)
-    if audio is not None:
-        await websocket.send_json(
-            {
-                "type": "audio_response",
-                "audio_base64": base64.b64encode(audio).decode("utf-8"),
-                "format": "mp3",
-            }
-        )
 
 
 async def _route_text_turn(
@@ -331,7 +313,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 if response_data.get("type") == "handled_by_system_intent":
                     continue
-                await _send_response_with_audio(websocket, response_data)
+                await send_chat_response_with_audio(websocket, response_data)
                 clean_logger.agent_response(
                     response_data.get("content", ""),
                     response_type=response_data.get("type", "chat_response"),
@@ -387,7 +369,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     if response_data.get("type") == "handled_by_system_intent":
                         continue
-                    await _send_response_with_audio(websocket, response_data)
+                    await send_chat_response_with_audio(websocket, response_data)
                     clean_logger.agent_response(
                         response_data.get("content", ""),
                         response_type=response_data.get("type", "chat_response"),
@@ -419,7 +401,7 @@ async def websocket_endpoint(websocket: WebSocket):
         traceback.print_exc()
         clean_logger.error(f"WebSocket error: {e}", e)
         try:
-            await _send_response_with_audio(
+            await send_chat_response_with_audio(
                 websocket,
                 {
                     "type": "chat_response",
