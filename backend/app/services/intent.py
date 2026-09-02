@@ -13,6 +13,7 @@ from loguru import logger
 
 from app.data.pose_db import get_pose, list_pose_names, save_pose
 from app.services.motion import _execute_on_hardware_if_connected, _get_robot_state
+from app.services.tts import send_chat_response_with_audio
 from app.state import state
 
 if TYPE_CHECKING:
@@ -49,7 +50,8 @@ async def handle_save_dialog(
     if dialog.stage == _SaveStage.AWAITING_CONFIRM:
         if _YES_RE.search(text):
             dialog.stage = _SaveStage.AWAITING_NAME
-            await websocket.send_json(
+            await send_chat_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
@@ -61,7 +63,8 @@ async def handle_save_dialog(
         elif _NO_RE.search(text):
             dialog.stage = _SaveStage.IDLE
             dialog.pending_joints = None
-            await websocket.send_json(
+            await send_chat_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
@@ -71,7 +74,8 @@ async def handle_save_dialog(
                 }
             )
         else:
-            await websocket.send_json(
+            await send_chat_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
@@ -85,7 +89,8 @@ async def handle_save_dialog(
     if dialog.stage == _SaveStage.AWAITING_NAME:
         name = re.sub(r"[^\w\s\-]", "", text).strip()
         if not name:
-            await websocket.send_json(
+            await send_chat_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
@@ -100,7 +105,8 @@ async def handle_save_dialog(
         await _execute_on_hardware_if_connected(joints)
         dialog.stage = _SaveStage.IDLE
         dialog.pending_joints = None
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
@@ -276,7 +282,8 @@ async def try_handle_system_intent(
         save_dialog.pending_joints = dict(joints)
         save_dialog.stage = _SaveStage.AWAITING_CONFIRM
         response = "I can save the current position. Should I go ahead?"
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
@@ -299,7 +306,8 @@ async def try_handle_system_intent(
                 )
             else:
                 response = "You don't have any saved poses yet. Say 'save this pose' to make one."
-            await websocket.send_json(
+            await send_chat_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
@@ -313,7 +321,8 @@ async def try_handle_system_intent(
         joints = get_pose(pose_name)
         if joints is None:
             response = f"I couldn't find the pose '{pose_name}'."
-            await websocket.send_json(
+            await send_chat_response_with_audio(
+                websocket,
                 {
                     "type": "chat_response",
                     "role": "assistant",
@@ -326,7 +335,8 @@ async def try_handle_system_intent(
             return True
         await _execute_on_hardware_if_connected(joints)
         response = f"Playing your saved pose: {pose_name}."
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
@@ -348,7 +358,8 @@ async def try_handle_system_intent(
             )
         else:
             response = "You don't have any saved poses yet. Say 'save this pose' to make one."
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
@@ -368,7 +379,8 @@ async def try_handle_system_intent(
             status_fn, sim_only=sim_only, clean_logger=clean_logger
         )
         response = "Following your movements — say stop when done."
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
@@ -385,7 +397,8 @@ async def try_handle_system_intent(
             status_fn, reason="user requested stop", clean_logger=clean_logger
         )
         response = "Stopped following."
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
@@ -402,7 +415,8 @@ async def try_handle_system_intent(
             status_fn, sim_only=sim_only, clean_logger=clean_logger
         )
         response = "Capturing your pose — hold still for a few seconds."
-        await websocket.send_json(
+        await send_chat_response_with_audio(
+            websocket,
             {
                 "type": "chat_response",
                 "role": "assistant",
