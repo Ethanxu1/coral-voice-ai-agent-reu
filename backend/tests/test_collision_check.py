@@ -64,7 +64,7 @@ def test_colliding_trajectory_is_reduced(checker, stand_joints):
         )
 
 
-def test_buffer_steps_stop_motion_earlier(stand_joints):
+def test_buffer_fraction_stops_motion_earlier(stand_joints):
     # Same collision pose, checked with and without a buffer. The buffered
     # version must back off strictly further (smaller safe_fraction).
     target = dict(stand_joints)
@@ -73,8 +73,8 @@ def test_buffer_steps_stop_motion_earlier(stand_joints):
     target["r_el_yaw"] = -2.0
     target["r_el_pitch"] = -1.5
 
-    no_buffer = CollisionChecker(buffer_steps=0)
-    buffered = CollisionChecker(buffer_steps=3)
+    no_buffer = CollisionChecker(buffer_fraction=0.0)
+    buffered = CollisionChecker(buffer_fraction=0.05)
 
     _, frac_none, _ = no_buffer.check_trajectory(stand_joints, target)
     _, frac_buf, _ = buffered.check_trajectory(stand_joints, target)
@@ -82,6 +82,34 @@ def test_buffer_steps_stop_motion_earlier(stand_joints):
     assert frac_none < 1.0 and frac_buf < 1.0, "expected both to flag"
     assert frac_buf < frac_none, (
         f"buffer should stop earlier: buffered={frac_buf} vs none={frac_none}"
+    )
+
+
+def test_default_buffer_stays_close_to_true_contact_boundary(stand_joints):
+    # The default buffer must be a small, near-exact margin before the real
+    # contact point -- not inflated by the coarse scan's step discretization.
+    # A high-resolution, zero-buffer reference checker gives the true contact
+    # fraction; the default checker's safe_fraction must land within a small
+    # tolerance of it (tolerance = default buffer_fraction + a little slack
+    # for bisection precision).
+    target = dict(stand_joints)
+    target["r_sho_roll"] = 0.0
+    target["r_sho_pitch"] = 1.6
+    target["r_el_yaw"] = -2.0
+    target["r_el_pitch"] = -1.5
+
+    reference = CollisionChecker(num_steps=1000, buffer_fraction=0.0)
+    _, true_frac, _ = reference.check_trajectory(stand_joints, target)
+
+    default_checker = CollisionChecker()
+    _, safe_frac, _ = default_checker.check_trajectory(stand_joints, target)
+
+    assert true_frac < 1.0, "expected the reference checker to find the collision too"
+    gap = true_frac - safe_frac
+    assert 0.0 <= gap <= 0.03, (
+        f"default buffer should hold back <=3% of the trajectory past the "
+        f"true contact point ({true_frac:.4f}); got safe_fraction={safe_frac:.4f} "
+        f"(gap={gap:.2%})"
     )
 
 
