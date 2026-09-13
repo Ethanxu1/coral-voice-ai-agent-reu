@@ -66,10 +66,35 @@ script. Full data from what was tried is in the 2026-09-09 session log
 
 | | Item |
 |---|---|
-| ⬜ | Implement `GET /positions`-equivalent IMU access on the Pi (`backend/app/robot/pi/nodes/server.py` or a new node) — read the real IMU, return attitude + rate in the same shape `AttitudeReading` expects |
+| ✅ | Raw IMU access on the Pi — `GET /imu` added to `backend/app/robot/pi/nodes/server.py`, returns `Board().get_imu()`'s floats unmodified. IMU init failure doesn't take down `/move`/`/health` (wrapped, logs a warning, route reports 503 instead). **Not yet deployed or tested on the real Pi** — needs the usual scp/docker cp/chmod cycle. **Not yet checked for serial contention with `/move`** — unknown whether reading IMU while a body command is in flight causes any conflict; test both together before trusting it under load. |
+| ✅ | `ComplementaryFilter` (`backend/app/balance/complementary_filter.py`) — fuses raw accel+gyro into an `AttitudeReading`, same output shape `sim_source.py` produces, so `BalanceController` doesn't care which one fed it. 8 unit tests verify the filter math itself (convergence, tracks a known analytic rotation, unit conversion) using synthetic data. **Axis convention (which raw index is roll vs. pitch, which sign) is an assumption carried over from the sim's verified convention, NOT independently confirmed on real hardware** — this is the one thing here that still needs your hands on the robot, see "Verifying the real IMU's axis convention" below. |
+| ⬜ | Deploy `/imu` to the Pi and run the axis-convention check (below) |
 | ⬜ | Run `BalanceController` as its own always-on background loop/thread on the Pi, separate from `robot_server.py`'s request handlers (which block until a move finishes — see plan §3) |
 | ⬜ | Tune gains by feel on hardware: robot standing still, no mimicry — "stands and resists a push" is the bar (plan §7's push-test procedure) |
 | ⬜ | **Crash mat / soft test area in place before this phase starts** — early gain tuning on real hardware means falls are expected |
+
+### Verifying the real IMU's axis convention
+
+`ComplementaryFilter` assumes the real IMU's raw accel/gyro axes match the
+same roll-about-X / pitch-about-Y convention already verified in sim (see
+`sim_source.py`'s docstring) — a reasonable guess, not a confirmed fact.
+Same kind of check as the sim's `test_balance_sim_source.py`, just done by
+hand instead of by test:
+
+1. Deploy the updated `server.py` to the Pi (scp → `docker cp` → `chmod +x`
+   → restart `roslaunch`, same as always).
+2. `curl http://<robot-ip>:9000/imu` a few times standing still — confirm
+   you get `{"values": [9 numbers]}`, first 3 near `(0, 0, ±1)`-ish
+   depending on mounting.
+3. Tilt the robot forward (nose down) by hand and curl again. **If this
+   project's pitch convention holds, that should read as an increasingly
+   positive `accel_pitch = atan2(-ax, hypot(ay, az))`** — work it out from
+   whichever of the first 3 values changes.
+4. Tilt it to its own right side and repeat for roll
+   (`atan2(ay, az)`).
+5. If either comes out backwards, negate that formula (and the
+   corresponding rate) in `complementary_filter.py` — one-line fix, not a
+   rewrite — and note it here as confirmed.
 
 ## Phase 4 — Mimicry integration
 
@@ -97,4 +122,5 @@ script. Full data from what was tried is in the 2026-09-09 session log
 
 - **2026-09-09** — Phase 0 done: `backend/app/balance/controller.py` + 20 passing unit tests. Nothing wired into the live sim or hardware yet — this phase was deliberately scoped to be provable without either. Next: Phase 1 (sim sensor wiring).
 - **2026-09-09 (same day, continued)** — Phase 1 sensor adapter done and verified (`sim_source.py`, 6 tests, one real sign bug found and fixed). Attempted closed-loop verification that the controller's correction actually helps; inconclusive — see "What Phase 1 actually found" above. Not wired into the live `AiNexSimulator` loop pending that. Next: re-attempt with the sim viewer open for visual feedback, or iterate on gains/coupling with a human watching.
+- **2026-09-13 (continued)** — Phase 3 started, software-only per the plan's own sequencing (nothing drives real servos yet): `GET /imu` added to the Pi server (raw passthrough, doesn't take down `/move` if IMU init fails), `ComplementaryFilter` built and tested (8 tests, synthetic data). Not yet deployed to the Pi or checked against real hardware — the axis convention is an assumption ported from sim, unverified; see "Verifying the real IMU's axis convention" above. Next: deploy, run that check, then the background loop + gain tuning.
 - **2026-09-13** — Phase 2 done, all four items: weighed the physical robot (2.471 kg), two-scale stand-pose split (right 1.348 kg / left 1.131 kg, a real 217 g imbalance, visually confirmed against the robot's actual wiring/motherboard layout), corrected `body_link`'s mass in `ainex.xml` by moment balance (not eyeballed) to match, and confirmed the onboard IMU responds — `ainex_sdk`'s `imu_demo.py` returns 9 floats (accel/gyro/magnetometer), accel magnitude ≈1g at rest sanity-checked the reading. Next: Phase 3 (hardware integration) — wire `get_imu()` through a Pi-side HTTP route, run the balance loop as its own always-on process there, tune gains by feel with the robot standing still.

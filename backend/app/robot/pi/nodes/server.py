@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Minimal robot server (Pi side) — body commands only.
+"""Minimal robot server (Pi side) — body commands, plus raw IMU access.
 
-A stripped-down replacement for ``robot_server.py``: the single job is to
+A stripped-down replacement for ``robot_server.py``: the main job is to
 accept raw servo commands over HTTP, execute them on the hardware, and return
 when the motion is done. No vision, no classifier, no named motions.
 
 Endpoints
     POST /move    execute raw servo commands (blocks until the body finishes)
     GET  /health  liveness probe
+    GET  /imu     raw accel/gyro/(magnetometer) floats from the onboard board,
+                  straight from ainex_sdk.Board().get_imu() — no
+                  interpretation here, see
+                  backend/app/balance/complementary_filter.py for turning
+                  this into an attitude estimate. Read-only, doesn't touch
+                  the body service or its lock — see the balance-controller
+                  progress doc (Phase 3) for the one thing this hasn't been
+                  checked against yet: whether reading IMU concurrently
+                  with an in-flight /move causes any serial contention on
+                  the board. Untested; watch for it.
 
 Mirrors the Mac-side ``coral_agent/server.py`` /move contract: the request
 body is a JSON list of ``{servo_id, position, duration_ms}`` objects. Each
@@ -99,6 +109,7 @@ def clamp_position(servo_id: int, position: int) -> int:
 # ── ROS plumbing ──────────────────────────────────────────────────────────────
 _body_srv = None
 _BodyCommandReq = None
+_board = None  # ainex_sdk.Board — onboard IMU (and LED/button/buzzer, unused here)
 
 # One motion at a time: overlapping motor commands fight each other, so a
 # second /move while one is playing gets a 429 instead of a hardware lock.
@@ -106,7 +117,7 @@ _move_lock = threading.Lock()
 
 
 def _init_ros() -> None:
-    global _body_srv, _BodyCommandReq
+    global _body_srv, _BodyCommandReq, _board
 
     import rospy
 
@@ -119,6 +130,19 @@ def _init_ros() -> None:
     rospy.wait_for_service("/body_commands", timeout=60.0)
     _body_srv = rospy.ServiceProxy("/body_commands", BodyCommand)
     rospy.loginfo("[server] ROS ready — body service wired")
+
+    # IMU init failing shouldn't take down /move and /health, which have
+    # nothing to do with it and already work fine on their own — log and
+    # leave _board None (the /imu route reports that clearly) rather than
+    # letting this exception propagate out of lifespan and fail startup.
+    try:
+        from ainex_sdk import Board  # type: ignore
+
+        _board = Board()
+        _board.enable_reception()
+        rospy.loginfo("[server] IMU board ready")
+    except Exception as e:
+        rospy.logwarn(f"[server] IMU board unavailable, /imu will report so: {e}")
 
 
 def _call_body_service(
@@ -162,6 +186,21 @@ class ServoMove(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/imu")
+def imu():
+    """Raw floats from Board().get_imu() — 9 on this hardware, confirmed
+    2026-09-13 (accel g x,y,z; gyro deg/s x,y,z; magnetometer x,y,z),
+    unconverted, un-interpreted. A None values field means the board
+    didn't answer this particular call — ainex_sdk's own demo scripts
+    treat that as routine (skip and retry next loop), not fatal, so this
+    returns 200 rather than an error; a caller polling this repeatedly
+    should do the same."""
+    if _board is None:
+        raise HTTPException(status_code=503, detail="IMU board not initialized")
+    values = _board.get_imu()
+    return {"values": list(values) if values is not None else None}
 
 
 @app.post("/move")
