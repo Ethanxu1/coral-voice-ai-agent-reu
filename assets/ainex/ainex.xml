@@ -67,8 +67,38 @@
 
       <!-- Body (torso) -->
       <body name="body_link">
-        <inertial pos="0.00394 -0.0000793 0.05045" mass="0.743"
-                  fullinertia="0.00121619 0.00104402 0.00108564 2.48e-06 -5.348e-05 -2e-06"/>
+        <!-- Corrected 2026-09-13 for the CAD export's missing battery/wiring
+             mass — the manufacturer's URDF (and this file, before this edit)
+             only modeled structural links. Measured on a real unit:
+               total mass 2.471 kg vs. this model's original 2.3475 kg
+                 -> 123.5 g missing, added here as a lumped point mass
+               two-scale stand-pose split: right foot 1.348 kg, left 1.131 kg
+                 -> a real 217 g lateral imbalance (not just noise: it agrees
+                    with an independent single-scale total to within 8 g),
+                    attributed entirely to this added mass sitting off-center
+                    toward the robot's right (every other paired left/right
+                    link in this file is already mirror-symmetric to 4
+                    decimal places, so the whole imbalance isn't explained by
+                    anything already in the model)
+             Solved for the added mass's lateral offset via moment balance
+             against the real stand-pose foot separation (59.3 mm, from this
+             model's own forward kinematics): ~52 mm toward -Y (right).
+             That's a large fraction of the torso's width -- flagged, not
+             fully confirmed against where the battery visually sits inside
+             the case. If that visual check disagrees, this offset should
+             move toward a smaller, eyeballed value instead and the
+             remainder of the imbalance attributed to something else (the
+             already-known damaged r_el_yaw servo resting differently,
+             wiring bulk, or the two scales not being perfectly matched).
+             X/Z kept at the pre-existing CoM's values -- no independent
+             measurement for those axes, only Y was actually measured.
+             mass/pos/fullinertia below are body_link's OWN 0.743 kg
+             combined with a 0.1235 kg point mass at (0.00394, -0.052,
+             0.05045) via the parallel-axis theorem, not just concatenated
+             -- see .agents/logs/2026-09-13-body-link-mass-correction.md
+             for the derivation. -->
+        <inertial pos="0.00394 -0.00748 0.05045" mass="0.8665"
+                  fullinertia="0.00150167 0.00104402 0.00137112 2.480e-06 -5.348e-05 -2.000e-06"/>
         <geom name="body" mesh="body_link" material="robot_dark"/>
         <site name="imu" pos="0 0 0.05" size="0.005" rgba="0 1 0 0.5"/>
 
