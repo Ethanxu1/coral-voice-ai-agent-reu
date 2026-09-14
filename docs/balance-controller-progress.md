@@ -26,32 +26,44 @@ not aspirational.
 |---|---|
 | ✅ | Sensor adapter (`backend/app/balance/sim_source.py`, `read_attitude()`) — reads the model's `upvector`/`global_angvel` sensors (world-frame; simpler and more robust than decomposing `body_quat`, which turns out to carry a nontrivial baked-in offset even at `stand` — see the module docstring) |
 | ✅ | Sign convention **empirically verified for the sensor reading itself** — 6 tests (`backend/tests/test_balance_sim_source.py`) rotate the model a known amount and check the reading matches, not just "changed." Found and fixed a real bug this way: pitch and roll do **not** share the same formula — roll needs a negation pitch doesn't (`roll_rad = atan2(-uy, uz)` vs `pitch_rad = atan2(ux, uz)`). Would have shipped backwards without this check. |
-| 🚧 / ⛔ | **Wiring `BalanceController` into the live sim loop, and closed-loop verification that it actually helps — attempted, not resolved.** See "What Phase 1 actually found" below. Not wired into `AiNexSimulator`'s running physics loop yet — that step is intentionally on hold until the open item below is sorted out, so a broken/backwards correction can't reach the live app. |
-| ⬜ | Get gains into a reasonable range (blocked on the above) |
-| ⬜ | Confirm ankle-only handles small pushes, hip visibly engages on larger ones, in the sim viewer |
+| ✅ | Wired into the live sim (`backend/app/balance/sim_loop.py`, `SimBalanceLoop`) — off by default, `POST /balance/start`/`stop`/`push`, `GET /balance/status`. Watchable live in the browser viewer (`/ws/sim`). |
+| ✅ | **Closed-loop verification: the correction direction is confirmed correct**, 2026-09-14. See "What Phase 1 actually found" below — resolves the question the 2026-09-09 headless attempt left open. |
+| 🚧 | **Gains need tuning** — direction is right, but the response visibly overshoots past level before settling (underdamped). Concrete next step, not a mystery: raise `ankle_kd` (currently 0.05) and/or lower `ankle_kp` (currently 0.6) in `BalanceGains` and re-run the same push comparison below until the overshoot damps out. |
+| ⬜ | Confirm hip visibly engages on larger pushes, in the sim viewer (ankle-only engagement already confirmed by the pushes below — both stayed under `ankle_saturation_rad`) |
 
-### What Phase 1 actually found (read this before continuing)
+### What Phase 1 actually found
 
-The sensor reading is solid — verified against known rotations, not assumed.
-The controller's *correction*, tested in closed-loop headless physics
-(reset to stand, apply a disturbance, run the controller each tick,
-compare final tilt against an uncontrolled baseline), **did not clearly
-help with the current placeholder gains** — in one run it made things
-worse. Chasing this further with single-joint headless probes (nudge one
-ankle joint, see how attitude responds) produced messy, hard-to-interpret
-results: even ankle-*pitch* alone produced a large pitch-*and*-roll
-response, which reads more like transient/contact-dynamics noise than a
-clean linear relationship a blind script can reliably untangle.
+**2026-09-09 attempt (headless, inconclusive):** closed-loop physics
+test with placeholder gains looked like it made things worse; further
+single-joint probes produced messy, hard-to-interpret coupled results.
+Left as an open question — see the session log for that day if curious
+about the dead end itself.
 
-This is very plausibly the "sim actuator response isn't calibrated,
-tune by iterating" problem the plan already expected (§7) — not
-necessarily a wrong sign — but it hasn't been isolated. **Recommended
-next step: do this with the sim viewer open**, watching the robot
-respond to a nudge in real time, rather than more blind headless
-probing — a human eye will separate "wrong sign" from "right sign, needs
-gain tuning" from "coupling I didn't account for" far faster than another
-script. Full data from what was tried is in the 2026-09-09 session log
-(`.agents/logs/`) if picking this back up.
+**2026-09-14 (resolved):** re-ran the same kind of test, correctly this
+time — push the live simulator via the new `/balance/push` endpoint,
+compare final settled roll with the loop off vs. on, using
+`read_attitude()` (real attitude) rather than `/joint_states` (which
+reads commanded ctrl *targets*, not the free base's actual lean — this
+was the first mistake caught while building this comparison; it will
+look identical with the loop off or on because a push never touches an
+actuator's target directly, only the controller does). Reproduced at two
+push strengths:
+
+```
+                    no correction    with correction
+1.0 rad/s push  ->  settles +0.55°   settles -0.22° to -0.35°
+0.3 rad/s push  ->  settles +0.53°   settles -0.28° to -0.30°
+```
+
+Consistent, reproducible ~45-47% reduction in final resting tilt
+magnitude at both strengths — **the correction direction is correct.**
+Both trials also show the correction overshooting through level to the
+opposite side before settling (visible in the traces, e.g. the 1.0 rad/s
+trial dips to -0.98° before recovering to -0.22°) — classic underdamped
+PD behavior, not a sign error. This is exactly the "sim gains don't
+transfer 1:1, get them in the right ballpark, then iterate" situation
+the plan already expected (§7), now with a concrete, specific fix
+(more `ankle_kd`, or less `ankle_kp`) rather than an open question.
 
 ## Phase 2 — Hardware prerequisites (physical, yours — not blocked on code)
 
@@ -166,6 +178,7 @@ correction.
 - **2026-09-09** — Phase 0 done: `backend/app/balance/controller.py` + 20 passing unit tests. Nothing wired into the live sim or hardware yet — this phase was deliberately scoped to be provable without either. Next: Phase 1 (sim sensor wiring).
 - **2026-09-09 (same day, continued)** — Phase 1 sensor adapter done and verified (`sim_source.py`, 6 tests, one real sign bug found and fixed). Attempted closed-loop verification that the controller's correction actually helps; inconclusive — see "What Phase 1 actually found" above. Not wired into the live `AiNexSimulator` loop pending that. Next: re-attempt with the sim viewer open for visual feedback, or iterate on gains/coupling with a human watching.
 - **2026-09-13 (continued)** — Phase 3 started, software-only per the plan's own sequencing (nothing drives real servos yet): `GET /imu` added to the Pi server (raw passthrough, doesn't take down `/move` if IMU init fails), `ComplementaryFilter` built and tested (8 tests, synthetic data). Not yet deployed to the Pi or checked against real hardware — the axis convention is an assumption ported from sim, unverified; see "Verifying the real IMU's axis convention" above. Next: deploy, run that check, then the background loop + gain tuning.
+- **2026-09-14 (continued, again)** — Wired the loop into the LIVE sim too (`sim_loop.py`, `/balance/start`/`stop`/`push`/`status`), watchable in the browser viewer. Used it to finally resolve Phase 1's open question: pushed the sim with the loop off vs. on at two strengths, compared settled roll via the correct signal (`read_attitude()`, not `/joint_states` — first attempt measured the wrong thing). Correction direction confirmed correct, reproducibly (~45-47% reduction in settled tilt both times) — response overshoots before settling, so gains (more damping, less proportional gain) are next, not a sign fix. See "What Phase 1 actually found" above.
 - **2026-09-14 (continued)** — Built `BalanceLoop` (roll only, off by default) and wired `POST /balance/start`/`stop`, `GET /balance/status` into the Pi server. Verified the whole deploy-time import chain and a full simulated tick sequence (real recorded IMU readings, fake dispatch) outside any Pi — correction converges smoothly, ankle→hip handoff engages correctly. Found the loop's real achievable rate is capped around 10 Hz by `body.py`'s own blocking design, well under the 50 Hz ceiling. Not deployed to real hardware yet — next is the single-shot sign check (does the correction actually help), before ever turning the loop on continuously.
 - **2026-09-14** — Deployed `/imu` to the Pi, confirmed it works. Roll axis convention confirmed against real hardware after several failed attempts (robot unpowered, then "resting on a table" protocol, both gave uncontrolled/inconsistent baselines) — with the robot actively torque-holding `stand`, real tilt data confirmed `accel_roll = atan2(az, ay)`, 3 independent trials agreeing (the original formula's axis *pairing* was wrong, not just its sign — real "up" is Y, not Z). Pitch: 5 attempts, all inconclusive or contradictory — the clearest one (a real, confirmed toe-pivot forward lean) read as 97° of *roll*, not pitch. Deliberately deferred rather than guessed at — see "Verifying the real IMU's axis convention" for the full account and working theory (the robot's own right-heavy mass asymmetry may make pitch impossible to isolate from a by-hand test). `complementary_filter.py` and tests updated to the confirmed roll formula; pitch stays an explicitly-flagged unverified placeholder.
 - **2026-09-13** — Phase 2 done, all four items: weighed the physical robot (2.471 kg), two-scale stand-pose split (right 1.348 kg / left 1.131 kg, a real 217 g imbalance, visually confirmed against the robot's actual wiring/motherboard layout), corrected `body_link`'s mass in `ainex.xml` by moment balance (not eyeballed) to match, and confirmed the onboard IMU responds — `ainex_sdk`'s `imu_demo.py` returns 9 floats (accel/gyro/magnetometer), accel magnitude ≈1g at rest sanity-checked the reading. Next: Phase 3 (hardware integration) — wire `get_imu()` through a Pi-side HTTP route, run the balance loop as its own always-on process there, tune gains by feel with the robot standing still.

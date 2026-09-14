@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import health, intent, motion, speaker, state, websocket
+from app.api.routes import balance, health, intent, motion, speaker, state, websocket
 
 router = APIRouter()
 router.include_router(health.router)
@@ -11,3 +11,4 @@ router.include_router(intent.router)
 router.include_router(motion.router)
 router.include_router(speaker.router)
 router.include_router(websocket.router)
+router.include_router(balance.router)

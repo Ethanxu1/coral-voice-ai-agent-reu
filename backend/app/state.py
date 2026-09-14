@@ -6,6 +6,7 @@ from app.follow_controller import FollowController
 from app.simulator import AiNexSimulator
 from app.collision.collision_checker import CollisionChecker
 from app.collision.stability_checker import StabilityChecker
+from app.balance.sim_loop import SimBalanceLoop
 
 
 @dataclass
@@ -18,6 +19,7 @@ class AppState:
     collision_checker: CollisionChecker | None = None
     stability_checker: StabilityChecker | None = None
     hardware_in_sync: bool = False
+    balance_loop: SimBalanceLoop | None = None
 
 
 state = AppState()

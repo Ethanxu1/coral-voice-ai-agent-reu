@@ -117,6 +117,13 @@ async def lifespan(app: FastAPI):
     state.simulator.start_viewer(open_window=_viewer_opens_on_launch())
     state.sim_dispatcher = SimController(state.simulator)
 
+    # Built but not started — POST /balance/start is the only way it runs.
+    # See docs/balance-controller-progress.md; watching this in the /ws/sim
+    # viewer is the visual half of Phase 1's still-open closed-loop question.
+    from app.balance.sim_loop import SimBalanceLoop
+
+    state.balance_loop = SimBalanceLoop(state.simulator)
+
     if state.robot_mode in ("robot", "hardware"):
         logger.info(f"ROBOT MODE — targeting physical robot at {ROBOT_IP}")
         state.hardware_dispatcher = AiNexHardwareController()

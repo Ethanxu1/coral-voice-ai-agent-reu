@@ -21,6 +21,15 @@ class MoveRequest(BaseModel):
     moves: list[ServoMove]
 
 
+class PushRequest(BaseModel):
+    """A one-time angular-velocity nudge to the simulator's free-floating
+    base, for watching SimBalanceLoop recover from a disturbance — see
+    docs/balance-controller-progress.md. rad/s; a firm push is roughly 0.3-0.6."""
+
+    roll_rad_per_s: float = 0.0
+    pitch_rad_per_s: float = 0.0
+
+
 class SetPoseRequest(BaseModel):
     """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
 

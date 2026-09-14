@@ -415,6 +415,26 @@ class AiNexSimulator:
         self._apply_stand_keyframe(lift=self.DROP_HEIGHT)
         logger.info("Reset: dropped into standing pose")
 
+    def push_disturbance(self, roll_rad_per_s: float = 0.0, pitch_rad_per_s: float = 0.0) -> None:
+        """Give the free-floating base a one-time angular velocity nudge — a
+        'push' to test balance recovery against. Physics picks it up from the
+        very next step; nothing else about the current pose changes. For
+        watching balance_controller/sim_loop.py's SimBalanceLoop recover from
+        a disturbance in the browser viewer — see
+        docs/balance-controller-progress.md.
+
+        qvel[3]/qvel[4] are the free joint's angular-X/Y velocity (roll/pitch
+        rate in world frame) — verified empirically against this exact model,
+        see balance/sim_source.py's docstring for the derivation.
+        """
+        with self._lock:
+            self.data.qvel[3] += roll_rad_per_s
+            self.data.qvel[4] += pitch_rad_per_s
+        logger.info(
+            f"Push disturbance applied: roll={roll_rad_per_s:+.3f} rad/s, "
+            f"pitch={pitch_rad_per_s:+.3f} rad/s"
+        )
+
     def get_all_joint_states(self) -> dict[str, float]:
         states = {}
         for short_name, full_name in self.JOINT_NAMES.items():
