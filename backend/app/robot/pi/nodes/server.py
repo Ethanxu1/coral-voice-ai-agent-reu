@@ -18,6 +18,11 @@ Endpoints
                   checked against yet: whether reading IMU concurrently
                   with an in-flight /move causes any serial contention on
                   the board. Untested; watch for it.
+    POST /balance/start   start the background standing-balance loop
+                          (roll only — see balance_loop.py). OFF unless
+                          explicitly started; nothing here auto-starts it.
+    POST /balance/stop    stop it
+    GET  /balance/status  {running, tick_count, last_error}
 
 Mirrors the Mac-side ``coral_agent/server.py`` /move contract: the request
 body is a JSON list of ``{servo_id, position, duration_ms}`` objects. Each
@@ -110,14 +115,17 @@ def clamp_position(servo_id: int, position: int) -> int:
 _body_srv = None
 _BodyCommandReq = None
 _board = None  # ainex_sdk.Board — onboard IMU (and LED/button/buzzer, unused here)
+_balance_loop = None  # balance_loop.BalanceLoop — None if it failed to load (see _init_ros)
 
 # One motion at a time: overlapping motor commands fight each other, so a
 # second /move while one is playing gets a 429 instead of a hardware lock.
+# Also shared with the balance loop, which skips a tick rather than
+# contend for it — see balance_loop.py.
 _move_lock = threading.Lock()
 
 
 def _init_ros() -> None:
-    global _body_srv, _BodyCommandReq, _board
+    global _body_srv, _BodyCommandReq, _board, _balance_loop
 
     import rospy
 
@@ -143,6 +151,22 @@ def _init_ros() -> None:
         rospy.loginfo("[server] IMU board ready")
     except Exception as e:
         rospy.logwarn(f"[server] IMU board unavailable, /imu will report so: {e}")
+
+    # Same defensive shape as the IMU board above: a missing/broken
+    # balance_loop.py (or one of its sibling deps not yet deployed)
+    # shouldn't take down /move, /health, or /imu, which don't need it.
+    # Building the loop here does NOT start it — start() is only ever
+    # called from POST /balance/start.
+    if _board is not None:
+        try:
+            from balance_loop import BalanceLoop  # type: ignore
+
+            _balance_loop = BalanceLoop(_board, _call_body_service, _move_lock)
+            rospy.loginfo("[server] balance loop ready (stopped — POST /balance/start to run it)")
+        except Exception as e:
+            rospy.logwarn(f"[server] balance loop unavailable, /balance/* will report so: {e}")
+    else:
+        rospy.logwarn("[server] IMU board unavailable — balance loop not built")
 
 
 def _call_body_service(
@@ -201,6 +225,38 @@ def imu():
         raise HTTPException(status_code=503, detail="IMU board not initialized")
     values = _board.get_imu()
     return {"values": list(values) if values is not None else None}
+
+
+@app.post("/balance/start")
+def balance_start():
+    """Start the background standing-balance loop. Does nothing (200,
+    already-running) if it's already going — not an error, so a caller
+    doesn't need to check status first."""
+    if _balance_loop is None:
+        raise HTTPException(status_code=503, detail="balance loop not available")
+    was_running = _balance_loop.running
+    _balance_loop.start()
+    return {"running": True, "already_running": was_running}
+
+
+@app.post("/balance/stop")
+def balance_stop():
+    if _balance_loop is None:
+        raise HTTPException(status_code=503, detail="balance loop not available")
+    _balance_loop.stop()
+    return {"running": False}
+
+
+@app.get("/balance/status")
+def balance_status():
+    if _balance_loop is None:
+        return {"available": False, "running": False, "tick_count": 0, "last_error": None}
+    return {
+        "available": True,
+        "running": _balance_loop.running,
+        "tick_count": _balance_loop.tick_count,
+        "last_error": _balance_loop.last_error,
+    }
 
 
 @app.post("/move")

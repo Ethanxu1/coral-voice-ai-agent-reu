@@ -21,8 +21,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.validation import JOINT_LIMITS
-
 
 @dataclass(frozen=True)
 class BalanceGains:
@@ -207,8 +205,21 @@ def apply_balance_offset(
     do this since it never sees the baseline pose. Joints present in
     `offset` but missing from `baseline_joints` are skipped (nothing to
     add the correction to).
+
+    `joint_limits` defaults to `validation.JOINT_LIMITS`, imported lazily
+    here (not at module load) so this module has no hard dependency on
+    the `app` package layout — a caller that always passes its own
+    `joint_limits` (e.g. the Pi-side balance loop, which builds one
+    locally from HW_SERVO_LIMITS since it doesn't deploy the rest of the
+    `app` package) never triggers this import at all.
     """
-    limits = JOINT_LIMITS if joint_limits is None else joint_limits
+    if joint_limits is None:
+        try:
+            from app.validation import JOINT_LIMITS as limits
+        except ImportError:
+            from validation import JOINT_LIMITS as limits  # flat Pi deployment
+    else:
+        limits = joint_limits
 
     result = dict(baseline_joints)
     for joint, delta in offset.items():

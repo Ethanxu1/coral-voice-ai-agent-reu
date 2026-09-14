@@ -61,7 +61,10 @@ from __future__ import annotations
 
 import math
 
-from app.balance.controller import AttitudeReading
+try:
+    from app.balance.controller import AttitudeReading
+except ImportError:
+    from controller import AttitudeReading  # flat Pi deployment (see balance_loop.py)
 
 
 class ComplementaryFilter:

@@ -17,7 +17,11 @@ HW_DIRECTION is +1 when hardware and sim have the same increasing direction, -1 
 """
 
 import math
-from .servo_config import STAND_PULSE, TICKS_PER_RAD
+
+try:
+    from .servo_config import STAND_PULSE, TICKS_PER_RAD
+except ImportError:
+    from servo_config import STAND_PULSE, TICKS_PER_RAD  # flat Pi deployment (see balance_loop.py)
 
 # Joints whose MuJoCo stand-keyframe ctrl value is not 0.0. Must match the
 # `stand` keyframe in ainex.xml exactly (see module docstring). Calibrated to

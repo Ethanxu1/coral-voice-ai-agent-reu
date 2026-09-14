@@ -71,7 +71,8 @@ script. Full data from what was tried is in the 2026-09-09 session log
 | ✅ | Deployed `/imu` to the Pi and confirmed it responds — `[server] IMU board ready`, doesn't affect `/move`. |
 | ✅ | **Roll axis convention CONFIRMED against real hardware, 2026-09-14.** Original formula guess was wrong in a bigger way than a sign flip — the real board reads "upright" as `ay≈1` (Y is the resting up-axis), not `az≈1` as a generic IMU tutorial formula assumes. Real data: standing → roll ≈3° (near level, correct), robot physically tilted toward its own right → roll ≈81° (large, correct direction of change). Fixed formula: `accel_roll = atan2(az, ay)`. |
 | ⛔ | **Pitch axis convention NOT confirmed after 5 real attempts — deliberately deferred, not guessed at.** `accel_pitch = atan2(ax, ay)` stays an unverified placeholder; do not trust it. A real, unambiguous forward tilt (heels lifted, confirmed) still came out reading as 97° of *roll*, not pitch — `X` hasn't shown a real signal in any hand-applied test tried. Likely needs a more controlled test (can't cleanly isolate by hand on this robot, possibly due to its own right-heavy mass asymmetry) — see "Verifying the real IMU's axis convention" below for the full account and recommended next approach. |
-| ⬜ | Run `BalanceController` as its own always-on background loop/thread on the Pi, separate from `robot_server.py`'s request handlers (which block until a move finishes — see plan §3) |
+| ✅ | `BalanceLoop` (`backend/app/robot/pi/nodes/balance_loop.py`) — background thread wiring `BalanceController` to the real IMU and the body service, **roll channels only** (pitch discarded every tick — unverified, see above). Off by default; `POST /balance/start`/`stop` + `GET /balance/status` added to `server.py`. Deploy chain and end-to-end tick logic verified by simulation (fake board + real recorded IMU readings, run outside any Pi) — confirmed the correction converges smoothly and the two-tier ankle→hip handoff engages correctly. **Not yet deployed to the Pi or run against real servos.** |
+| ⬜ | **Before turning this loop on for real:** the single-shot sign check — manually tilt the robot, compute what the controller would command, send it as one `/move`, confirm it corrects rather than worsens the lean. Closes Phase 1's still-open question (does the correction direction actually help) using real data instead of more sim probing. |
 | ⬜ | Tune gains by feel on hardware: robot standing still, no mimicry — "stands and resists a push" is the bar (plan §7's push-test procedure) |
 | ⬜ | **Crash mat / soft test area in place before this phase starts** — early gain tuning on real hardware means falls are expected |
 
@@ -119,6 +120,25 @@ it once the balance loop exists and can log its own small forward nudges
 during Phase 3/4 hardware tuning) rather than continuing to guess from
 improvised data.
 
+### Deploying the balance loop
+
+`balance_loop.py` needs four sibling files deployed alongside it and
+`server.py` in `~/ros_ws/src/ainex_demo/nodes/` on the Pi (same scp →
+`docker cp` → `chmod +x` cycle as always, just more files this time):
+`controller.py` and `complementary_filter.py` (from `backend/app/balance/`),
+`hardware_angle_utils.py` and `servo_config.py` (from `backend/app/robot/`).
+Each has a try/except import fallback specifically so the same file works
+both as part of the Mac's `app` package (tested) and as a flat sibling
+file on the Pi — don't remove those fallbacks thinking they're dead code.
+
+Real, load-bearing constraint found while building this, not a target:
+the loop's achievable rate is capped well below the servo bus's 50 Hz
+ceiling — `body.py`'s blocking service sleeps ≥0.1s per call regardless
+of requested duration, so realistically ≤10 Hz. The control math is
+unaffected (every tick uses its own measured `dt`, never an assumed
+fixed rate), but this is worth knowing before expecting a snappy
+correction.
+
 ## Phase 4 — Mimicry integration
 
 | | Item |
@@ -146,5 +166,6 @@ improvised data.
 - **2026-09-09** — Phase 0 done: `backend/app/balance/controller.py` + 20 passing unit tests. Nothing wired into the live sim or hardware yet — this phase was deliberately scoped to be provable without either. Next: Phase 1 (sim sensor wiring).
 - **2026-09-09 (same day, continued)** — Phase 1 sensor adapter done and verified (`sim_source.py`, 6 tests, one real sign bug found and fixed). Attempted closed-loop verification that the controller's correction actually helps; inconclusive — see "What Phase 1 actually found" above. Not wired into the live `AiNexSimulator` loop pending that. Next: re-attempt with the sim viewer open for visual feedback, or iterate on gains/coupling with a human watching.
 - **2026-09-13 (continued)** — Phase 3 started, software-only per the plan's own sequencing (nothing drives real servos yet): `GET /imu` added to the Pi server (raw passthrough, doesn't take down `/move` if IMU init fails), `ComplementaryFilter` built and tested (8 tests, synthetic data). Not yet deployed to the Pi or checked against real hardware — the axis convention is an assumption ported from sim, unverified; see "Verifying the real IMU's axis convention" above. Next: deploy, run that check, then the background loop + gain tuning.
+- **2026-09-14 (continued)** — Built `BalanceLoop` (roll only, off by default) and wired `POST /balance/start`/`stop`, `GET /balance/status` into the Pi server. Verified the whole deploy-time import chain and a full simulated tick sequence (real recorded IMU readings, fake dispatch) outside any Pi — correction converges smoothly, ankle→hip handoff engages correctly. Found the loop's real achievable rate is capped around 10 Hz by `body.py`'s own blocking design, well under the 50 Hz ceiling. Not deployed to real hardware yet — next is the single-shot sign check (does the correction actually help), before ever turning the loop on continuously.
 - **2026-09-14** — Deployed `/imu` to the Pi, confirmed it works. Roll axis convention confirmed against real hardware after several failed attempts (robot unpowered, then "resting on a table" protocol, both gave uncontrolled/inconsistent baselines) — with the robot actively torque-holding `stand`, real tilt data confirmed `accel_roll = atan2(az, ay)`, 3 independent trials agreeing (the original formula's axis *pairing* was wrong, not just its sign — real "up" is Y, not Z). Pitch: 5 attempts, all inconclusive or contradictory — the clearest one (a real, confirmed toe-pivot forward lean) read as 97° of *roll*, not pitch. Deliberately deferred rather than guessed at — see "Verifying the real IMU's axis convention" for the full account and working theory (the robot's own right-heavy mass asymmetry may make pitch impossible to isolate from a by-hand test). `complementary_filter.py` and tests updated to the confirmed roll formula; pitch stays an explicitly-flagged unverified placeholder.
 - **2026-09-13** — Phase 2 done, all four items: weighed the physical robot (2.471 kg), two-scale stand-pose split (right 1.348 kg / left 1.131 kg, a real 217 g imbalance, visually confirmed against the robot's actual wiring/motherboard layout), corrected `body_link`'s mass in `ainex.xml` by moment balance (not eyeballed) to match, and confirmed the onboard IMU responds — `ainex_sdk`'s `imu_demo.py` returns 9 floats (accel/gyro/magnetometer), accel magnitude ≈1g at rest sanity-checked the reading. Next: Phase 3 (hardware integration) — wire `get_imu()` through a Pi-side HTTP route, run the balance loop as its own always-on process there, tune gains by feel with the robot standing still.
