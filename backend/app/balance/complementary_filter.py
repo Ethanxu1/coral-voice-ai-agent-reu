@@ -16,22 +16,34 @@ Kalman filter — which is appropriate here: a standing-balance controller
 only needs "which way is down, right now," not a navigation-grade
 estimate.
 
-Axis convention — UNVERIFIED ON REAL HARDWARE, flagged deliberately:
-    accel_roll  = atan2(ay, az)
-    accel_pitch = atan2(-ax, hypot(ay, az))
-This is the standard formula assuming the IMU's raw axes follow the same
-roll-about-X / pitch-about-Y convention already empirically verified for
-the simulator (backend/app/balance/sim_source.py, verified by actually
-rotating the model and checking the sign — see
-backend/tests/test_balance_sim_source.py). Using the same convention here
-is a reasonable *starting* assumption, since the manufacturer built both
-the mechanics and the IMU mounting, but it is NOT independently confirmed
-for the physical board — sim_source.py's convention was checked by
-rotating the model and reading a sensor; this one can only be checked by
-physically tilting the real robot and reading /imu's raw output. See
-docs/balance-controller-progress.md Phase 3 for that procedure. If tilting
-the robot forward makes the reported pitch go negative instead of
-positive, negate accel_pitch (and pitch_rate) below; same for roll.
+Axis convention — partially confirmed on real hardware 2026-09-14, partially
+still a guess:
+    accel_roll  = atan2(az, ay)   -- CONFIRMED: standing reads ~3 deg
+                                     (near level, as it should), tilting the
+                                     physical robot toward its own right
+                                     jumped this to ~81 deg. Note this is
+                                     NOT the naive atan2(ay, az) a generic
+                                     IMU tutorial would suggest -- the real
+                                     board reads "upright" as ay≈1, az≈0
+                                     (Y is the resting "up" axis here), not
+                                     az≈1 as first assumed. Getting the
+                                     *axis pairing* right, not just a sign,
+                                     is what real data caught here.
+    accel_pitch = atan2(ax, ay)   -- NOT YET CONFIRMED. A forward-tilt test
+                                     didn't register any real signal (all
+                                     three axes stayed within noise of the
+                                     standing reading), so this is inferred
+                                     by analogy with the roll formula above
+                                     (same ay "up" reference, ax the
+                                     presumed pitch-sensitive axis) rather
+                                     than independently checked. Needs a
+                                     redo with a firmer, clearly-held
+                                     forward tilt — see
+                                     docs/balance-controller-progress.md
+                                     Phase 3.
+Do not trust accel_pitch for anything that matters until that's done. If
+it comes back backwards once real data exists, negate it (and pitch_rate)
+below — one line, not a rewrite, same as the roll fix was.
 """
 
 from __future__ import annotations
@@ -77,8 +89,8 @@ class ComplementaryFilter:
         roll_rate = math.radians(gx_dps)
         pitch_rate = math.radians(gy_dps)
 
-        accel_roll = math.atan2(ay, az)
-        accel_pitch = math.atan2(-ax, math.hypot(ay, az))
+        accel_roll = math.atan2(az, ay)
+        accel_pitch = math.atan2(ax, ay)  # NOT YET CONFIRMED — see module docstring
 
         self._roll_rad = (
             self.alpha * (self._roll_rad + roll_rate * dt)
