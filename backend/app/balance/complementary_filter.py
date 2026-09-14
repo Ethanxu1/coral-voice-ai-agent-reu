@@ -29,18 +29,29 @@ still a guess:
                                      az≈1 as first assumed. Getting the
                                      *axis pairing* right, not just a sign,
                                      is what real data caught here.
-    accel_pitch = atan2(ax, ay)   -- NOT YET CONFIRMED. A forward-tilt test
-                                     didn't register any real signal (all
-                                     three axes stayed within noise of the
-                                     standing reading), so this is inferred
-                                     by analogy with the roll formula above
-                                     (same ay "up" reference, ax the
-                                     presumed pitch-sensitive axis) rather
-                                     than independently checked. Needs a
-                                     redo with a firmer, clearly-held
-                                     forward tilt — see
+    accel_pitch = atan2(ax, ay)   -- NOT CONFIRMED, deliberately deferred
+                                     after 5 real attempts on 2026-09-14.
+                                     Several read as noise; the clearest
+                                     one (a real, unambiguous toe-pivot
+                                     forward lean, heels off the ground)
+                                     came out reading as ~97 degrees of
+                                     *roll*, not pitch — ax stayed near
+                                     zero the whole time, same as every
+                                     other attempt. This formula is an
+                                     inferred placeholder by analogy with
+                                     the confirmed roll formula, not
+                                     independently verified, and evidence
+                                     so far suggests a by-hand test can't
+                                     cleanly isolate it on this specific
+                                     robot (working theory: its own
+                                     right-heavy mass asymmetry — see the
+                                     2026-09-13 body_link correction —
+                                     couples sideways rotation into any
+                                     forward tilt applied by hand). See
                                      docs/balance-controller-progress.md
-                                     Phase 3.
+                                     Phase 3 for the full account and what
+                                     to try next (a more controlled push,
+                                     not another ad-hoc hand tilt).
 Do not trust accel_pitch for anything that matters until that's done. If
 it comes back backwards once real data exists, negate it (and pitch_rate)
 below — one line, not a rewrite, same as the roll fix was.
