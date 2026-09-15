@@ -29,7 +29,7 @@ not aspirational.
 | ✅ | Wired into the live sim (`backend/app/balance/sim_loop.py`, `SimBalanceLoop`) — off by default, `POST /balance/start`/`stop`/`push`, `GET /balance/status`. Watchable live in the browser viewer (`/ws/sim`). |
 | ✅ | **Closed-loop verification: the correction direction is confirmed correct**, 2026-09-14. See "What Phase 1 actually found" below — resolves the question the 2026-09-09 headless attempt left open. |
 | 🚧 | **Gains partially tuned, then paused deliberately** — `max_rate_rad_per_s` raised 2.0 -> 3.0, cutting peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; this was the actual bottleneck, not `ankle_kd`. The remaining ~0.3° steady-state residual resisted both `ankle_kp` and `deadband_rad` changes — needs a real integral term to fully close, not a number tweak; not chased further since 0.3° is far below any stability concern. See "What Phase 1 actually found" below for the full account. |
-| ⬜ | Confirm hip visibly engages on larger pushes, in the sim viewer (ankle-only engagement already confirmed by the pushes below — both stayed under `ankle_saturation_rad`) |
+| ✅ | **Hip engagement confirmed, 2026-09-15** — swept push strength 6-9 rad/s reading `/joint_states` directly (not just eyeballing the viewer). See "What Phase 1 actually found" below for the full sweep and the narrow recoverable-vs-fall window it revealed. |
 | — | **Not visible on the 3D model at current gains — confirmed a real limitation, not a bug.** Swept push strength 0.3-12 rad/s: below ~9 rad/s the corrected-vs-uncorrected difference stays a few tenths of a degree (real, per the numbers above, but invisible by eye); above ~9 rad/s the robot falls over (~90°) **regardless of correction** — the safety caps (`max_correction_rad`≈11°) intentionally keep any single correction small, so they can't arrest a disturbance that large by design, not by bug. `GET /balance/attitude` added so this can be checked by number instead of by eye until gains are tuned enough to be visible. |
 
 ### What Phase 1 actually found
@@ -166,6 +166,36 @@ sweep above) — **decided not to chase this further in this round.**
 Adding an integral term is real new scope (needs anti-windup design so
 it can't overcorrect from a long-held disturbance) for if/when it's
 actually needed, not a default next step.
+
+**2026-09-15 (continued, final): hip channel engagement confirmed, and
+the recoverable window turns out to be narrow.** Swept push strength
+6.0-9.0 rad/s, reading `/joint_states` directly for `l_hip_roll`/
+`l_ank_roll` (not just watching the viewer) alongside `/balance/attitude`:
+
+```
+6.0 rad/s -> ankle peaks 0.039 rad (well under the 0.12 cap) -> hip never engages -> recovers easily
+7.0 rad/s -> ankle peaks 0.086 rad (still under cap)          -> hip never engages -> recovers
+8.0 rad/s -> ankle peaks 0.118 rad (just under cap)           -> hip never engages -> recovers
+8.3 rad/s -> ankle saturates briefly                          -> hip engages briefly (-0.08 rad) -> recovers, settles near level
+8.6 rad/s -> ankle saturates continuously                     -> hip creeps upward, doesn't cap out -> doesn't recover, but doesn't fall fast either -- slow, marginal drift
+9.0 rad/s -> ankle saturates instantly                        -> hip engages, maxes out at -0.2 rad -> falls anyway (roll climbing past 39° and still rising)
+```
+
+**Hip engagement is real and works as designed** — at 8.3 rad/s it
+visibly takes over once the ankle alone would have exceeded its soft
+bound, and the robot still recovers. But the window where hip
+engagement actually *helps* (rather than just delaying an already-lost
+fall) is narrow — roughly 8.0-8.3 rad/s out of the whole tested range.
+By 8.6 rad/s the robot is in a slow, marginal drift even with hip
+engaged, and by 9.0 rad/s both channels are maxed out and it falls
+anyway. This is consistent with, and now gives a concrete number to,
+the earlier push-strength-sweep finding ("above ~9 rad/s the robot
+falls regardless of correction, by design — the safety caps intentionally
+keep any single correction small"). Not treated as a bug: the caps
+exist specifically so a bad gain or sensor glitch can't command
+something dangerous, and a wider recoverable margin would need larger
+`max_correction_rad`/`ankle_saturation_rad` — a real hardware-safety
+tradeoff to make deliberately later, not a default to widen now.
 
 ## Phase 2 — Hardware prerequisites (physical, yours — not blocked on code)
 
