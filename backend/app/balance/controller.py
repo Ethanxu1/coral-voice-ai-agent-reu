@@ -52,8 +52,16 @@ class BalanceGains:
 
     # Per-second rate cap (rad/s) on how fast any one channel's output can
     # change, so a sudden jump in the raw PD output can't reach the servo
-    # bus in a single step.
-    max_rate_rad_per_s: float = 2.0
+    # bus in a single step. 3.0 (not the original 2.0) is the first
+    # sim-tuned value here: a live push-response sweep on 2026-09-15 found
+    # this was the actual bottleneck on post-push overshoot, not ankle_kd
+    # (raising kd alone did nothing measurable in the same test) — 2.0 gave
+    # a peak overshoot of -1.96 deg, 3.0 gave -0.93 deg, 4.0 gave -1.10 deg
+    # (worse again). Re-verify on hardware before trusting this value
+    # there — docs/balance-controller.md §7 is explicit sim gains don't
+    # transfer 1:1, and this one specifically gates how fast a correction
+    # can reach the real servo bus.
+    max_rate_rad_per_s: float = 3.0
 
     # Tilt smaller than this (rad) is treated as zero error, so the robot
     # doesn't micro-jitter (and wear the servos) while standing still and
