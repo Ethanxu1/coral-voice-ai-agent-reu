@@ -28,7 +28,7 @@ not aspirational.
 | ✅ | Sign convention **empirically verified for the sensor reading itself** — 6 tests (`backend/tests/test_balance_sim_source.py`) rotate the model a known amount and check the reading matches, not just "changed." Found and fixed a real bug this way: pitch and roll do **not** share the same formula — roll needs a negation pitch doesn't (`roll_rad = atan2(-uy, uz)` vs `pitch_rad = atan2(ux, uz)`). Would have shipped backwards without this check. |
 | ✅ | Wired into the live sim (`backend/app/balance/sim_loop.py`, `SimBalanceLoop`) — off by default, `POST /balance/start`/`stop`/`push`, `GET /balance/status`. Watchable live in the browser viewer (`/ws/sim`). |
 | ✅ | **Closed-loop verification: the correction direction is confirmed correct**, 2026-09-14. See "What Phase 1 actually found" below — resolves the question the 2026-09-09 headless attempt left open. |
-| 🚧 | **Gains partially tuned** — `max_rate_rad_per_s` raised 2.0 -> 3.0, cutting peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; this was the actual bottleneck, not `ankle_kd` (raising kd alone did nothing measurable). See "2026-09-15: gain tuning attempt" below. Still open: the ~0.3° steady-state residual (expected PD droop against the mass-asymmetry bias — needs `ankle_kp` or an integral term, neither tried yet). |
+| 🚧 | **Gains partially tuned, then paused deliberately** — `max_rate_rad_per_s` raised 2.0 -> 3.0, cutting peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; this was the actual bottleneck, not `ankle_kd`. The remaining ~0.3° steady-state residual resisted both `ankle_kp` and `deadband_rad` changes — needs a real integral term to fully close, not a number tweak; not chased further since 0.3° is far below any stability concern. See "What Phase 1 actually found" below for the full account. |
 | ⬜ | Confirm hip visibly engages on larger pushes, in the sim viewer (ankle-only engagement already confirmed by the pushes below — both stayed under `ankle_saturation_rad`) |
 | — | **Not visible on the 3D model at current gains — confirmed a real limitation, not a bug.** Swept push strength 0.3-12 rad/s: below ~9 rad/s the corrected-vs-uncorrected difference stays a few tenths of a degree (real, per the numbers above, but invisible by eye); above ~9 rad/s the robot falls over (~90°) **regardless of correction** — the safety caps (`max_correction_rad`≈11°) intentionally keep any single correction small, so they can't arrest a disturbance that large by design, not by bug. `GET /balance/attitude` added so this can be checked by number instead of by eye until gains are tuned enough to be visible. |
 
@@ -134,8 +134,38 @@ right where expected. Kept `max_rate_rad_per_s = 3.0` as the new default
 in `BalanceGains` (comment in the source records the three data points).
 Steady-state residual (~-0.3°) is unchanged across all three, as
 expected — this parameter only affects how fast the correction can
-move, not where it settles; that residual is `ankle_kp`/integral-term
-territory, still untried.
+move, not where it settles.
+
+**2026-09-15 (continued, again): steady-state residual resists both
+`ankle_kp` and `deadband_rad` — needs an integral term, not a number
+tweak.** Two more attempts at shrinking the ~-0.3° residual, both with
+`max_rate_rad_per_s` staying at 3.0:
+
+```
+ankle_kp   0.6 -> 0.8   (33% up)     -> settled ~-0.28° (was ~-0.30°) -- no real change, overshoot slightly worse (-1.05° vs -0.93°)
+deadband_rad 0.01 -> 0.003 (10x down) -> settled ~-0.32° (was ~-0.30°) -- no real change either
+```
+
+Initial theory (mid-session) was that `deadband_rad` — 0.01 rad ≈ 0.57°,
+larger than the observed residual — was gating the position-error term
+to zero once "close enough," which would explain why `ankle_kp` alone
+did nothing. Directly tested by shrinking the deadband to 0.003 rad
+(≈0.17°, smaller than the residual, so it should no longer gate
+anything) — **the residual didn't move.** That disproves the deadband
+theory; both attempts reverted, code is back to exactly its last
+committed state plus the kept `max_rate_rad_per_s` change.
+
+**Conclusion:** this residual isn't a one-line tuning fix — it needs a
+genuinely different kind of term (integral: accumulate error over time,
+push harder the longer a constant bias persists) that the current
+`BalanceGains`/`BalanceController` shape doesn't have, not a bigger
+value for anything that exists today. Given the residual is ~0.3° —
+far below any stability concern, the robot doesn't even begin to fall
+until push strengths an order of magnitude larger (see the push-strength
+sweep above) — **decided not to chase this further in this round.**
+Adding an integral term is real new scope (needs anti-windup design so
+it can't overcorrect from a long-held disturbance) for if/when it's
+actually needed, not a default next step.
 
 ## Phase 2 — Hardware prerequisites (physical, yours — not blocked on code)
 
@@ -256,4 +286,5 @@ correction.
 - **2026-09-14** — Deployed `/imu` to the Pi, confirmed it works. Roll axis convention confirmed against real hardware after several failed attempts (robot unpowered, then "resting on a table" protocol, both gave uncontrolled/inconsistent baselines) — with the robot actively torque-holding `stand`, real tilt data confirmed `accel_roll = atan2(az, ay)`, 3 independent trials agreeing (the original formula's axis *pairing* was wrong, not just its sign — real "up" is Y, not Z). Pitch: 5 attempts, all inconclusive or contradictory — the clearest one (a real, confirmed toe-pivot forward lean) read as 97° of *roll*, not pitch. Deliberately deferred rather than guessed at — see "Verifying the real IMU's axis convention" for the full account and working theory (the robot's own right-heavy mass asymmetry may make pitch impossible to isolate from a by-hand test). `complementary_filter.py` and tests updated to the confirmed roll formula; pitch stays an explicitly-flagged unverified placeholder.
 - **2026-09-13** — Phase 2 done, all four items: weighed the physical robot (2.471 kg), two-scale stand-pose split (right 1.348 kg / left 1.131 kg, a real 217 g imbalance, visually confirmed against the robot's actual wiring/motherboard layout), corrected `body_link`'s mass in `ainex.xml` by moment balance (not eyeballed) to match, and confirmed the onboard IMU responds — `ainex_sdk`'s `imu_demo.py` returns 9 floats (accel/gyro/magnetometer), accel magnitude ≈1g at rest sanity-checked the reading. Next: Phase 3 (hardware integration) — wire `get_imu()` through a Pi-side HTTP route, run the balance loop as its own always-on process there, tune gains by feel with the robot standing still.
 - **2026-09-15 (continued)** — Live sim A/B testing with the user via curl, iterated on methodology twice: first pass wasn't reset between trials (fixed with `POST /reset`, confirmed equivalent to the UI's own "Reset to stand" button), second pass revealed the resting baseline isn't 0° (~0.52-0.53°, the known mass asymmetry) so raw absolute readings needed comparing as deltas, not face value. Clean result reproduces the 2026-09-09 finding live (~45% reduction in |tilt| from level). Attempted a first gain-tuning pass on `ankle_kd`: found a narrow, non-linear margin — 1.6x was statistically indistinguishable from baseline, 3x caused real oscillatory instability (not just more overshoot). Reverted to original gains; no net code change. Full trace and reasoning in "What Phase 1 actually found" above.
-- **2026-09-15 (continued, again)** — Tested the working theory from the `ankle_kd` dead end directly: swept `max_rate_rad_per_s` (2.0 -> 3.0 -> 4.0) with `ankle_kd`/`ankle_kp` back at defaults. Confirmed it — 3.0 cut peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; 4.0 was slightly worse than 3.0 (diminishing returns, as expected once a parameter's helpful range is found). Kept `max_rate_rad_per_s = 3.0` as the new default — first real, kept gain change from this tuning round. Steady-state residual (~-0.3° off true level) is untouched by this parameter and remains the next open item, likely needing `ankle_kp` or an integral term. Full trace in "What Phase 1 actually found" above.
+- **2026-09-15 (continued, again)** — Tested the working theory from the `ankle_kd` dead end directly: swept `max_rate_rad_per_s` (2.0 -> 3.0 -> 4.0) with `ankle_kd`/`ankle_kp` back at defaults. Confirmed it — 3.0 cut peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; 4.0 was slightly worse than 3.0 (diminishing returns, as expected once a parameter's helpful range is found). Kept `max_rate_rad_per_s = 3.0` as the new default — first real, kept gain change from this tuning round.
+- **2026-09-15 (continued, once more)** — Two more attempts at the ~-0.3° steady-state residual: `ankle_kp` 0.6 -> 0.8 (no real change, overshoot slightly worse) and `deadband_rad` 0.01 -> 0.003, a direct test of the theory that the deadband was gating the residual to a stop (disproved — residual unchanged even with a much smaller deadband). Both reverted; concluded this residual needs a real integral term, not a number tweak, and isn't worth chasing further right now given it's ~0.3° — nowhere near a stability concern. Full account in "What Phase 1 actually found" above.
