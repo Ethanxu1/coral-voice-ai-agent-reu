@@ -9,8 +9,11 @@ will keep doing continuously once started. Off by default; nothing here
 runs or moves anything until POST /balance/start.
 """
 
+import math
+
 from fastapi import APIRouter, HTTPException
 
+from app.balance.sim_source import read_attitude
 from app.schemas.requests import PushRequest
 from app.state import state
 
@@ -45,6 +48,22 @@ async def balance_status() -> dict:
         "running": state.balance_loop.running,
         "tick_count": state.balance_loop.tick_count,
         "last_error": state.balance_loop.last_error,
+    }
+
+
+@router.get("/balance/attitude")
+async def balance_attitude() -> dict:
+    """The simulator's actual current tilt, in degrees — for watching the
+    real number instead of judging it by eye, which at the current
+    (deliberately conservative, untuned) gains is too subtle a difference
+    to see on the 3D model. Poll this every second or so while pushing;
+    compare the settled value with the loop stopped vs. started."""
+    if state.simulator is None:
+        raise HTTPException(status_code=503, detail="simulator not available")
+    attitude = read_attitude(state.simulator.model, state.simulator.data)
+    return {
+        "roll_deg": round(math.degrees(attitude.roll_rad), 2),
+        "pitch_deg": round(math.degrees(attitude.pitch_rad), 2),
     }
 
 
