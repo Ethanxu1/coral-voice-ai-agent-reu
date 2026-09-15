@@ -28,7 +28,7 @@ not aspirational.
 | ✅ | Sign convention **empirically verified for the sensor reading itself** — 6 tests (`backend/tests/test_balance_sim_source.py`) rotate the model a known amount and check the reading matches, not just "changed." Found and fixed a real bug this way: pitch and roll do **not** share the same formula — roll needs a negation pitch doesn't (`roll_rad = atan2(-uy, uz)` vs `pitch_rad = atan2(ux, uz)`). Would have shipped backwards without this check. |
 | ✅ | Wired into the live sim (`backend/app/balance/sim_loop.py`, `SimBalanceLoop`) — off by default, `POST /balance/start`/`stop`/`push`, `GET /balance/status`. Watchable live in the browser viewer (`/ws/sim`). |
 | ✅ | **Closed-loop verification: the correction direction is confirmed correct**, 2026-09-14. See "What Phase 1 actually found" below — resolves the question the 2026-09-09 headless attempt left open. |
-| 🚧 | **Gains need tuning** — direction is right, but the response visibly overshoots past level before settling (underdamped). Concrete next step, not a mystery: raise `ankle_kd` (currently 0.05) and/or lower `ankle_kp` (currently 0.6) in `BalanceGains` and re-run the same push comparison below until the overshoot damps out. |
+| 🚧 | **Gains need tuning** — direction is right, but the response visibly overshoots past level before settling (underdamped). First attempt (raising `ankle_kd`) found a narrow, non-obvious margin rather than a simple dial — see "2026-09-15: gain tuning attempt" below. `ankle_kd`/`ankle_kp` are back at their original 0.05/0.6 defaults; no net code change from this attempt. |
 | ⬜ | Confirm hip visibly engages on larger pushes, in the sim viewer (ankle-only engagement already confirmed by the pushes below — both stayed under `ankle_saturation_rad`) |
 | — | **Not visible on the 3D model at current gains — confirmed a real limitation, not a bug.** Swept push strength 0.3-12 rad/s: below ~9 rad/s the corrected-vs-uncorrected difference stays a few tenths of a degree (real, per the numbers above, but invisible by eye); above ~9 rad/s the robot falls over (~90°) **regardless of correction** — the safety caps (`max_correction_rad`≈11°) intentionally keep any single correction small, so they can't arrest a disturbance that large by design, not by bug. `GET /balance/attitude` added so this can be checked by number instead of by eye until gains are tuned enough to be visible. |
 
@@ -65,6 +65,56 @@ PD behavior, not a sign error. This is exactly the "sim gains don't
 transfer 1:1, get them in the right ballpark, then iterate" situation
 the plan already expected (§7), now with a concrete, specific fix
 (more `ankle_kd`, or less `ankle_kp`) rather than an open question.
+
+**2026-09-15: gain tuning attempt, and a live A/B methodology fix.**
+User's own `/balance/push` + `/balance/attitude` test at first looked
+contradictory (loop-on landed *further* from the robot's natural resting
+lean than loop-off) — traced to two methodology gaps, not a real
+regression: (1) trial 2 wasn't reset before running, so it inherited
+trial 1's ending tilt/momentum instead of a clean start (fixed by
+calling `POST /reset` before each trial — same endpoint the UI's
+"Reset to stand" button already uses, confirmed via `frontend/src/demo/api.ts`'s
+`resetPose()`); (2) the resting baseline itself is ~0.52-0.53° off true
+level, not 0° — the known right-heavy mass asymmetry, not sensor noise.
+
+With both controlled for, the numbers match the 2026-09-09 headless
+finding: uncorrected resting lean 0.52-0.53°, corrected settles at
+-0.27° to -0.36° (fine-grained sampling, 0.1s steps) — about a 45%
+reduction in |tilt| from true level, reproduced live in the browser sim
+this time, not just a standalone script. The controller doesn't fully
+zero out because it's pure PD with no integral term fighting a
+*constant* bias torque (gravity on the asymmetric mass) — some steady-state
+error is mathematically expected, not a bug.
+
+Fine-grained trace (0.1s steps, 3.0 rad/s push, `kd=0.08`) for the
+actual overshoot shape:
+
+```
+t=0.1s  +1.59°   (push still winning)
+t=0.2s  -1.20°   (crossed level)
+t=0.3s  -1.96°   (peak overshoot)
+t=0.4s  -1.47°
+t=0.5s  -0.86°
+t=0.7s  -0.28°   (essentially settled)
+t=1.5s  -0.34°   (steady state, holds flat)
+```
+
+Tried raising `ankle_kd` to damp that peak: `0.05 -> 0.15` (3x) caused
+sustained, large oscillation (roll swinging roughly -10° to +3°, pitch
+swinging with it) — a real instability, not just more overshoot. Backed
+off to `0.05 -> 0.08` (1.6x): stable, but the fine-grained trace above
+shows it's nearly identical to what `kd=0.05` produces at the same
+timestamps — no measurable benefit. Working theory: the response in this
+range is dominated by `max_rate_rad_per_s` (2.0 rad/s, ~0.04 rad/tick)
+and `ankle_saturation_rad` (0.12 rad) capping what actually reaches the
+joint, not by `kd` itself — so small `kd` changes do little until a
+large enough change (3x) pushes the loop into a different, unstable
+regime, likely via the hip channel's independent, unrated PD term
+engaging once ankle saturates. Reverted to the original 0.05/0.6
+defaults (no proven benefit to keeping 0.08) — **next real levers to try
+are `max_rate_rad_per_s` (loosen, so correction can act faster without
+touching kd/kp) or `ankle_kp` (to address the steady-state residual
+directly), not further blind `ankle_kd` increases.**
 
 ## Phase 2 — Hardware prerequisites (physical, yours — not blocked on code)
 
@@ -184,3 +234,4 @@ correction.
 - **2026-09-14 (continued)** — Built `BalanceLoop` (roll only, off by default) and wired `POST /balance/start`/`stop`, `GET /balance/status` into the Pi server. Verified the whole deploy-time import chain and a full simulated tick sequence (real recorded IMU readings, fake dispatch) outside any Pi — correction converges smoothly, ankle→hip handoff engages correctly. Found the loop's real achievable rate is capped around 10 Hz by `body.py`'s own blocking design, well under the 50 Hz ceiling. Not deployed to real hardware yet — next is the single-shot sign check (does the correction actually help), before ever turning the loop on continuously.
 - **2026-09-14** — Deployed `/imu` to the Pi, confirmed it works. Roll axis convention confirmed against real hardware after several failed attempts (robot unpowered, then "resting on a table" protocol, both gave uncontrolled/inconsistent baselines) — with the robot actively torque-holding `stand`, real tilt data confirmed `accel_roll = atan2(az, ay)`, 3 independent trials agreeing (the original formula's axis *pairing* was wrong, not just its sign — real "up" is Y, not Z). Pitch: 5 attempts, all inconclusive or contradictory — the clearest one (a real, confirmed toe-pivot forward lean) read as 97° of *roll*, not pitch. Deliberately deferred rather than guessed at — see "Verifying the real IMU's axis convention" for the full account and working theory (the robot's own right-heavy mass asymmetry may make pitch impossible to isolate from a by-hand test). `complementary_filter.py` and tests updated to the confirmed roll formula; pitch stays an explicitly-flagged unverified placeholder.
 - **2026-09-13** — Phase 2 done, all four items: weighed the physical robot (2.471 kg), two-scale stand-pose split (right 1.348 kg / left 1.131 kg, a real 217 g imbalance, visually confirmed against the robot's actual wiring/motherboard layout), corrected `body_link`'s mass in `ainex.xml` by moment balance (not eyeballed) to match, and confirmed the onboard IMU responds — `ainex_sdk`'s `imu_demo.py` returns 9 floats (accel/gyro/magnetometer), accel magnitude ≈1g at rest sanity-checked the reading. Next: Phase 3 (hardware integration) — wire `get_imu()` through a Pi-side HTTP route, run the balance loop as its own always-on process there, tune gains by feel with the robot standing still.
+- **2026-09-15 (continued)** — Live sim A/B testing with the user via curl, iterated on methodology twice: first pass wasn't reset between trials (fixed with `POST /reset`, confirmed equivalent to the UI's own "Reset to stand" button), second pass revealed the resting baseline isn't 0° (~0.52-0.53°, the known mass asymmetry) so raw absolute readings needed comparing as deltas, not face value. Clean result reproduces the 2026-09-09 finding live (~45% reduction in |tilt| from level). Attempted a first gain-tuning pass on `ankle_kd`: found a narrow, non-linear margin — 1.6x was statistically indistinguishable from baseline, 3x caused real oscillatory instability (not just more overshoot). Reverted to original gains; no net code change. Full trace and reasoning in "What Phase 1 actually found" above. Next: try `max_rate_rad_per_s` or `ankle_kp` instead of further `ankle_kd` increases.
