@@ -26,11 +26,17 @@ _IGNORED_CONTACT_PAIRS: frozenset[frozenset[str]] = frozenset({
 
 
 class CollisionChecker:
+    # Number of bisection iterations used to refine the contact boundary once
+    # the coarse step-scan has bracketed it. Cheap (one mj_forward per
+    # iteration) and shrinks the bracket to a small fraction of the
+    # trajectory regardless of num_steps.
+    _BISECTION_ITERS = 12
+
     def __init__(
         self,
         model_path: str | None = None,
         num_steps: int = 20,
-        buffer_steps: int = 2,
+        buffer_fraction: float = 0.02,
     ):
         if model_path is None:
             model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
@@ -38,10 +44,11 @@ class CollisionChecker:
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
         self.num_steps = num_steps
-        # Extra safety back-off: after locating the first colliding step, back
-        # off this many additional interpolation steps. With num_steps=20 and
-        # buffer_steps=2, motion stops ~10% of the way BEFORE first contact.
-        self.buffer_steps = buffer_steps
+        # Extra safety back-off, as a fraction of the whole trajectory, held
+        # back past the true (bisection-refined) contact boundary. Unlike a
+        # step count, this margin doesn't grow if num_steps is made coarser
+        # or finer.
+        self.buffer_fraction = buffer_fraction
 
         self._qpos_addr: dict[str, int] = {}
         for i in range(self.model.njnt):
@@ -53,8 +60,8 @@ class CollisionChecker:
         self._apply_stand_keyframe()
         logger.info(
             f"CollisionChecker ready — {len(self._qpos_addr)} joints, "
-            f"{num_steps} steps per rollout, {buffer_steps}-step safety buffer "
-            f"(~{100 * buffer_steps / num_steps:.0f}% extra back-off)"
+            f"{num_steps} steps per rollout, "
+            f"{100 * buffer_fraction:.0f}% safety buffer past the true contact point"
         )
 
     def _apply_stand_keyframe(self) -> None:
@@ -85,6 +92,19 @@ class CollisionChecker:
         self._apply_stand_keyframe()
         self._apply_joints(joints)
         mujoco.mj_forward(self.model, self.data)
+
+    def _pose_new_contacts(
+        self,
+        t: float,
+        moving: dict[str, tuple[float, float]],
+        expected_pairs: set[frozenset[str]],
+    ) -> set[frozenset[str]]:
+        """Set joints to interpolation fraction `t`, resolve kinematics, and
+        return any contact pairs not already present at the starting pose."""
+        for j, (start, end) in moving.items():
+            self.data.qpos[self._qpos_addr[j]] = start + t * (end - start)
+        mujoco.mj_forward(self.model, self.data)
+        return self._contact_pairs() - expected_pairs
 
     def _contact_pairs(self) -> set[frozenset[str]]:
         pairs: set[frozenset[str]] = set()
@@ -127,19 +147,24 @@ class CollisionChecker:
 
         for step in range(1, self.num_steps + 1):
             t = step / self.num_steps
-            for j, (start, end) in moving.items():
-                self.data.qpos[self._qpos_addr[j]] = start + t * (end - start)
-            mujoco.mj_forward(self.model, self.data)
-
-            new_pairs = self._contact_pairs() - expected_pairs
+            new_pairs = self._pose_new_contacts(t, moving, expected_pairs)
             if new_pairs:
-                safe_step = max(0, step - 1 - self.buffer_steps)
-                safe_fraction = safe_step / self.num_steps
+                lo, hi = (step - 1) / self.num_steps, t
+                bad_pairs = new_pairs
+                for _ in range(self._BISECTION_ITERS):
+                    mid = (lo + hi) / 2
+                    mid_pairs = self._pose_new_contacts(mid, moving, expected_pairs)
+                    if mid_pairs:
+                        hi, bad_pairs = mid, mid_pairs
+                    else:
+                        lo = mid
+
+                safe_fraction = max(0.0, lo - self.buffer_fraction)
                 safe_joints = dict(target_joints)
                 for j, (start, end) in moving.items():
                     safe_joints[j] = start + safe_fraction * (end - start)
                 bad: list[str] = []
-                for pair in new_pairs:
+                for pair in bad_pairs:
                     names = sorted(pair)
                     if len(names) >= 2:
                         bad.append(f"{names[0]}<->{names[1]}")

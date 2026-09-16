@@ -153,7 +153,7 @@ def run_collision_test(
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "num_steps": checker.num_steps,
-        "buffer_steps": checker.buffer_steps,
+        "buffer_fraction": checker.buffer_fraction,
         "any_collision": any(leg["collided"] for leg in legs),
         "legs": legs,
     }

@@ -29,6 +29,7 @@ from app.services.motion import (
     RobotServerUnavailable,
     _get_robot_state,
     _sync_sim_to_hardware,
+    apply_safety_clamp_to_sim,
     convert_state_to_degrees,
     dispatch_servo_commands,
 )
@@ -222,6 +223,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if msg_type == "command":
                 command = message_data.get("command", "")
                 success = False
+                safety_report: dict[str, Any] = {}
 
                 if command in ("reset", "stand") and state.simulator is not None:
                     state_manager.save_checkpoint(state.simulator, "before_command:reset")
@@ -261,6 +263,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                     before = state.simulator.get_all_joint_states()
                     success = execute_command(state.simulator, command)
+
+                    if success:
+                        after = state.simulator.get_all_joint_states()
+                        safety_report = apply_safety_clamp_to_sim(
+                            state.simulator, before, after, f"/test command '{command}'"
+                        )
+
                     if success and state.hardware_dispatcher is not None:
                         after = state.simulator.get_all_joint_states()
                         servo_cmds = []
@@ -286,6 +295,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "command_result",
                         "success": success,
                         "command": command,
+                        "collision_clamped": safety_report.get("collision_clamped", False),
+                        "fall_blocked": safety_report.get("fall_blocked", False),
+                        "bad_pairs": safety_report.get("bad_pairs", []),
                         "joint_states": _get_robot_state() if success else None,
                     }
                 )

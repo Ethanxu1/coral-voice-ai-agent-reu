@@ -106,7 +106,14 @@ export default function TestFunctionality() {
       try {
         const data = JSON.parse(event.data)
         if (data.type === 'command_result') {
-          setLastCmd(`${data.command}: ${data.success ? 'ok' : 'failed'}`)
+          let note = ''
+          if (data.fall_blocked) {
+            note = ' — blocked: would fall over'
+          } else if (data.collision_clamped) {
+            const pairs = Array.isArray(data.bad_pairs) ? data.bad_pairs.join(', ') : ''
+            note = ` — stopped short: would collide (${pairs})`
+          }
+          setLastCmd(`${data.command}: ${data.success ? 'ok' : 'failed'}${note}`)
         }
       } catch {
         /* ignore */

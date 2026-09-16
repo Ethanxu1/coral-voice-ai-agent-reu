@@ -76,14 +76,19 @@ SERVO_LIMITS: Dict[int, Tuple[int, int]] = {
     8:  (550, 850),   # r_hip_pitch — conservative, stand=650
     9:  (400, 600),   # l_hip_roll  — user-tested: 400=outward 30°, 600=inward 20°
     10: (400, 600),   # r_hip_roll  — user-tested: 400=inward 20°, 600=outward 30°
-    11: (428, 515),   # l_hip_yaw   — tightened to the bucket-stance span (out=428, in=512)
-    12: (485, 572),   # r_hip_yaw   — mirror of servo 11 about stand=500 (in=488, out=572)
+    # l/r_hip_yaw (11/12) and l/r_el_pitch (17/18) are the wire-twist rotation
+    # joints (see backend/app/robot/robot_params.py's docstring). 2026-09-12:
+    # relaxed from the bucket-stance-tuned span below to (100, 900) to mirror
+    # that file's JOINT_SAFE_RANGES, at the user's request. PLACEHOLDER —
+    # verify on hardware before an unattended demo.
+    11: (100, 900),   # l_hip_yaw   — was (428, 515), tightened to the bucket-stance span
+    12: (100, 900),   # r_hip_yaw   — was (485, 572), mirror of servo 11 about stand=500
     13: (333, 835),   # l_sho_pitch — stand=835 (at ceiling)
     14: (165, 773),   # r_sho_pitch — widened from 200 to include stand=165
     15: (440, 830),   # l_sho_roll  — widened from 800 to include stand=830
     16: (170, 613),   # r_sho_roll  — widened from 213 to include stand=170
-    17: (440, 653),   # l_el_pitch
-    18: (320, 560),   # r_el_pitch
+    17: (100, 900),   # l_el_pitch  — was (440, 653), relaxed 2026-09-12 (see above)
+    18: (100, 900),   # r_el_pitch  — was (320, 560), relaxed 2026-09-12 (see above)
     19: (90, 360),    # l_el_yaw
     20: (573, 880),   # r_el_yaw DAMAGED — never command below 360
 }

@@ -91,9 +91,12 @@ def _sync_sim_to_hardware() -> None:
 
 
 def collision_checked_targets(
-    sim: AiNexSimulator | None, target_joints: dict[str, float], context: str
+    sim: AiNexSimulator | None,
+    target_joints: dict[str, float],
+    context: str,
+    current: dict[str, float] | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
-    """Run both safety checks on target_joints from the sim's current state.
+    """Run both safety checks on target_joints from a starting joint state.
 
     1. Kinematic self-collision (CollisionChecker): clamps every moving joint
        back to the last collision-free fraction of the motion.
@@ -102,6 +105,12 @@ def collision_checked_targets(
        (it toppled), the ENTIRE move is blocked — 0% executed, the returned
        targets are the sim's current joints — since there's no safe fraction
        of falling over.
+
+    `current` defaults to the sim's live joint state (the normal case: the
+    sim hasn't moved yet, only target_joints is proposed). Pass it explicitly
+    when the sim has already been moved to (or past) target_joints — e.g. a
+    raw debug joint-jog command applied directly to the sim before this check
+    runs — so the safety checks still see the correct starting pose.
 
     Returns (safe_targets, safety_report). safety_report is JSON-ready so
     endpoints can pass it straight to the frontend:
@@ -119,7 +128,8 @@ def collision_checked_targets(
     }
     if sim is None or not target_joints:
         return target_joints, report
-    current = sim.get_all_joint_states()
+    if current is None:
+        current = sim.get_all_joint_states()
 
     safe_joints = target_joints
     if state.collision_checker is not None:
@@ -144,6 +154,29 @@ def collision_checked_targets(
             return dict(current), report
 
     return safe_joints, report
+
+
+def apply_safety_clamp_to_sim(
+    sim: AiNexSimulator,
+    before: dict[str, float],
+    after: dict[str, float],
+    context: str,
+) -> dict[str, Any]:
+    """Re-check a motion the sim has ALREADY been moved to (e.g. a raw debug
+    joint-jog command, applied directly and instantly) against the same
+    self-collision/fall safety gate as /move, and roll the sim back to the
+    safe target if the raw move was too aggressive.
+
+    `before`/`after` are joint-state snapshots taken immediately before and
+    after the raw move. Returns the safety_report from collision_checked_targets
+    so the caller can relay it to the client.
+    """
+    safe_joints, safety_report = collision_checked_targets(sim, after, context, current=before)
+    if safety_report["collision_clamped"] or safety_report["fall_blocked"]:
+        for joint, value in safe_joints.items():
+            if abs(after.get(joint, value) - before.get(joint, value)) > 1e-9:
+                sim.set_joint_position(joint, value)
+    return safety_report
 
 
 async def dispatch_servo_commands(
