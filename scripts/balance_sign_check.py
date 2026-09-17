@@ -11,13 +11,12 @@ What it does:
        ComplementaryFilter — that's stateful and needs several ticks to
        warm up; its first call would read close to 0 regardless of the
        actual tilt, which is wrong for a single static reading. The
-       confirmed formula, atan2(az, ay), is exactly what was used to
-       verify the axis convention in the first place, and is fine on its
-       own as long as the robot is held still while read, which is what
-       this test requires anyway.)
+       confirmed formula, atan2(ax, ay) — corrected 2026-09-17, see
+       complementary_filter.py's docstring for the full story — is fine
+       on its own as long as the robot is held still while read, which is
+       what this test requires anyway.)
     3. Runs that through the real BalanceController (same code sim uses),
-       roll channels only (pitch is still unverified — see
-       complementary_filter.py's docstring).
+       roll channels only.
     4. Converts the resulting offset to absolute servo positions and
        sends it as ONE /move call through the main server (localhost:8000,
        the same endpoint everything else in this project uses) — not
@@ -75,7 +74,7 @@ def main() -> None:
         return
 
     ax, ay, az = values[0], values[1], values[2]
-    roll_rad = math.atan2(az, ay)
+    roll_rad = math.atan2(ax, ay)  # corrected 2026-09-17 -- was atan2(az, ay)
     roll_deg = math.degrees(roll_rad)
     print(f"accel = ({ax:.3f}, {ay:.3f}, {az:.3f}) g  ->  roll = {roll_deg:.2f} deg")
 
@@ -96,7 +95,12 @@ def main() -> None:
             continue
         position = rad_to_servo_units(rad)
         moves.append({"servo_id": servo_id, "position": position, "duration_ms": 800})
-        print(f"  {joint}: {rad:+.4f} rad -> servo {servo_id} @ position {position}")
+        # Note: `position` here is the uniform sim-unit encoding /move expects
+        # (see motion.py's docstring) -- the main server converts this to the
+        # ACTUAL hardware pulse (via HW_DIRECTION/STAND_PULSE) internally
+        # before it reaches the Pi. This printed number is not the final
+        # servo pulse -- trust the robot's physical response, not this line.
+        print(f"  {joint}: {rad:+.4f} rad -> servo {servo_id} @ sim-unit {position}")
 
     if not moves:
         print("Nothing to send (empty offset). Aborting.")

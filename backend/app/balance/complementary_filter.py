@@ -16,45 +16,47 @@ Kalman filter — which is appropriate here: a standing-balance controller
 only needs "which way is down, right now," not a navigation-grade
 estimate.
 
-Axis convention — partially confirmed on real hardware 2026-09-14, partially
-still a guess:
-    accel_roll  = atan2(az, ay)   -- CONFIRMED: standing reads ~3 deg
-                                     (near level, as it should), tilting the
-                                     physical robot toward its own right
-                                     jumped this to ~81 deg. Note this is
-                                     NOT the naive atan2(ay, az) a generic
-                                     IMU tutorial would suggest -- the real
-                                     board reads "upright" as ay≈1, az≈0
-                                     (Y is the resting "up" axis here), not
-                                     az≈1 as first assumed. Getting the
-                                     *axis pairing* right, not just a sign,
-                                     is what real data caught here.
-    accel_pitch = atan2(ax, ay)   -- NOT CONFIRMED, deliberately deferred
-                                     after 5 real attempts on 2026-09-14.
-                                     Several read as noise; the clearest
-                                     one (a real, unambiguous toe-pivot
-                                     forward lean, heels off the ground)
-                                     came out reading as ~97 degrees of
-                                     *roll*, not pitch — ax stayed near
-                                     zero the whole time, same as every
-                                     other attempt. This formula is an
-                                     inferred placeholder by analogy with
-                                     the confirmed roll formula, not
-                                     independently verified, and evidence
-                                     so far suggests a by-hand test can't
-                                     cleanly isolate it on this specific
-                                     robot (working theory: its own
-                                     right-heavy mass asymmetry — see the
-                                     2026-09-13 body_link correction —
-                                     couples sideways rotation into any
-                                     forward tilt applied by hand). See
-                                     docs/balance-controller-progress.md
-                                     Phase 3 for the full account and what
-                                     to try next (a more controlled push,
-                                     not another ad-hoc hand tilt).
-Do not trust accel_pitch for anything that matters until that's done. If
-it comes back backwards once real data exists, negate it (and pitch_rate)
-below — one line, not a rewrite, same as the roll fix was.
+Axis convention — CORRECTED 2026-09-17: the 2026-09-14 "confirmation"
+below had roll and pitch swapped.
+    accel_roll  = atan2(ax, ay)   -- CONFIRMED 2026-09-17 with two clean,
+                                     isolated real-hardware tests: a
+                                     genuine sideways lean (lifting one
+                                     foot so weight shifts onto the other
+                                     leg — mechanically constrained, not a
+                                     freehand tilt) swung ax hard (up to
+                                     0.81g) while az stayed at baseline
+                                     (~0.03-0.07g); a genuine forward lean
+                                     did the opposite — az swung hard
+                                     (0.53g) while ax stayed at baseline
+                                     (~0.00g). Two independent,
+                                     mutually-exclusive axis responses is
+                                     about as clean as real data gets.
+    accel_pitch = atan2(az, ay)   -- Follows from the same two tests
+                                     above (az is the axis a forward lean
+                                     moves) — an ax/az swap can't be right
+                                     for one of these and wrong for the
+                                     other, they're the two horizontal
+                                     components of one 3-axis reading.
+
+What was wrong before: the 2026-09-14 test used atan2(az, ay) for roll
+and seemed confirmed (standing ~3 deg, "right tilt" ~81 deg) — but that
+right-tilt data point (accel=(-0.024, 0.15, 0.98), still locked into
+test_complementary_filter.py's real-hardware tests) has az swinging to
+0.98 while ax stays near zero, the exact signature 2026-09-17's
+dedicated forward-lean test independently produced. The 2026-09-14 test
+was very likely a forward/pitch-type tilt that got mislabeled as "tilt
+toward its own right" — freehand tilting by hand is easy to apply along
+the wrong axis without a mechanically constrained motion to anchor it
+(the same difficulty that stalled the original pitch attempts that same
+day). Full account of both the original mislabeling and the correction:
+docs/balance-controller-progress.md Phase 3.
+
+roll_rate/pitch_rate (from gx_dps/gy_dps) were NOT touched by this fix —
+that pairing is a separate, still-unverified assumption. Confirming it
+needs a controlled constant-rate ROTATION, not just a held static tilt
+(all a dedicated axis check like the one above can produce by hand) — a
+harder test, not yet attempted. Do not assume it's right just because
+the accel formula was fixed.
 """
 
 from __future__ import annotations
@@ -103,8 +105,8 @@ class ComplementaryFilter:
         roll_rate = math.radians(gx_dps)
         pitch_rate = math.radians(gy_dps)
 
-        accel_roll = math.atan2(az, ay)
-        accel_pitch = math.atan2(ax, ay)  # NOT YET CONFIRMED — see module docstring
+        accel_roll = math.atan2(ax, ay)
+        accel_pitch = math.atan2(az, ay)
 
         self._roll_rad = (
             self.alpha * (self._roll_rad + roll_rate * dt)

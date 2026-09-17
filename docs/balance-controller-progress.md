@@ -211,58 +211,88 @@ tradeoff to make deliberately later, not a default to widen now.
 | | Item |
 |---|---|
 | ✅ | Raw IMU access on the Pi — `GET /imu` added to `backend/app/robot/pi/nodes/server.py`, returns `Board().get_imu()`'s floats unmodified. IMU init failure doesn't take down `/move`/`/health` (wrapped, logs a warning, route reports 503 instead). **Not yet deployed or tested on the real Pi** — needs the usual scp/docker cp/chmod cycle. **Not yet checked for serial contention with `/move`** — unknown whether reading IMU while a body command is in flight causes any conflict; test both together before trusting it under load. |
-| ✅ | `ComplementaryFilter` (`backend/app/balance/complementary_filter.py`) — fuses raw accel+gyro into an `AttitudeReading`, same output shape `sim_source.py` produces, so `BalanceController` doesn't care which one fed it. 10 unit tests (8 synthetic + 2 locking in real hardware readings below). |
+| ✅ | `ComplementaryFilter` (`backend/app/balance/complementary_filter.py`) — fuses raw accel+gyro into an `AttitudeReading`, same output shape `sim_source.py` produces, so `BalanceController` doesn't care which one fed it. 12 unit tests (8 synthetic + 4 locking in real hardware readings below). |
 | ✅ | Deployed `/imu` to the Pi and confirmed it responds — `[server] IMU board ready`, doesn't affect `/move`. |
-| ✅ | **Roll axis convention CONFIRMED against real hardware, 2026-09-14.** Original formula guess was wrong in a bigger way than a sign flip — the real board reads "upright" as `ay≈1` (Y is the resting up-axis), not `az≈1` as a generic IMU tutorial formula assumes. Real data: standing → roll ≈3° (near level, correct), robot physically tilted toward its own right → roll ≈81° (large, correct direction of change). Fixed formula: `accel_roll = atan2(az, ay)`. |
-| ⛔ | **Pitch axis convention NOT confirmed after 5 real attempts — deliberately deferred, not guessed at.** `accel_pitch = atan2(ax, ay)` stays an unverified placeholder; do not trust it. A real, unambiguous forward tilt (heels lifted, confirmed) still came out reading as 97° of *roll*, not pitch — `X` hasn't shown a real signal in any hand-applied test tried. Likely needs a more controlled test (can't cleanly isolate by hand on this robot, possibly due to its own right-heavy mass asymmetry) — see "Verifying the real IMU's axis convention" below for the full account and recommended next approach. |
-| ✅ | `BalanceLoop` (`backend/app/robot/pi/nodes/balance_loop.py`) — background thread wiring `BalanceController` to the real IMU and the body service, **roll channels only** (pitch discarded every tick — unverified, see above). Off by default; `POST /balance/start`/`stop` + `GET /balance/status` added to `server.py`. Deploy chain and end-to-end tick logic verified by simulation (fake board + real recorded IMU readings, run outside any Pi) — confirmed the correction converges smoothly and the two-tier ankle→hip handoff engages correctly. **Not yet deployed to the Pi or run against real servos.** |
+| ✅ | **Roll AND pitch axis convention CONFIRMED against real hardware, 2026-09-17 — corrects the 2026-09-14 entry below, which had them swapped.** `accel_roll = atan2(ax, ay)`, `accel_pitch = atan2(az, ay)`. Confirmed with two clean, mechanically-constrained tests (not freehand tilts): lifting one foot so weight shifts onto the other leg swung `ax` hard while `az` stayed at baseline; tipping the robot forward swung `az` hard while `ax` stayed at baseline. See "Verifying the real IMU's axis convention" below for the full account, including why the original test was wrong. |
+| ✅ | `BalanceLoop` (`backend/app/robot/pi/nodes/balance_loop.py`) — background thread wiring `BalanceController` to the real IMU and the body service, **roll channels only** (pitch discarded every tick — now that pitch's axis is also confirmed, this is a scope choice to revisit, not a safety gate on unverified data; see above). Off by default; `POST /balance/start`/`stop` + `GET /balance/status` added to `server.py`. Deploy chain and end-to-end tick logic verified by simulation (fake board + real recorded IMU readings, run outside any Pi) — confirmed the correction converges smoothly and the two-tier ankle→hip handoff engages correctly. **Not yet deployed to the Pi or run against real servos.** |
 | ⬜ | **Before turning this loop on for real:** the single-shot sign check — manually tilt the robot, compute what the controller would command, send it as one `/move`, confirm it corrects rather than worsens the lean. Closes Phase 1's still-open question (does the correction direction actually help) using real data instead of more sim probing. |
 | ⬜ | Tune gains by feel on hardware: robot standing still, no mimicry — "stands and resists a push" is the bar (plan §7's push-test procedure) |
 | ⬜ | **Crash mat / soft test area in place before this phase starts** — early gain tuning on real hardware means falls are expected |
 
 ### Verifying the real IMU's axis convention
 
-**Roll: done (2026-09-14).** Real data, robot actively torque-holding
-`stand` (this matters — the first attempts used an unpowered/manually-posed
-robot and gave inconsistent, unusable baselines):
+**2026-09-14 attempt (WRONG — corrected below, kept here so the mistake
+stays visible instead of quietly vanishing).** Real data, robot actively
+torque-holding `stand`:
 
 ```
-standing: ( -0.023, 0.997, 0.054 )  -> roll = atan2(0.054, 0.997) ≈ 3°
-right:    ( -0.024, 0.151, 0.981 )  -> roll = atan2(0.981, 0.151) ≈ 81°
+standing: ( -0.023, 0.997, 0.054 )  -> "roll" = atan2(0.054, 0.997) ≈ 3°
+right:    ( -0.024, 0.151, 0.981 )  -> "roll" = atan2(0.981, 0.151) ≈ 81°
 ```
 
-Confirms `accel_roll = atan2(az, ay)` — note this replaced the original
-guess (`atan2(ay, az)`), not just a sign flip on it; the real board's
-resting "up" axis is Y, not Z.
+This looked like solid confirmation of `accel_roll = atan2(az, ay)` at
+the time — standing near-level, a large jump under tilt, in the expected
+direction. Pitch (`atan2(ax, ay)`) then failed 5 separate attempts that
+same day, the clearest of which (a real, unambiguous toe-pivot forward
+lean) came out reading as 97° of *roll* instead of pitch — `ax` stayed
+near zero throughout, `ay`/`az` moved the way the "roll" formula
+responds to. Deferred pitch rather than force a conclusion; working
+theory at the time was that the robot's own mass asymmetry was coupling
+sideways rotation into forward tilts applied by hand.
 
-**Pitch: still unconfirmed after 5 attempts on 2026-09-14 — deliberately
-not guessed at, deferred rather than forced.** `accel_pitch = atan2(ax, ay)`
-remains an unverified placeholder in the code; do not trust it.
+**2026-09-17 correction: roll and pitch were swapped the whole time.**
+While debugging why a live sign-check test kept showing no response to
+deliberate sideways tilts, the same pattern kept appearing: `ax` swinging
+large, `az` staying near baseline — repeatedly, across freehand attempts
+at a sideways lean. That's backwards from what `accel_roll = atan2(az,
+ay)` predicts. Rather than assume the freehand tilts were somehow all
+still wrong, switched to two *mechanically constrained* motions (harder
+to accidentally apply along the wrong axis than free-handing a torso
+tilt):
 
-What was tried, in order: (1) held-tilt while standing, too gentle, read
-as noise; (2)-(3) same, still noise, even after confirming stand was
-actively torque-held; (4) a firmer standing-tilt attempt, still noise;
-(5) a real, unambiguous toe-pivot forward lean (heels lifted off the
-desk, confirmed by the user) — this one finally showed a large signal,
-but run through the formulas it came out as **97° of roll**, not pitch
-(`ax` stayed at -0.055, the same near-zero range as every prior test; `ay`
-and `az` moved the way a *roll* reading does). `X` has not shown a
-meaningful signal in any of the ~10 real-hardware readings collected this
-session, across every tilt direction attempted.
+```
+foot lifted, weight shifts to the other leg (should be pure sideways/roll):
+    accel = (0.811, 0.522, 0.027)  -- ax swings hard, az stays at baseline
 
-Working theory, not confirmed: the robot's own mass is asymmetric (right
-side heavier — see the 2026-09-13 `body_link` mass correction), so a
-forward tip may naturally introduce a real sideways component as it's
-applied by hand, contaminating any attempt to isolate pitch alone. A
-by-hand test may not be able to cleanly separate these on this
-particular robot.
+robot tipped forward onto its toes (should be pure forward/pitch):
+    accel = (-0.001, 0.844, 0.530) -- az swings hard, ax stays at baseline
+```
 
-**Recommended path when this is picked back up:** don't repeat more
-ad-hoc hand tilts — get a more controlled forward push (e.g. two points
-of symmetric support so it can't twist sideways while tipping, or test
-it once the balance loop exists and can log its own small forward nudges
-during Phase 3/4 hardware tuning) rather than continuing to guess from
-improvised data.
+Two independent, mutually-exclusive axis responses — about as clean as
+real hardware data gets. This means `ax` is the roll-responsive axis and
+`az` is the pitch-responsive one, the **opposite** of the 2026-09-14
+"confirmation." And it explains that day's data in hindsight: the
+"right tilt" reading above (`accel=(-0.024, 0.151, 0.981)`) has `az`
+swinging to 0.98 while `ax` stays near zero — the *exact* signature
+2026-09-17's dedicated forward-lean test produced independently. The
+2026-09-14 test was very likely a forward/pitch-type tilt that got
+mislabeled as "tilt toward its own right." It also resolves the old
+pitch mystery: that day's "97° of roll" forward-lean result was correct
+all along, just read through a formula with the wrong name on it — it
+really was pitch.
+
+**Corrected formulas** (`backend/app/balance/complementary_filter.py`):
+
+```
+accel_roll  = atan2(ax, ay)   -- CONFIRMED 2026-09-17
+accel_pitch = atan2(az, ay)   -- CONFIRMED 2026-09-17 (same evidence — see above)
+```
+
+**Still open:** `roll_rate`/`pitch_rate` (from the gyro's `gx`/`gy`) were
+NOT touched by this fix — that pairing is a separate, still-unverified
+assumption. Confirming it needs a controlled constant-rate rotation, not
+a held static tilt (all a test like the ones above can produce by hand)
+— a harder test, not yet attempted. Don't assume it's right just because
+the accel formula was fixed.
+
+**Lesson for future by-hand hardware tests on this robot:** freehand
+tilting (gripping the torso and rotating it by feel) is not reliable
+enough to trust for axis-convention work, even when the tester is
+confident about the direction applied — it produced consistent,
+repeatable *wrong-axis* readings across multiple attempts. A
+mechanically constrained motion (foot lifted, weight shifted onto a
+single support point) is what actually resolved it. Prefer that pattern
+over "hold it and tilt" for any future real-hardware calibration.
 
 ### Deploying the balance loop
 
@@ -318,3 +348,4 @@ correction.
 - **2026-09-15 (continued)** — Live sim A/B testing with the user via curl, iterated on methodology twice: first pass wasn't reset between trials (fixed with `POST /reset`, confirmed equivalent to the UI's own "Reset to stand" button), second pass revealed the resting baseline isn't 0° (~0.52-0.53°, the known mass asymmetry) so raw absolute readings needed comparing as deltas, not face value. Clean result reproduces the 2026-09-09 finding live (~45% reduction in |tilt| from level). Attempted a first gain-tuning pass on `ankle_kd`: found a narrow, non-linear margin — 1.6x was statistically indistinguishable from baseline, 3x caused real oscillatory instability (not just more overshoot). Reverted to original gains; no net code change. Full trace and reasoning in "What Phase 1 actually found" above.
 - **2026-09-15 (continued, again)** — Tested the working theory from the `ankle_kd` dead end directly: swept `max_rate_rad_per_s` (2.0 -> 3.0 -> 4.0) with `ankle_kd`/`ankle_kp` back at defaults. Confirmed it — 3.0 cut peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; 4.0 was slightly worse than 3.0 (diminishing returns, as expected once a parameter's helpful range is found). Kept `max_rate_rad_per_s = 3.0` as the new default — first real, kept gain change from this tuning round.
 - **2026-09-15 (continued, once more)** — Two more attempts at the ~-0.3° steady-state residual: `ankle_kp` 0.6 -> 0.8 (no real change, overshoot slightly worse) and `deadband_rad` 0.01 -> 0.003, a direct test of the theory that the deadband was gating the residual to a stop (disproved — residual unchanged even with a much smaller deadband). Both reverted; concluded this residual needs a real integral term, not a number tweak, and isn't worth chasing further right now given it's ~0.3° — nowhere near a stability concern. Full account in "What Phase 1 actually found" above.
+- **2026-09-17** — First hardware sign-check session with the physical robot and user together: got the robot standing (recovered from a flaky IMU serial connection via a ROS restart), verified the ankle-roll servos are mechanically mirrored as expected, then ran the sign-check script repeatedly and kept seeing near-zero roll despite deliberate sideways tilts. Traced it to a real bug, not a test-procedure issue this time: **roll and pitch's accelerometer axes were swapped since the 2026-09-14 "confirmation"** — `accel_roll` is `atan2(ax, ay)`, not `atan2(az, ay)`. Confirmed with two clean, mechanically constrained tests (foot-lift lean vs. forward-toe lean) that each moved exactly one axis while the other stayed at baseline; the old "confirmed" data point turns out to match today's forward-lean signature exactly, meaning it was a mislabeled pitch test all along. `complementary_filter.py`, its tests, and `scripts/balance_sign_check.py` fixed; 258 tests pass. See "Verifying the real IMU's axis convention" above and `.agents/fixes/2026-09-17-imu-roll-pitch-axes-swapped.md`. The original sign-check question (does the correction actually help on real hardware) is still open — this session ran out of clean test attempts before getting a real answer with the corrected formula; that's the very next thing to do.
