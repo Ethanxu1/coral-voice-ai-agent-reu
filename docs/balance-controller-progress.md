@@ -216,8 +216,8 @@ tradeoff to make deliberately later, not a default to widen now.
 | ✅ | **Roll AND pitch axis convention CONFIRMED against real hardware, 2026-09-17 — corrects the 2026-09-14 entry below, which had them swapped.** `accel_roll = atan2(ax, ay)`, `accel_pitch = atan2(az, ay)`. Confirmed with two clean, mechanically-constrained tests (not freehand tilts): lifting one foot so weight shifts onto the other leg swung `ax` hard while `az` stayed at baseline; tipping the robot forward swung `az` hard while `ax` stayed at baseline. See "Verifying the real IMU's axis convention" below for the full account, including why the original test was wrong. |
 | ✅ | `BalanceLoop` (`backend/app/robot/pi/nodes/balance_loop.py`) — background thread wiring `BalanceController` to the real IMU and the body service, **roll channels only** (pitch discarded every tick — now that pitch's axis is also confirmed, this is a scope choice to revisit, not a safety gate on unverified data; see above). Off by default; `POST /balance/start`/`stop` + `GET /balance/status` added to `server.py`. Deploy chain and end-to-end tick logic verified by simulation (fake board + real recorded IMU readings, run outside any Pi) — confirmed the correction converges smoothly and the two-tier ankle→hip handoff engages correctly. **Not yet deployed to the Pi or run against real servos.** |
 | ✅ | **Single-shot sign check CONFIRMED on real hardware, 2026-09-21.** `scripts/balance_sign_check.py` (before/after IMU reading around one real `/move` correction) run twice, both directions: left-foot-lift lean (+5.28° → +3.96°) and right-foot-lift lean (-7.63° → -7.53°) — both moved `|roll|` toward level. Uses the corrected `atan2(ax, ay)` formula through the real production `/move` pipeline, not a mock. See "Hardware sign check" below for the full account, including two false-alarm "wrong direction" results traced to a test-procedure timing issue (not a code bug) before this. |
-| ⬜ | Tune gains by feel on hardware: robot standing still, no mimicry — "stands and resists a push" is the bar (plan §7's push-test procedure) |
-| ⬜ | **Crash mat / soft test area in place before this phase starts** — early gain tuning on real hardware means falls are expected |
+| 🚧 | **Continuous `BalanceLoop` deployed and running on real hardware, 2026-09-21.** First-ever deployment hit two real bugs (see "Continuous loop deployment" below): a Python 3.8 compatibility issue that blocked the loop from loading at all, and a missing IMU zero-bias calibration that caused a persistent, unwanted foot-edge-lift at true rest. Both fixed and verified live — resting offset dropped from ~4° to ~2.25° and stabilized (brief settling twitches, then stopped on their own). A real push (before the resting-state fixes) was recovered from successfully — "stands and resists a push" met once already, worth re-confirming with the calibrated version. Sim-derived gains used as-is; no hardware gain tuning attempted yet. |
+| ✅ | **Crash mat / soft test area in place, 2026-09-21** — confirmed before the continuous loop was ever started. |
 
 ### Verifying the real IMU's axis convention
 
@@ -347,6 +347,66 @@ just "the same general motion" — get into position, let it settle,
 *then* start the measurement, same discipline the sim A/B testing on
 2026-09-15 already learned about resetting between trials.
 
+### Continuous loop deployment
+
+**First-ever deployment of `BalanceLoop` to real hardware, 2026-09-21.**
+Six files (`server.py`, `balance_loop.py`, `controller.py`,
+`complementary_filter.py`, `hardware_angle_utils.py`, `servo_config.py`)
+deployed via the usual scp -> `docker cp` -> `chmod +x` cycle. Two real
+bugs surfaced, neither one a sim-vs-hardware gain difference — both
+genuine code defects that had simply never been exercised before:
+
+1. **Python 3.8 incompatibility.** `hardware_angle_utils.py` and
+   `servo_config.py` both use bare `dict[...]`/`tuple[...]` module-level
+   type annotations without `from __future__ import annotations` —
+   fine on the Mac (Python 3.12), fatal on the Pi (Python 3.8, where
+   that syntax needs the future import or it's evaluated eagerly and
+   raises `TypeError: 'type' object is not subscriptable`). Neither
+   file had ever actually been imported on the Pi before this session —
+   the whole balance-controller effort had been Mac/sim-only until now.
+   Fixed by adding the future-annotations import to both, matching
+   `controller.py`/`complementary_filter.py`'s existing correct pattern.
+   Fix entry: `.agents/fixes/2026-09-21-pi-py38-bare-generic-annotations.md`.
+
+2. **No IMU zero-bias calibration, plus a wrong per-joint baseline.**
+   Once the loop actually loaded and ran, the user noticed it holding
+   an unwanted foot-edge-lift continuously, even with the robot
+   undisturbed. Investigated rather than dismissed: stopping the loop
+   and resetting the ankles to their true commanded neutral, the robot
+   visually looked level and standing straight — while the IMU still
+   reported ~4° of roll in that exact state. That's a sensor-mounting
+   offset, not real tilt, and the controller had no way to tell the two
+   apart. A second, related bug was found while simulating the fix:
+   `r_ank_roll` has a real, nonzero `HW_STAND_RAD` entry (-0.0698 rad,
+   a genuine asymmetry vs. `l_ank_roll`'s 0.0) that `BalanceLoop`'s
+   baseline dict ignored, silently miscalibrating that one joint's
+   resting pulse even once the bias fix alone would have zeroed the
+   controller's own error. Both fixed and verified first via a
+   simulated fake-board test (both ankles converge to and hold exactly
+   their commanded resting pulse with a constant reading), then live on
+   the robot: resting offset dropped from ~4° to ~2.25° and stabilized
+   — a few seconds of small settling twitches, then stopped on their
+   own. Fix entries: `.agents/fixes/2026-09-21-balance-loop-imu-zero-bias.md`,
+   `.agents/fixes/2026-09-21-balance-loop-baseline-rad.md`.
+
+**The remaining ~2.25° isn't a bug.** With sensor bias removed, this
+matches the same residual-lean pattern found extensively in sim
+testing: a pure PD controller (no memory of how long it's been
+leaning) always leaves a small steady error against a *constant* bias
+torque, and this robot has one — the independently measured ~217g
+right-side-heavy mass asymmetry from Phase 2. Removing that residual
+fully would need an integral term, same open item as the sim-side
+steady-state residual documented above, not something to chase via
+these bug fixes.
+
+**A real push, applied before the resting-state fixes above, was
+successfully recovered from** — roll climbed from ~4° to ~8-9° after a
+moderate sideways push, plateaued briefly (still actively correcting),
+then fully returned to the ~4° baseline within about 10 seconds. That
+meets the plan's "stands and resists a push" bar once, with sim-derived
+gains, no tuning needed yet — worth re-confirming with the calibrated
+version of the loop before calling hardware gain tuning unnecessary.
+
 ### Deploying the balance loop
 
 `balance_loop.py` needs four sibling files deployed alongside it and
@@ -402,4 +462,5 @@ correction.
 - **2026-09-15 (continued, again)** — Tested the working theory from the `ankle_kd` dead end directly: swept `max_rate_rad_per_s` (2.0 -> 3.0 -> 4.0) with `ankle_kd`/`ankle_kp` back at defaults. Confirmed it — 3.0 cut peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; 4.0 was slightly worse than 3.0 (diminishing returns, as expected once a parameter's helpful range is found). Kept `max_rate_rad_per_s = 3.0` as the new default — first real, kept gain change from this tuning round.
 - **2026-09-15 (continued, once more)** — Two more attempts at the ~-0.3° steady-state residual: `ankle_kp` 0.6 -> 0.8 (no real change, overshoot slightly worse) and `deadband_rad` 0.01 -> 0.003, a direct test of the theory that the deadband was gating the residual to a stop (disproved — residual unchanged even with a much smaller deadband). Both reverted; concluded this residual needs a real integral term, not a number tweak, and isn't worth chasing further right now given it's ~0.3° — nowhere near a stability concern. Full account in "What Phase 1 actually found" above.
 - **2026-09-17** — First hardware sign-check session with the physical robot and user together: got the robot standing (recovered from a flaky IMU serial connection via a ROS restart), verified the ankle-roll servos are mechanically mirrored as expected, then ran the sign-check script repeatedly and kept seeing near-zero roll despite deliberate sideways tilts. Traced it to a real bug, not a test-procedure issue this time: **roll and pitch's accelerometer axes were swapped since the 2026-09-14 "confirmation"** — `accel_roll` is `atan2(ax, ay)`, not `atan2(az, ay)`. Confirmed with two clean, mechanically constrained tests (foot-lift lean vs. forward-toe lean) that each moved exactly one axis while the other stayed at baseline; the old "confirmed" data point turns out to match today's forward-lean signature exactly, meaning it was a mislabeled pitch test all along. `complementary_filter.py`, its tests, and `scripts/balance_sign_check.py` fixed; 258 tests pass. See "Verifying the real IMU's axis convention" above and `.agents/fixes/2026-09-17-imu-roll-pitch-axes-swapped.md`. The original sign-check question (does the correction actually help on real hardware) is still open — this session ran out of clean test attempts before getting a real answer with the corrected formula; that's the very next thing to do.
-- **2026-09-21** — Resumed with the physical robot (4 days later, everything had to be restarted from scratch — Pi ROS launch, Mac server). **Single-shot sign check finally confirmed, both directions, on real hardware.** Rewrote `scripts/balance_sign_check.py` to read the IMU before *and* after one real correction (physical "feel" testing turned out not to be diagnostic — a tester's hand can't distinguish our few-degree correction from the robot's own much-larger stand-pose holding torque). Two false "wrong direction" results along the way, both traced to the disturbance not actually being held constant across the before/after window (tester still settling into the lean, or measuring from a leftover un-reset state) — not code bugs. Once the lean was held genuinely steady: left-foot-lift lean +5.28° → +3.96°, right-foot-lift lean -7.63° → -7.53°, both toward level. **This closes the last open item blocking hardware gain tuning.** Full account: "Hardware sign check" above. Next: tune gains by feel on hardware (needs a crash mat / soft test area first, per the Phase 3 checklist).
+- **2026-09-21** — Resumed with the physical robot (4 days later, everything had to be restarted from scratch — Pi ROS launch, Mac server). **Single-shot sign check finally confirmed, both directions, on real hardware.** Rewrote `scripts/balance_sign_check.py` to read the IMU before *and* after one real correction (physical "feel" testing turned out not to be diagnostic — a tester's hand can't distinguish our few-degree correction from the robot's own much-larger stand-pose holding torque). Two false "wrong direction" results along the way, both traced to the disturbance not actually being held constant across the before/after window (tester still settling into the lean, or measuring from a leftover un-reset state) — not code bugs. Once the lean was held genuinely steady: left-foot-lift lean +5.28° → +3.96°, right-foot-lift lean -7.63° → -7.53°, both toward level. **This closes the last open item blocking hardware gain tuning.** Full account: "Hardware sign check" above.
+- **2026-09-21 (continued)** — Crash mat confirmed in place; deployed `BalanceLoop` to the Pi for the first time ever (continuous, not one-shot). Hit and fixed two real bugs: a Python 3.8 compatibility issue that blocked the loop from loading at all (`hardware_angle_utils.py`/`servo_config.py` missing `from __future__ import annotations`), and a missing IMU zero-bias calibration plus a wrong per-joint baseline that together caused the loop to hold an unwanted foot-edge-lift even at true rest (traced by the user directly observing the robot looked level with ankles at neutral despite the sensor disagreeing — trusted that over the numbers). Both fixed and verified via simulation, then live: resting offset dropped from ~4° to ~2.25° and stabilized on its own after brief settling twitches. A real push (before the resting-state fixes landed) was successfully recovered from, meeting the plan's "stands and resists a push" bar once already. Full account: "Continuous loop deployment" above. Next: re-confirm the push-recovery with the now-calibrated loop, then decide whether hardware gain tuning is even needed given sim-derived gains have worked without changes so far.
