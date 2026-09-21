@@ -44,17 +44,36 @@ control math stays correct at whatever rate it actually achieves — but
 the rate itself has not been measured on real hardware yet. Log
 `[balance] tick took Xs` if that's ever needed; not added here to avoid
 spamming rospy's log at ~10 Hz by default.
+
+Zero-bias calibration (added 2026-09-21, live hardware finding): the
+real IMU reads a real robot standing level, feet flat, as ~4 deg of
+roll — confirmed a sensor-mounting offset, not a real body lean, by
+visually checking the robot with ankles at true neutral (both feet
+flat, looked level to the eye) while the sensor still reported ~4 deg.
+Before this fix, the loop had no way to tell that constant bias apart
+from genuine tilt, so it perpetually "corrected" a disturbance that
+wasn't really there — visibly holding one foot's outer edge lifted even
+at rest, with nothing pushing on the robot. `start()` now samples
+`_CALIBRATION_SAMPLES` raw readings (assuming the robot is
+approximately level at that moment — true in the normal use pattern,
+since starting the loop happens right after getting the robot standing)
+and treats their average as the new zero point for every subsequent
+tick's roll reading. Recalibrates fresh on every `start()` rather than
+persisting across runs, since that's simpler and self-corrects if the
+robot's actual resting posture or the sensor's mounting ever changes
+slightly between sessions.
 """
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-from controller import BalanceController, BalanceGains, apply_balance_offset
+from controller import AttitudeReading, BalanceController, BalanceGains, apply_balance_offset
 from complementary_filter import ComplementaryFilter
-from hardware_angle_utils import HW_SERVO_LIMITS, hardware_units_to_rad, rad_to_hardware_units
+from hardware_angle_utils import HW_SERVO_LIMITS, HW_STAND_RAD, hardware_units_to_rad, rad_to_hardware_units
 
 # The only joints this loop is ever allowed to write. Pitch channels
 # (l/r_ank_pitch, l/r_hip_pitch) are absent on purpose — see module
@@ -64,6 +83,13 @@ _ROLL_JOINTS: Tuple[str, ...] = ("l_ank_roll", "r_ank_roll", "l_hip_roll", "r_hi
 
 # Nominal request only — see module docstring on why the real rate is lower.
 _TICK_SECONDS = 0.05
+
+# How many raw IMU samples to average at start() for the zero-bias
+# calibration below, and the gap between them. ~15 samples over ~0.5s —
+# enough to smooth out per-sample noise without making POST /balance/start
+# noticeably slow to respond.
+_CALIBRATION_SAMPLES = 15
+_CALIBRATION_SAMPLE_INTERVAL_S = 0.03
 
 
 class _SimpleLimit:
@@ -107,21 +133,50 @@ class BalanceLoop:
         self._call_body_service = call_body_service
         self._move_lock = move_lock
         self._joint_limits = _build_roll_joint_limits()
-        # stand's roll joints all sit at their centered pulse (500 —
-        # servo_config.STAND_PULSE), which is exactly 0 rad — no HW_STAND_RAD
-        # entry exists for them because there's nothing to offset from.
-        self._baseline_rad: Dict[str, float] = {j: 0.0 for j in _ROLL_JOINTS}
+        # Most roll joints sit at their centered pulse (500 -- exactly
+        # 0 rad) at stand, but NOT all of them: r_ank_roll has a real,
+        # nonzero HW_STAND_RAD entry (-0.0698 rad) -- a genuine
+        # asymmetry between the two ankle-roll servos' calibration, not
+        # a typo. Found 2026-09-21 via a simulated resting-state test:
+        # assuming 0.0 for every roll joint here (the old code) made
+        # rad_to_hardware_units() silently miscalibrate r_ank_roll by
+        # that whole offset, converging to the wrong resting pulse
+        # (483, not 500) even once the controller's own error was
+        # genuinely zero. HW_STAND_RAD.get() defaults to 0.0 for joints
+        # with no entry (l_ank_roll, both hip_roll), matching their
+        # actual stand-pose value -- see hardware_angle_utils.py's own
+        # docstring on what an absent entry means.
+        self._baseline_rad: Dict[str, float] = {j: HW_STAND_RAD.get(j, 0.0) for j in _ROLL_JOINTS}
         self._filter = ComplementaryFilter()
         self._controller = BalanceController(gains)
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._last_tick_t: Optional[float] = None
+        self._roll_bias_rad = 0.0
         self.last_error: Optional[str] = None
         self.tick_count = 0
 
     @property
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    def _calibrate_roll_bias(self) -> float:
+        """Average a handful of raw accel-only roll readings and return
+        that as the sensor's zero-bias offset — see module docstring.
+        Assumes the robot is approximately level right now (true at the
+        moment start() is normally called). Falls back to 0.0 (today's
+        old, uncalibrated behavior) if the board never returns usable
+        data, rather than raising and blocking start() entirely."""
+        samples: List[float] = []
+        for _ in range(_CALIBRATION_SAMPLES):
+            raw = self._board.get_imu()
+            if raw is not None and len(raw) >= 2:
+                ax, ay = raw[0], raw[1]
+                samples.append(math.atan2(ax, ay))
+            time.sleep(_CALIBRATION_SAMPLE_INTERVAL_S)
+        if not samples:
+            return 0.0
+        return sum(samples) / len(samples)
 
     def start(self) -> None:
         if self.running:
@@ -130,6 +185,7 @@ class BalanceLoop:
         self._filter.reset()
         self._controller.reset()
         self._last_tick_t = None
+        self._roll_bias_rad = self._calibrate_roll_bias()
         self.last_error = None
         self.tick_count = 0
         self._thread = threading.Thread(target=self._run, name="balance-loop", daemon=True)
@@ -163,7 +219,16 @@ class BalanceLoop:
 
         accel_g = (raw[0], raw[1], raw[2])
         gyro_dps = (raw[3], raw[4], raw[5])
-        attitude = self._filter.update(accel_g, gyro_dps, dt)
+        filtered = self._filter.update(accel_g, gyro_dps, dt)
+        # Subtract the sensor's zero-bias offset (measured once at
+        # start() — see module docstring) so the controller reacts to
+        # real tilt, not the IMU's own mounting offset.
+        attitude = AttitudeReading(
+            pitch_rad=filtered.pitch_rad,
+            roll_rad=filtered.roll_rad - self._roll_bias_rad,
+            pitch_rate=filtered.pitch_rate,
+            roll_rate=filtered.roll_rate,
+        )
 
         offset = self._controller.update(attitude, dt)
         roll_offset = {j: offset[j] for j in _ROLL_JOINTS}  # pitch channels computed but discarded — see module docstring
