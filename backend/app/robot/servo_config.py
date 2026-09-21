@@ -5,6 +5,8 @@ STAND_PULSE   — hardware neutral pulse for each joint (not 500 for all; arms/a
 TICKS_PER_RAD — unit conversion constant for all HX-series servos
 """
 
+from __future__ import annotations
+
 # Servo IDs verified against ak-maker/ainex_skeleton_following (tested on hardware).
 # Left/right legs interleave: left=odd IDs, right=even IDs (1-12).
 # Arms follow: left=13,15,17,19,21  right=14,16,18,20,22.

@@ -16,6 +16,8 @@ knee, ankle pitch) are non-zero alongside the shoulder-roll/elbow-yaw arm offset
 HW_DIRECTION is +1 when hardware and sim have the same increasing direction, -1 otherwise.
 """
 
+from __future__ import annotations
+
 import math
 
 try:
