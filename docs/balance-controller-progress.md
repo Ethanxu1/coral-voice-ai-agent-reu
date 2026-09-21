@@ -215,7 +215,7 @@ tradeoff to make deliberately later, not a default to widen now.
 | ✅ | Deployed `/imu` to the Pi and confirmed it responds — `[server] IMU board ready`, doesn't affect `/move`. |
 | ✅ | **Roll AND pitch axis convention CONFIRMED against real hardware, 2026-09-17 — corrects the 2026-09-14 entry below, which had them swapped.** `accel_roll = atan2(ax, ay)`, `accel_pitch = atan2(az, ay)`. Confirmed with two clean, mechanically-constrained tests (not freehand tilts): lifting one foot so weight shifts onto the other leg swung `ax` hard while `az` stayed at baseline; tipping the robot forward swung `az` hard while `ax` stayed at baseline. See "Verifying the real IMU's axis convention" below for the full account, including why the original test was wrong. |
 | ✅ | `BalanceLoop` (`backend/app/robot/pi/nodes/balance_loop.py`) — background thread wiring `BalanceController` to the real IMU and the body service, **roll channels only** (pitch discarded every tick — now that pitch's axis is also confirmed, this is a scope choice to revisit, not a safety gate on unverified data; see above). Off by default; `POST /balance/start`/`stop` + `GET /balance/status` added to `server.py`. Deploy chain and end-to-end tick logic verified by simulation (fake board + real recorded IMU readings, run outside any Pi) — confirmed the correction converges smoothly and the two-tier ankle→hip handoff engages correctly. **Not yet deployed to the Pi or run against real servos.** |
-| ⬜ | **Before turning this loop on for real:** the single-shot sign check — manually tilt the robot, compute what the controller would command, send it as one `/move`, confirm it corrects rather than worsens the lean. Closes Phase 1's still-open question (does the correction direction actually help) using real data instead of more sim probing. |
+| ✅ | **Single-shot sign check CONFIRMED on real hardware, 2026-09-21.** `scripts/balance_sign_check.py` (before/after IMU reading around one real `/move` correction) run twice, both directions: left-foot-lift lean (+5.28° → +3.96°) and right-foot-lift lean (-7.63° → -7.53°) — both moved `|roll|` toward level. Uses the corrected `atan2(ax, ay)` formula through the real production `/move` pipeline, not a mock. See "Hardware sign check" below for the full account, including two false-alarm "wrong direction" results traced to a test-procedure timing issue (not a code bug) before this. |
 | ⬜ | Tune gains by feel on hardware: robot standing still, no mimicry — "stands and resists a push" is the bar (plan §7's push-test procedure) |
 | ⬜ | **Crash mat / soft test area in place before this phase starts** — early gain tuning on real hardware means falls are expected |
 
@@ -294,6 +294,59 @@ mechanically constrained motion (foot lifted, weight shifted onto a
 single support point) is what actually resolved it. Prefer that pattern
 over "hold it and tilt" for any future real-hardware calibration.
 
+### Hardware sign check
+
+**Confirmed 2026-09-21, both directions, real hardware.** Once the axis
+fix above landed, `scripts/balance_sign_check.py` was rewritten to read
+the IMU both before *and* after sending one real correction (same
+sustained lean held throughout, ~1s apart) — a numeric before/after
+instead of asking a human to judge "did it push back" by feel, which
+turned out not to work (see below).
+
+```
+left-foot-lift lean (weight on right leg):  +5.28° -> +3.96°  (-1.31°, toward level)
+right-foot-lift lean (weight on left leg):  -7.63° -> -7.53°  (-0.09°, toward level)
+```
+
+Both directions moved `|roll|` toward level. This is the real answer to
+the question the whole Phase 1/3 effort has been chasing — not a sim
+number, not a mocked dispatch, the actual production `/move` pipeline
+driving real servos from a real IMU reading.
+
+**Two false starts on the way, both test-procedure issues, not code
+bugs — worth recording so they don't get mistaken for a real problem
+next time:**
+
+1. **"Feel" isn't diagnostic.** The first physical impression (holding
+   the robot in a lean, feeling it "want to return to normal standing")
+   turned out to be the robot's own pre-existing stand-pose holding
+   torque — a much bigger effect than our few-degree correction, and
+   present whether or not the correction is even running. Same lesson
+   the sim testing already learned about vision (too subtle to see by
+   eye) — this is the hand-feel equivalent. Fixed by reading the IMU
+   numerically before/after instead of judging by touch.
+2. **A "before" reading taken while the lean is still developing (not
+   yet held steady) produces a false "wrong direction" result.** Two
+   consecutive attempts showed `|roll|` apparently increasing sharply
+   right after the correction — but in both cases the computed
+   correction was tiny (a fraction of a degree, since the "before" roll
+   was itself small/near the deadband), far too small to explain the
+   several-degree swing observed. The real cause: the tester was still
+   settling into the held lean when "holding now" was said, so the
+   "after" reading (~1s later) mostly captured their own continuing
+   motion, not the correction's effect. One test also started measuring
+   from a leftover, un-settled state from the *previous* test because
+   the robot wasn't reset (or the tester hadn't released) in between.
+   Fixed by explicitly holding the lean fully still for a couple of
+   seconds *before* saying "holding now," not while transitioning into
+   it.
+
+**Lesson for future hardware tests:** a clean before/after comparison
+needs the disturbance to be genuinely constant across both reads, not
+just "the same general motion" — get into position, let it settle,
+*then* start the measurement, same discipline the sim A/B testing on
+2026-09-15 already learned about resetting between trials.
+
 ### Deploying the balance loop
 
 `balance_loop.py` needs four sibling files deployed alongside it and
@@ -349,3 +402,4 @@ correction.
 - **2026-09-15 (continued, again)** — Tested the working theory from the `ankle_kd` dead end directly: swept `max_rate_rad_per_s` (2.0 -> 3.0 -> 4.0) with `ankle_kd`/`ankle_kp` back at defaults. Confirmed it — 3.0 cut peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; 4.0 was slightly worse than 3.0 (diminishing returns, as expected once a parameter's helpful range is found). Kept `max_rate_rad_per_s = 3.0` as the new default — first real, kept gain change from this tuning round.
 - **2026-09-15 (continued, once more)** — Two more attempts at the ~-0.3° steady-state residual: `ankle_kp` 0.6 -> 0.8 (no real change, overshoot slightly worse) and `deadband_rad` 0.01 -> 0.003, a direct test of the theory that the deadband was gating the residual to a stop (disproved — residual unchanged even with a much smaller deadband). Both reverted; concluded this residual needs a real integral term, not a number tweak, and isn't worth chasing further right now given it's ~0.3° — nowhere near a stability concern. Full account in "What Phase 1 actually found" above.
 - **2026-09-17** — First hardware sign-check session with the physical robot and user together: got the robot standing (recovered from a flaky IMU serial connection via a ROS restart), verified the ankle-roll servos are mechanically mirrored as expected, then ran the sign-check script repeatedly and kept seeing near-zero roll despite deliberate sideways tilts. Traced it to a real bug, not a test-procedure issue this time: **roll and pitch's accelerometer axes were swapped since the 2026-09-14 "confirmation"** — `accel_roll` is `atan2(ax, ay)`, not `atan2(az, ay)`. Confirmed with two clean, mechanically constrained tests (foot-lift lean vs. forward-toe lean) that each moved exactly one axis while the other stayed at baseline; the old "confirmed" data point turns out to match today's forward-lean signature exactly, meaning it was a mislabeled pitch test all along. `complementary_filter.py`, its tests, and `scripts/balance_sign_check.py` fixed; 258 tests pass. See "Verifying the real IMU's axis convention" above and `.agents/fixes/2026-09-17-imu-roll-pitch-axes-swapped.md`. The original sign-check question (does the correction actually help on real hardware) is still open — this session ran out of clean test attempts before getting a real answer with the corrected formula; that's the very next thing to do.
+- **2026-09-21** — Resumed with the physical robot (4 days later, everything had to be restarted from scratch — Pi ROS launch, Mac server). **Single-shot sign check finally confirmed, both directions, on real hardware.** Rewrote `scripts/balance_sign_check.py` to read the IMU before *and* after one real correction (physical "feel" testing turned out not to be diagnostic — a tester's hand can't distinguish our few-degree correction from the robot's own much-larger stand-pose holding torque). Two false "wrong direction" results along the way, both traced to the disturbance not actually being held constant across the before/after window (tester still settling into the lean, or measuring from a leftover un-reset state) — not code bugs. Once the lean was held genuinely steady: left-foot-lift lean +5.28° → +3.96°, right-foot-lift lean -7.63° → -7.53°, both toward level. **This closes the last open item blocking hardware gain tuning.** Full account: "Hardware sign check" above. Next: tune gains by feel on hardware (needs a crash mat / soft test area first, per the Phase 3 checklist).
