@@ -197,6 +197,77 @@ something dangerous, and a wider recoverable margin would need larger
 `max_correction_rad`/`ankle_saturation_rad` — a real hardware-safety
 tradeoff to make deliberately later, not a default to widen now.
 
+### Integral term attempt (2026-09-21) — infrastructure added and tested, NOT validated
+
+Attempted to close the steady-state residual (real on both sim and
+hardware — see "Continuous loop deployment" below) by adding an
+integral term to the ankle channels. **Status: the code is real, unit
+tested (`ankle_ki` defaults to 0.0, a true no-op — every existing test
+passes unchanged), and mechanically correct (accumulates, clamps at
+`integral_max_rad`, resets with the rest of the controller's state) —
+but live sim testing found it does NOT close the residual, and a
+follow-up diagnostic surfaced a genuinely confusing, unresolved
+contradiction. Do not enable `ankle_ki` in production until this is
+sorted out.**
+
+**What was built:** `BalanceGains.ankle_ki` (default 0.0) and
+`integral_max_rad` (anti-windup cap, default 0.05 rad), ankle-only (not
+hip — the residual is squarely an ankle-level issue). One real design
+fix made along the way, itself confirmed correct: the integral
+accumulates the RAW attitude reading, not the deadbanded error P/D
+use — the residual it exists to close (a few tenths of a degree) is
+itself *smaller* than `deadband_rad` (0.57°), so gating the integral on
+the same deadbanded value P/D use meant it had literally nothing to
+accumulate at the exact error size it was added for. 7 new unit tests
+(`TestIntegralTerm` in `test_balance_controller.py`) cover accumulation,
+clamping, the deadband-independence fix, reset, sign, and hip's
+continued lack of integral state.
+
+**What live sim testing found:** with `ankle_ki=0.1`, `integral_max_rad=0.05`,
+pushing the sim and watching the settled roll over 20 seconds: the
+integral correctly accumulated and hit its cap (~9s), but the *settled
+roll got worse*, not better, going from the P+D-only baseline (~-0.3°)
+to ~-0.4 to -0.5° with the integral active. Raising `integral_max_rad`
+to 0.08 made it worse again (~-0.5 to -0.6°) — the opposite of the
+expected "more authority closes the gap" relationship.
+
+**Follow-up diagnostic, and the real puzzle:** to isolate whether this
+was an integral-specific bug or something more fundamental, tested
+holding the ankle-roll joints at a *fixed*, non-integral offset
+(bypassing `BalanceController` entirely) and measuring where the robot
+settles — done twice, the second time with a proper reset and 5-second
+settle between each measurement to rule out test contamination. Both
+runs agreed: a **positive** fixed ankle-roll offset made the (already
+negative) settled roll *more negative*, and a **negative** offset moved
+it toward (and past) zero. That's the opposite sign relationship the
+existing, extensively-verified P-term formula assumes — and directly
+contradicts the closed-loop sign checks already confirmed multiple
+times, independently, in both sim (2026-09-14) and on real hardware
+(2026-09-21, both directions) using that exact formula.
+
+**This contradiction is unresolved.** The fixed-offset diagnostic is a
+much newer, less-verified test than the closed-loop and real-hardware
+sign checks, and a *static* held offset may not have the same
+relationship to settled body roll that a *dynamic*, transient
+push-response does (real rigid-body contact/support-polygon dynamics
+are not necessarily simple or linear) — so the more likely explanation
+is that the fixed-offset test isn't a valid way to check the
+controller's sign, not that the extensively-verified P-term is
+secretly backwards. But this is a hypothesis, not a confirmed
+explanation, and it was not run to ground. Reverted `ankle_ki` to its
+safe 0.0 default rather than ship or continue debugging this at the end
+of an already very long session.
+
+**Next time this is picked up:** don't just retry integral tuning —
+first resolve the fixed-offset contradiction above, since it calls the
+whole approach into question until explained. A cleaner test: drive the
+sim with a *slow, controlled ramp* of ankle-roll offset (not discrete
+jumps) while continuously logging settled roll, to see the full
+static offset -> roll relationship as a smooth curve rather than a few
+noisy point samples — that would also reveal if the relationship is
+even monotonic, which the current data doesn't establish with
+confidence.
+
 ## Phase 2 — Hardware prerequisites (physical, yours — not blocked on code)
 
 | | Item |
@@ -502,4 +573,5 @@ correction.
 - **2026-09-17** — First hardware sign-check session with the physical robot and user together: got the robot standing (recovered from a flaky IMU serial connection via a ROS restart), verified the ankle-roll servos are mechanically mirrored as expected, then ran the sign-check script repeatedly and kept seeing near-zero roll despite deliberate sideways tilts. Traced it to a real bug, not a test-procedure issue this time: **roll and pitch's accelerometer axes were swapped since the 2026-09-14 "confirmation"** — `accel_roll` is `atan2(ax, ay)`, not `atan2(az, ay)`. Confirmed with two clean, mechanically constrained tests (foot-lift lean vs. forward-toe lean) that each moved exactly one axis while the other stayed at baseline; the old "confirmed" data point turns out to match today's forward-lean signature exactly, meaning it was a mislabeled pitch test all along. `complementary_filter.py`, its tests, and `scripts/balance_sign_check.py` fixed; 258 tests pass. See "Verifying the real IMU's axis convention" above and `.agents/fixes/2026-09-17-imu-roll-pitch-axes-swapped.md`. The original sign-check question (does the correction actually help on real hardware) is still open — this session ran out of clean test attempts before getting a real answer with the corrected formula; that's the very next thing to do.
 - **2026-09-21** — Resumed with the physical robot (4 days later, everything had to be restarted from scratch — Pi ROS launch, Mac server). **Single-shot sign check finally confirmed, both directions, on real hardware.** Rewrote `scripts/balance_sign_check.py` to read the IMU before *and* after one real correction (physical "feel" testing turned out not to be diagnostic — a tester's hand can't distinguish our few-degree correction from the robot's own much-larger stand-pose holding torque). Two false "wrong direction" results along the way, both traced to the disturbance not actually being held constant across the before/after window (tester still settling into the lean, or measuring from a leftover un-reset state) — not code bugs. Once the lean was held genuinely steady: left-foot-lift lean +5.28° → +3.96°, right-foot-lift lean -7.63° → -7.53°, both toward level. **This closes the last open item blocking hardware gain tuning.** Full account: "Hardware sign check" above.
 - **2026-09-21 (continued)** — Crash mat confirmed in place; deployed `BalanceLoop` to the Pi for the first time ever (continuous, not one-shot). Hit and fixed two real bugs: a Python 3.8 compatibility issue that blocked the loop from loading at all (`hardware_angle_utils.py`/`servo_config.py` missing `from __future__ import annotations`), and a missing IMU zero-bias calibration plus a wrong per-joint baseline that together caused the loop to hold an unwanted foot-edge-lift even at true rest (traced by the user directly observing the robot looked level with ankles at neutral despite the sensor disagreeing — trusted that over the numbers). Both fixed and verified via simulation, then live: resting offset dropped from ~4° to ~2.25° and stabilized on its own after brief settling twitches. A real push (before the resting-state fixes landed) was successfully recovered from, meeting the plan's "stands and resists a push" bar once already. Full account: "Continuous loop deployment" above.
-- **2026-09-21 (continued, final)** — User correctly pushed back that the foot-lift still hadn't fully gone away — didn't accept the earlier "expected PD droop" explanation at face value. Investigated further: found the reset-to-loop-start window was tight enough that calibration might have sampled a still-settling reading; redone with a verified-stationary, much longer settle (new baseline -1.0°, vs. the earlier ~4°) — but the loop drifted right back to ~2.5° anyway, ruling out calibration timing as the cause. Confirms this is a genuine, reproducible closed-loop equilibrium (the same PD-droop residual predicted in sim), just more visually obvious on real hardware than in sim, since the mirrored ankle correction on a rigid floor resolves as a visibly lifted foot edge rather than an imperceptible lean. Stopped the loop and reset the robot to a safe stand; decided not to start designing an integral term this late in an already long session. Open for next time: accept this residual (it's a couple degrees, not a stability concern) or design and carefully test an integral term.
+- **2026-09-21 (continued, final)** — User correctly pushed back that the foot-lift still hadn't fully gone away — didn't accept the earlier "expected PD droop" explanation at face value. Investigated further: found the reset-to-loop-start window was tight enough that calibration might have sampled a still-settling reading; redone with a verified-stationary, much longer settle (new baseline -1.0°, vs. the earlier ~4°) — but the loop drifted right back to ~2.5° anyway, ruling out calibration timing as the cause. Confirms this is a genuine, reproducible closed-loop equilibrium (the same PD-droop residual predicted in sim), just more visually obvious on real hardware than in sim, since the mirrored ankle correction on a rigid floor resolves as a visibly lifted foot edge rather than an imperceptible lean. Stopped the loop and reset the robot to a safe stand.
+- **2026-09-21 (continued, integral term attempt)** — User asked to add an integral term to close the residual. Built it (ankle-only, `ankle_ki`/`integral_max_rad`, defaults to 0.0/off, 7 new unit tests) and, per the project's own established practice, verified in live sim before trusting it — where it found real problems, not a quick win. First live test: accumulating the deadbanded error (same as P/D) gave the integral literally nothing to work with, since the residual itself is smaller than the deadband — fixed by switching to raw-attitude accumulation. Second live test: even fixed, the integral didn't close the residual — it made it *worse* as its authority (`integral_max_rad`) increased. A follow-up fixed-offset diagnostic (bypassing the controller) then surfaced a genuinely confusing contradiction: it suggested the ankle-roll-to-body-roll sign relationship might be opposite to what the extensively-verified P-term formula assumes — directly conflicting with the closed-loop and real-hardware sign checks already confirmed multiple times independently. Rather than keep guessing at the end of an already very long session, reverted `ankle_ki` to its safe 0.0 default and documented the full, unresolved puzzle for next time. Full account: "Integral term attempt" above.

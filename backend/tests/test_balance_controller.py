@@ -178,6 +178,135 @@ class TestSafetyBounds:
         assert abs(offsets["l_ank_pitch"]) <= gains.max_rate_rad_per_s * 0.02 + 1e-9
 
 
+class TestIntegralTerm:
+    """ankle_ki, added 2026-09-21 to close the steady-state residual a
+    pure-PD controller always leaves against a constant bias — see
+    docs/balance-controller-progress.md Phase 3, "Continuous loop
+    deployment." Defaults to 0.0 (off); these tests exercise it
+    explicitly enabled. Rate limiter given a huge ceiling throughout so
+    it never masks the integral's own effect on the raw output."""
+
+    def test_default_ki_zero_matches_pure_pd_forever(self):
+        """The whole point of defaulting ankle_ki to 0.0: every existing
+        PD-only test (this file, unmodified) stays correct proof of this,
+        but also assert it directly — many ticks of a constant error
+        should never make a ki=0.0 controller's output grow beyond what a
+        single P+D tick already gives, unlike a real integral term."""
+        gains = BalanceGains(max_rate_rad_per_s=1000.0, max_correction_rad=10.0)
+        controller = BalanceController(gains)
+        attitude = AttitudeReading(pitch_rad=0.2, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        first = controller.update(attitude, dt=0.02)["l_ank_pitch"]
+        for _ in range(50):
+            latest = controller.update(attitude, dt=0.02)["l_ank_pitch"]
+        assert latest == pytest.approx(first)
+
+    def test_integral_grows_the_correction_beyond_pd_alone(self):
+        """With ki>0 and a constant error, later ticks should produce a
+        LARGER-magnitude correction than the very first tick — the
+        signature of accumulation, absent when ki=0.0 (test above)."""
+        gains = BalanceGains(
+            ankle_ki=0.5, integral_max_rad=10.0,  # cap way out of reach here
+            max_rate_rad_per_s=1000.0, max_correction_rad=10.0,
+        )
+        controller = BalanceController(gains)
+        attitude = AttitudeReading(pitch_rad=0.2, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        first = abs(controller.update(attitude, dt=0.02)["l_ank_pitch"])
+        for _ in range(50):
+            latest = abs(controller.update(attitude, dt=0.02)["l_ank_pitch"])
+        assert latest > first
+
+    def test_integral_accumulator_is_clamped_anti_windup(self):
+        """However long a disturbance persists, the ACCUMULATED integral
+        itself must never exceed integral_max_rad — the anti-windup
+        guarantee. Checked on the internal accumulator directly (not just
+        the final output) since the output is also shaped by
+        ankle_saturation_rad/max_correction_rad/the rate limiter, which
+        would make an output-only check ambiguous about which cap is
+        actually doing the limiting."""
+        gains = BalanceGains(
+            ankle_ki=0.5, integral_max_rad=0.05,
+            max_rate_rad_per_s=1000.0, max_correction_rad=10.0, ankle_saturation_rad=10.0,
+        )
+        controller = BalanceController(gains)
+        attitude = AttitudeReading(pitch_rad=5.0, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        for _ in range(500):
+            controller.update(attitude, dt=0.02)
+        assert abs(controller._integral["ankle_pitch"]) <= gains.integral_max_rad + 1e-12
+
+    def test_integral_accumulates_even_inside_the_deadband(self):
+        """Deliberately different from P/D: the integral accumulates the
+        RAW attitude, not the deadbanded error, specifically so it can
+        close a residual smaller than deadband_rad. Found necessary via
+        live sim testing 2026-09-21 — the actual steady-state residual
+        this term exists to close (a few tenths of a degree) is itself
+        smaller than deadband_rad (0.57 deg default); gating the
+        integral on the same deadbanded error P/D use meant it had
+        nothing to accumulate at exactly the error size it was added
+        for. See the comment in update() for the full account."""
+        gains = BalanceGains(
+            ankle_ki=0.5, deadband_rad=0.05,
+            max_rate_rad_per_s=1000.0, max_correction_rad=10.0,
+        )
+        controller = BalanceController(gains)
+        tiny_tilt = AttitudeReading(pitch_rad=0.01, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        for _ in range(100):
+            controller.update(tiny_tilt, dt=0.02)
+        assert controller._integral["ankle_pitch"] != 0.0
+
+    def test_integral_still_bounded_even_inside_the_deadband(self):
+        """The anti-windup cap applies regardless of whether the input is
+        inside or outside the P/D deadband — many ticks of even a tiny
+        tilt must still respect integral_max_rad."""
+        gains = BalanceGains(
+            ankle_ki=0.5, deadband_rad=0.05, integral_max_rad=0.02,
+            max_rate_rad_per_s=1000.0, max_correction_rad=10.0,
+        )
+        controller = BalanceController(gains)
+        tiny_tilt = AttitudeReading(pitch_rad=0.01, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        for _ in range(1000):
+            controller.update(tiny_tilt, dt=0.02)
+        assert abs(controller._integral["ankle_pitch"]) <= gains.integral_max_rad + 1e-12
+
+    def test_reset_clears_the_integral_too(self):
+        gains = BalanceGains(
+            ankle_ki=0.5, max_rate_rad_per_s=1000.0, max_correction_rad=10.0,
+        )
+        controller = BalanceController(gains)
+        attitude = AttitudeReading(pitch_rad=0.2, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        for _ in range(20):
+            controller.update(attitude, dt=0.02)
+        assert controller._integral["ankle_pitch"] != 0.0  # sanity: it did accumulate
+        controller.reset()
+        assert controller._integral["ankle_pitch"] == 0.0
+        assert controller._integral["ankle_roll"] == 0.0
+
+    def test_integral_direction_opposes_the_tilt_same_as_p_term(self):
+        """Sign check: a positive (forward/right) tilt held over many
+        ticks must integrate toward a NEGATIVE correction (opposing it),
+        matching the existing P-term sign convention — an integral term
+        with the wrong sign would actively push the robot further over
+        the longer a disturbance persists, worse than no integral at
+        all."""
+        gains = BalanceGains(
+            ankle_ki=0.5, integral_max_rad=10.0,
+            max_rate_rad_per_s=1000.0, max_correction_rad=10.0,
+        )
+        controller = BalanceController(gains)
+        attitude = AttitudeReading(pitch_rad=0.2, roll_rad=0.0, pitch_rate=0.0, roll_rate=0.0)
+        for _ in range(20):
+            controller.update(attitude, dt=0.02)
+        assert controller._integral["ankle_pitch"] > 0.0  # accumulated positive error
+        offsets = controller.update(attitude, dt=0.02)
+        assert offsets["l_ank_pitch"] < 0.0  # but the resulting correction opposes it
+
+    def test_hip_channel_has_no_integral_state(self):
+        """Deliberately scoped to ankle only — see BalanceGains.ankle_ki's
+        docstring. Confirms there's no hip_pitch/hip_roll key hiding in
+        the integral dict that a future change might assume exists."""
+        controller = BalanceController()
+        assert set(controller._integral.keys()) == {"ankle_pitch", "ankle_roll"}
+
+
 class TestApplyBalanceOffset:
     def test_adds_offset_to_baseline(self):
         baseline = {"l_ank_pitch": 0.1, "r_ank_pitch": -0.1}

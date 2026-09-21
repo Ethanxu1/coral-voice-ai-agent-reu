@@ -38,6 +38,30 @@ class BalanceGains:
     hip_kp: float = 0.4
     hip_kd: float = 0.03
 
+    # Ankle-only integral gain. Added 2026-09-21 specifically to close the
+    # steady-state residual a pure-PD controller always leaves against a
+    # *constant* bias (this robot's own real, measured ~217g mass
+    # asymmetry — see docs/balance-controller-progress.md Phase 3,
+    # "Continuous loop deployment"): PD alone needs a nonzero error to
+    # generate a nonzero correcting torque, so it can reduce but never
+    # fully cancel a constant disturbance. An integral term accumulates
+    # error over time and keeps growing the correction until the error
+    # actually reaches zero. Defaults to 0.0 (off) so every existing
+    # test/sim/hardware behavior is unchanged unless this is explicitly
+    # set — not yet tuned against either sim or hardware.
+    ankle_ki: float = 0.0
+
+    # Hard cap (rad) on the ACCUMULATED integral term itself, independent
+    # of dt or how long a disturbance persists — anti-windup. Without
+    # this, a sustained disturbance (e.g. the robot held tilted, or a
+    # sensor fault) lets the integral grow silently large while the
+    # output is already saturated elsewhere, then fires a big, sudden
+    # correction once the disturbance clears — a classic PID hazard,
+    # worse on a physical robot than in sim. Kept well inside
+    # ankle_saturation_rad so the integral alone can never be the sole
+    # cause of a hip-channel engagement.
+    integral_max_rad: float = 0.05
+
     # Ankle-alone soft limit (rad) — beyond this, the hip strategy engages
     # on top of the (now-clamped) ankle correction.
     ankle_saturation_rad: float = 0.12
@@ -121,15 +145,23 @@ class BalanceController:
     def __init__(self, gains: BalanceGains | None = None):
         self.gains = gains if gains is not None else BalanceGains()
         self._prev = {"ankle_pitch": 0.0, "ankle_roll": 0.0, "hip_pitch": 0.0, "hip_roll": 0.0}
+        # Ankle-only — see BalanceGains.ankle_ki. Hip has no integral term;
+        # it's a rare, secondary strategy, not where the steady-state
+        # residual this was added for actually shows up.
+        self._integral = {"ankle_pitch": 0.0, "ankle_roll": 0.0}
 
     def reset(self) -> None:
         """Zero all correction state. Call when the balance loop is
         paused/resumed or the robot is physically repositioned (e.g. after
         a fall recovery, or a manual reset command) — otherwise the rate
         limiter measures the jump from a stale previous offset instead of
-        from the robot's actual current, uncorrected state."""
+        from the robot's actual current, uncorrected state, and the
+        integral term keeps accumulating against a disturbance that's no
+        longer real."""
         for k in self._prev:
             self._prev[k] = 0.0
+        for k in self._integral:
+            self._integral[k] = 0.0
 
     def _rate_limit(self, channel: str, target: float, dt: float) -> float:
         prev = self._prev[channel]
@@ -157,10 +189,42 @@ class BalanceController:
         pitch_err = _apply_deadband(attitude.pitch_rad, g.deadband_rad)
         roll_err = _apply_deadband(attitude.roll_rad, g.deadband_rad)
 
-        # Ankle strategy: PD term, negated so a positive tilt (leaning
-        # forward/right) produces a correction opposing it.
-        raw_ankle_pitch = -(g.ankle_kp * pitch_err + g.ankle_kd * attitude.pitch_rate)
-        raw_ankle_roll = -(g.ankle_kp * roll_err + g.ankle_kd * attitude.roll_rate)
+        # Integral accumulation — deliberately the RAW attitude, NOT the
+        # post-deadband error P/D use. Found live in sim testing
+        # (2026-09-21): the residual this term exists to close (a couple
+        # tenths of a degree) is itself smaller than deadband_rad
+        # (0.57 deg) — accumulating the deadbanded error meant the
+        # integral had a genuine zero to work with and could never do its
+        # job at exactly the error size it was added for. The deadband's
+        # original purpose (no micro-jitter while standing still and
+        # already level, see BalanceGains.deadband_rad) is about P/D
+        # output chatter from noise, not about the integral — accumulate
+        # is still bounded and safe (integral_max_rad, clamped every
+        # tick below) even without this gate. Amounts to a tiny,
+        # DC-only correction for a genuinely-level robot with zero-mean
+        # sensor noise; a real, small, persistent bias (this robot's own
+        # mass asymmetry, or an uncalibrated real IMU) is exactly what
+        # should accumulate here.
+        self._integral["ankle_pitch"] = _clamp_magnitude(
+            self._integral["ankle_pitch"] + attitude.pitch_rad * dt, g.integral_max_rad
+        )
+        self._integral["ankle_roll"] = _clamp_magnitude(
+            self._integral["ankle_roll"] + attitude.roll_rad * dt, g.integral_max_rad
+        )
+
+        # Ankle strategy: PID term (hip below stays pure PD), negated so a
+        # positive tilt (leaning forward/right) produces a correction
+        # opposing it.
+        raw_ankle_pitch = -(
+            g.ankle_kp * pitch_err
+            + g.ankle_ki * self._integral["ankle_pitch"]
+            + g.ankle_kd * attitude.pitch_rate
+        )
+        raw_ankle_roll = -(
+            g.ankle_kp * roll_err
+            + g.ankle_ki * self._integral["ankle_roll"]
+            + g.ankle_kd * attitude.roll_rate
+        )
 
         ankle_pitch = _clamp_magnitude(raw_ankle_pitch, g.ankle_saturation_rad)
         ankle_roll = _clamp_magnitude(raw_ankle_roll, g.ankle_saturation_rad)
