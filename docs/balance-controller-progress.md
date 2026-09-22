@@ -17,8 +17,8 @@ not aspirational.
 | ✅ | Safety bounds implemented: hard per-channel magnitude cap, rate-of-change cap, deadband |
 | ✅ | `apply_balance_offset()` — adds a correction to a baseline pose and clamps through the real `JOINT_LIMITS` table (the same one every other dispatch path uses) |
 | ✅ | Unit tests (`backend/tests/test_balance_controller.py`, 20 tests) — deadband, ankle-only vs. ankle+hip engagement, correct-sign check, both safety caps, rate-limit convergence, `reset()`, joint-limit clamping |
-| ⛔ | **Gain values are placeholders, not tuned** — blocked on Phase 1 (sim integration) to actually iterate on them |
-| ⛔ | **Attitude sign convention (`AttitudeReading`'s pitch/roll meaning) is a documented assumption, not verified** — blocked on Phase 1 producing a real MuJoCo-sourced reading to check against |
+| ✅ | **Gain values tuned in sim** (`max_rate_rad_per_s`, re-verified 2026-09-22 against a later-fixed baseline bug — see Phase 1) and **confirmed to hold up on real hardware** (2026-09-21 sign check, push-recovery test). Not "placeholders" anymore — this row was stale, never updated once Phase 1 actually did the tuning it names as the blocker. |
+| ✅ | **Attitude sign convention CONFIRMED**, both in sim (`sim_source.py`, 2026-09-09, 6 tests) and on real hardware (roll: 2026-09-14, corrected 2026-09-17; pitch: confirmed 2026-09-17 too — see Phase 3). This row was stale, describing a blocker Phase 1/3 resolved weeks ago without this checklist being updated to match. |
 
 ## Phase 1 — Sim integration
 
