@@ -25,6 +25,7 @@ import time
 
 from app.balance.controller import BalanceController, BalanceGains, apply_balance_offset
 from app.balance.sim_source import read_attitude
+from app.robot.hardware_angle_utils import HW_STAND_RAD
 from app.simulator import AiNexSimulator
 
 _ROLL_JOINTS: tuple[str, ...] = ("l_ank_roll", "r_ank_roll", "l_hip_roll", "r_hip_roll")
@@ -43,9 +44,16 @@ class SimBalanceLoop:
     def __init__(self, simulator: AiNexSimulator, gains: BalanceGains | None = None):
         self._simulator = simulator
         self._controller = BalanceController(gains)
-        # stand's roll joints are all at their centered pulse (0 rad) — same
-        # reasoning as balance_loop.py's Pi-side baseline.
-        self._baseline_rad: dict[str, float] = {j: 0.0 for j in _ROLL_JOINTS}
+        # Most roll joints sit at 0 rad in the stand keyframe, but NOT
+        # r_ank_roll (-0.0698 rad, a genuine asymmetry — see
+        # hardware_angle_utils.py's HW_STAND_RAD, which this project's own
+        # convention requires to match ainex.xml's stand keyframe exactly,
+        # joint-for-joint). Found 2026-09-22 via a sim diagnostic that only
+        # made sense once this was accounted for: the balance_loop.py
+        # Pi-side equivalent of this exact bug was found and fixed
+        # 2026-09-21 (.agents/fixes/2026-09-21-balance-loop-baseline-rad.md)
+        # but this sim-side copy was missed at the time.
+        self._baseline_rad: dict[str, float] = {j: HW_STAND_RAD.get(j, 0.0) for j in _ROLL_JOINTS}
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._last_tick_t: float | None = None
