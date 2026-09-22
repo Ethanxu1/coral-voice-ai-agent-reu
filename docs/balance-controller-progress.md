@@ -27,8 +27,8 @@ not aspirational.
 | ✅ | Sensor adapter (`backend/app/balance/sim_source.py`, `read_attitude()`) — reads the model's `upvector`/`global_angvel` sensors (world-frame; simpler and more robust than decomposing `body_quat`, which turns out to carry a nontrivial baked-in offset even at `stand` — see the module docstring) |
 | ✅ | Sign convention **empirically verified for the sensor reading itself** — 6 tests (`backend/tests/test_balance_sim_source.py`) rotate the model a known amount and check the reading matches, not just "changed." Found and fixed a real bug this way: pitch and roll do **not** share the same formula — roll needs a negation pitch doesn't (`roll_rad = atan2(-uy, uz)` vs `pitch_rad = atan2(ux, uz)`). Would have shipped backwards without this check. |
 | ✅ | Wired into the live sim (`backend/app/balance/sim_loop.py`, `SimBalanceLoop`) — off by default, `POST /balance/start`/`stop`/`push`, `GET /balance/status`. Watchable live in the browser viewer (`/ws/sim`). |
-| ✅ | **Closed-loop verification: the correction direction is confirmed correct**, 2026-09-14. See "What Phase 1 actually found" below — resolves the question the 2026-09-09 headless attempt left open. |
-| 🚧 | **Gains partially tuned, then paused deliberately** — `max_rate_rad_per_s` raised 2.0 -> 3.0, cutting peak post-push overshoot roughly in half (-1.96° -> -0.93°) with no instability; this was the actual bottleneck, not `ankle_kd`. The remaining ~0.3° steady-state residual resisted both `ankle_kp` and `deadband_rad` changes — needs a real integral term to fully close, not a number tweak; not chased further since 0.3° is far below any stability concern. See "What Phase 1 actually found" below for the full account. |
+| ✅ | **Closed-loop verification: the correction direction is confirmed correct**, 2026-09-14, **re-confirmed 2026-09-22 against a fixed baseline** (see below — the original test had a confound, now resolved; the conclusion itself holds). See "What Phase 1 actually found" below — resolves the question the 2026-09-09 headless attempt left open. |
+| 🚧 | **Gains partially tuned; provisional pending re-verification, 2026-09-22.** `max_rate_rad_per_s` raised 2.0 -> 3.0 in earlier tuning; a 2026-09-22 fix (`SimBalanceLoop`'s `r_ank_roll` baseline bug — see "RESOLVED" note below "Integral term attempt") means this and the other prior gain comparisons were measured against a confounded baseline. The controller's real, verified value turns out to be **damping the recovery transient** (no overshoot past level), not closing a steady-state residual — the "~0.3° residual" this row used to describe was largely the confound itself, not a real gap needing an integral term. Not urgent to redo the tuning sweep since nothing is currently broken; flagged for whenever gain tuning is revisited. See "What Phase 1 actually found" and the RESOLVED note below "Integral term attempt" for the full account. |
 | ✅ | **Hip engagement confirmed, 2026-09-15** — swept push strength 6-9 rad/s reading `/joint_states` directly (not just eyeballing the viewer). See "What Phase 1 actually found" below for the full sweep and the narrow recoverable-vs-fall window it revealed. |
 | — | **Not visible on the 3D model at current gains — confirmed a real limitation, not a bug.** Swept push strength 0.3-12 rad/s: below ~9 rad/s the corrected-vs-uncorrected difference stays a few tenths of a degree (real, per the numbers above, but invisible by eye); above ~9 rad/s the robot falls over (~90°) **regardless of correction** — the safety caps (`max_correction_rad`≈11°) intentionally keep any single correction small, so they can't arrest a disturbance that large by design, not by bug. `GET /balance/attitude` added so this can be checked by number instead of by eye until gains are tuned enough to be visible. |
 
@@ -267,6 +267,105 @@ static offset -> roll relationship as a smooth curve rather than a few
 noisy point samples — that would also reveal if the relationship is
 even monotonic, which the current data doesn't establish with
 confidence.
+
+### RESOLVED (2026-09-22): the contradiction was a real bug, not a sign problem — and it retroactively changes a lot
+
+**Root cause found: `SimBalanceLoop` had the exact same `r_ank_roll`
+baseline bug as `balance_loop.py`'s 2026-09-21 fix
+(`.agents/fixes/2026-09-21-balance-loop-baseline-rad.md`), just never
+ported to the sim file when it was written the same day (2026-09-14).**
+`_baseline_rad` assumed `0.0` for every roll joint; `r_ank_roll`'s true
+stand-keyframe value is `-0.0698` rad. This meant the sim loop was
+injecting a constant, spurious ~4° disturbance onto that one joint
+*every time it ran*, completely independent of the controller's own
+computed correction — which could be exactly zero and this would still
+fire. Fixed in `sim_loop.py`, same pattern as the Pi-side fix
+(`HW_STAND_RAD.get(j, 0.0)`), with 4 new unit tests
+(`test_balance_sim_loop.py`) that would have caught it (verified by
+reverting the fix and confirming the exact expected failure before
+reapplying). Fix entry: `.agents/fixes/2026-09-22-sim-loop-baseline-rad.md`.
+
+**This is bigger than the integral term's puzzle — it retroactively
+confounds essentially every sim closed-loop test run against this file
+since 2026-09-14,** including the original "does the correction help"
+resolution and the `max_rate_rad_per_s`/`ankle_kp`/`ankle_kd`/
+`deadband_rad` gain-tuning work documented above and in the Log.
+Retested with the fix, from a properly-settled baseline (see the note
+on standalone-script settle time below, a second, separate bug found
+along the way):
+
+```
+Natural resting lean (loop off, no push):            ~+0.50 to +0.53°
+Push 1.0 rad/s, loop OFF (P+D never runs):            settles ~+0.53 to +0.56° -- unchanged
+Push 1.0 rad/s, loop ON, P+D only (baseline FIXED):   settles ~+0.53 to +0.68° -- also unchanged
+Push 3.0 rad/s, loop ON, P+D only (baseline FIXED):   settles ~+0.46 to +0.68° -- also unchanged
+```
+
+The controller now correctly does **nothing** at this residual — because
++0.5° is *inside* `deadband_rad` (0.57°), exactly as designed. The
+previously-documented "45% reduction in settled tilt, overshoot past
+level to -0.22 to -0.35°" was, at least in significant part, the
+baseline bug's own injected ~4° disturbance being counteracted by the
+controller's real P-term — not a faithful demonstration of correcting a
+genuine residual from a clean start.
+
+**So what does the controller actually do, now that this is fixed?**
+Tested at 8.0 rad/s (near the previously-established ~9 rad/s fall
+threshold), loop off vs. on, both starting from the same clean,
+properly-settled baseline:
+
+```
+Loop OFF: peaks ~+11°, then OSCILLATES hard -- swings past level to -3.19° at t~1.2s,
+          bounces back up, messily settles near +0.5° by t~12-18s.
+Loop ON:  peaks ~+12°, then decreases SMOOTHLY AND MONOTONICALLY -- no overshoot past
+          level at all -- reaching the same +0.5-0.7° settled point by t~18-27s.
+```
+
+**Both converge to the same final resting point either way** — because
+that point was never really broken to begin with (it's inside the
+deadband). **The controller's real, valuable contribution is damping
+the recovery transient** — preventing the wild oscillation passive
+dynamics alone produces, not reaching a different final angle. This is
+arguably a *more* valuable property for a real robot (a large swing
+through level, even if it eventually recovers, is closer to an actual
+fall than a smooth, monotonic return) than the "closes the residual"
+framing this whole investigation had been chasing.
+
+**What this means for the integral term:** there was never a real,
+deadband-exceeding residual in sim for it to close — which is exactly
+why enabling it did nothing meaningful (not "backwards," just acting on
+a case that didn't need fixing). Its actual use case — a real,
+deadband-exceeding bias — is what hardware genuinely has (~2.3-4°,
+confirmed 2026-09-21), not what sim's small, deadband-covered natural
+asymmetry has. Testing it further needs either a real hardware trial or
+a deliberately-constructed sim scenario (e.g., an artificially larger
+mass offset), not sim's own natural resting lean.
+
+**Separate, smaller bug also found along the way:** a standalone
+verification script only waited 0.3s after constructing a fresh
+`AiNexSimulator()` before pushing/testing — not enough time to reach
+true equilibrium (a fresh sim needs ~2-2.5s to settle from construction,
+confirmed by direct measurement). This is a test-methodology issue, not
+a code bug, but it's what produced the initial (wrong) "gets worse as
+integral authority increases" and "sign looks backwards" readings
+before the real baseline bug was found. **Lesson for future standalone
+diagnostic scripts:** always give a freshly-constructed simulator 2-3
+seconds to settle (or call `reset_pose()` and wait) before applying any
+push, offset, or measurement — the live HTTP server's `/reset` +
+several-second waits already do this correctly, which is why the
+HTTP-based trials in this session gave trustworthy results while the
+ad-hoc scripts initially didn't.
+
+**Status of prior gain-tuning conclusions (2026-09-09 through
+2026-09-15):** treat as provisional, not settled. The qualitative
+lessons about individual parameters (e.g., large `ankle_kd` jumps
+causing oscillatory instability) likely still hold as general
+PID-tuning facts, but specific comparisons ("3.0 is better than 2.0")
+were reached against confounded data and should be re-verified against
+the now-fixed baseline before being trusted for anything precision-
+sensitive. Not urgent to redo given none of those tuned values are
+currently causing a known problem — flagged here so a future session
+knows the history, not as a demand to immediately redo weeks of tuning.
 
 ## Phase 2 — Hardware prerequisites (physical, yours — not blocked on code)
 
@@ -575,3 +674,4 @@ correction.
 - **2026-09-21 (continued)** — Crash mat confirmed in place; deployed `BalanceLoop` to the Pi for the first time ever (continuous, not one-shot). Hit and fixed two real bugs: a Python 3.8 compatibility issue that blocked the loop from loading at all (`hardware_angle_utils.py`/`servo_config.py` missing `from __future__ import annotations`), and a missing IMU zero-bias calibration plus a wrong per-joint baseline that together caused the loop to hold an unwanted foot-edge-lift even at true rest (traced by the user directly observing the robot looked level with ankles at neutral despite the sensor disagreeing — trusted that over the numbers). Both fixed and verified via simulation, then live: resting offset dropped from ~4° to ~2.25° and stabilized on its own after brief settling twitches. A real push (before the resting-state fixes landed) was successfully recovered from, meeting the plan's "stands and resists a push" bar once already. Full account: "Continuous loop deployment" above.
 - **2026-09-21 (continued, final)** — User correctly pushed back that the foot-lift still hadn't fully gone away — didn't accept the earlier "expected PD droop" explanation at face value. Investigated further: found the reset-to-loop-start window was tight enough that calibration might have sampled a still-settling reading; redone with a verified-stationary, much longer settle (new baseline -1.0°, vs. the earlier ~4°) — but the loop drifted right back to ~2.5° anyway, ruling out calibration timing as the cause. Confirms this is a genuine, reproducible closed-loop equilibrium (the same PD-droop residual predicted in sim), just more visually obvious on real hardware than in sim, since the mirrored ankle correction on a rigid floor resolves as a visibly lifted foot edge rather than an imperceptible lean. Stopped the loop and reset the robot to a safe stand.
 - **2026-09-21 (continued, integral term attempt)** — User asked to add an integral term to close the residual. Built it (ankle-only, `ankle_ki`/`integral_max_rad`, defaults to 0.0/off, 7 new unit tests) and, per the project's own established practice, verified in live sim before trusting it — where it found real problems, not a quick win. First live test: accumulating the deadbanded error (same as P/D) gave the integral literally nothing to work with, since the residual itself is smaller than the deadband — fixed by switching to raw-attitude accumulation. Second live test: even fixed, the integral didn't close the residual — it made it *worse* as its authority (`integral_max_rad`) increased. A follow-up fixed-offset diagnostic (bypassing the controller) then surfaced a genuinely confusing contradiction: it suggested the ankle-roll-to-body-roll sign relationship might be opposite to what the extensively-verified P-term formula assumes — directly conflicting with the closed-loop and real-hardware sign checks already confirmed multiple times independently. Rather than keep guessing at the end of an already very long session, reverted `ankle_ki` to its safe 0.0 default and documented the full, unresolved puzzle for next time. Full account: "Integral term attempt" above.
+- **2026-09-22** — Resolved the previous entry's contradiction: `SimBalanceLoop` had the exact same `r_ank_roll` baseline bug as `balance_loop.py`'s 2026-09-21 fix, just never ported to the sim file. It was injecting a constant, spurious ~4° disturbance onto `r_ank_roll` every tick, independent of the controller's own computed correction — confounding essentially every sim closed-loop test since 2026-09-14. Fixed (4 new unit tests, verified they'd catch the bug), and re-testing revealed something bigger than a bug fix: the controller's real, valuable behavior is **damping the recovery transient** (no overshoot past level after a push) rather than closing a steady-state residual — there wasn't really a residual to close in sim once the confound was removed (the natural ~0.5° lean sits inside the deadband on its own). This fully explains why the integral term "didn't help" — it was acting on a case that didn't need fixing. Also found and noted a smaller, separate test-methodology bug (standalone scripts need 2-3s settle time after constructing a fresh simulator, not 0.3s). Prior gain-tuning conclusions (09-09 through 09-15) flagged as provisional pending re-verification against the fixed baseline, not urgent to redo. Full account: "RESOLVED" note under "Integral term attempt" above; fix entry `.agents/fixes/2026-09-22-sim-loop-baseline-rad.md`.
