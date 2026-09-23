@@ -1,7 +1,7 @@
 # CBF / Whole-Body Safety Layer — Progress
 
-Tracks a new, **separate** safety layer suggested by the PI: a Control
-Barrier Function (CBF) that constrains whatever pose `follow`/mimicry
+Tracks a new, **separate** safety layer: a Control Barrier Function (CBF) 
+that constrains whatever pose `follow`/mimicry
 wants to command, so it automatically holds back before the robot would
 fall — rather than the current all-or-nothing "refuse the whole move"
 check, and specifically covering the live-follow path, which currently
@@ -85,9 +85,9 @@ for a first pass.
 
 | | Item |
 |---|---|
-| ⬜ | Safety-filter function: shadow-check a target pose's resulting CoM/support-polygon safety; if unsafe, scale back toward the current pose until safe |
-| ⬜ | Unit tests: a pose that's already safe passes through unchanged; a pose that would tip the robot gets scaled back to something safe |
-| ⬜ | Live sim test: watch it in the browser viewer, comparable to how the ankle/hip controller was verified |
+| ✅ | Safety-filter function (`backend/app/balance/safety_filter.py`, `SafetyFilter`) — mirrors `CollisionChecker`'s exact architecture (own headless model, interpolate current->target via `mj_forward`, back off to the last safe fraction if a step goes unsafe). A real bug found and fixed while building this: the free-floating base isn't in the hinge-joint dict a caller passes, and the raw `stand` keyframe isn't yet physically settled — both meant an early version reported the *unmodified stand pose itself* as unsafe. Fixed by settling once for real at construction time and using that as the reference baseline every check starts from. |
+| ✅ | 9 unit tests (`backend/tests/test_safety_filter.py`) — a safe target (arm movement) passes through unchanged; an unsafe target (large hip-roll splay) gets scaled back to something with a real, verified-positive margin. A genuine surprise found while writing them: even a *small, endpoint-safe* ankle motion can have a real mid-motion dip (part of the foot briefly lifts partway through) — the filter correctly catches this, and the test asserts that real behavior rather than assuming "safe start + safe end = safe throughout." |
+| ⬜ | Live sim test — **deliberately deferred to Phase 2.** Demonstrating this standalone would mean pushing an unsafe pose through the shared production `/move` endpoint, which already has its own separate collision/fall-check logic (`collision_checked_targets()`) that would interfere with a clean before/after comparison. Belongs naturally once this filter is actually wired into a live dispatch path (Phase 2), not forced through a confusing detour now. |
 
 ## Phase 2 — Wire into the live-follow path
 
