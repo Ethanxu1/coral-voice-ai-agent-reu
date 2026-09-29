@@ -27,8 +27,10 @@ from app.validation import JOINT_LIMITS
 from app.vision import leg_modes
 from app.vision.pose_to_robot import (
     _STAND_L_SHO_ROLL,
+    _STAND_LEG_TARGETS,
     _STAND_R_SHO_ROLL,
     compute_joint_targets,
+    retarget_neutral_leg_targets,
 )
 
 
@@ -36,12 +38,18 @@ from app.vision.pose_to_robot import (
 def _enable_leg_tracking_for_tests(monkeypatch):
     """Existing pose-to-robot tests exercise leg retargeting; keep it enabled.
 
-    The live demo default is `CORAL_ENABLE_LEG_TRACKING=false`, so the module
-    under test disables leg joints by default. We patch it back on here to
-    preserve the original test coverage, and add separate tests for the
-    disabled path.
+    These tests assert the retargeting GEOMETRY — which body pose maps to
+    which joint angle. The safety cap (`LEG_MIMICRY_SCALE`, see
+    `test_leg_mimicry_cap.py`) deliberately shrinks those angles toward
+    stand, so it is disabled here; otherwise every expected angle would
+    have to be written as a fraction of itself and these tests would stop
+    being about retargeting at all.
+
+    Leg tracking is patched on explicitly rather than relying on the live
+    default, so these keep working whichever way that default goes.
     """
     monkeypatch.setattr(config, "ENABLE_LEG_TRACKING", True)
+    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 1.0)
 
 
 def _empty_landmark() -> dict:
@@ -420,3 +428,56 @@ def test_leg_tracking_disabled_does_not_emit_stand_leg_targets(monkeypatch):
     body = _build_body()
     targets = compute_joint_targets(body, head_pose=None)
     assert not any(k in leg_modes.LEG_JOINTS for k in targets)
+
+
+# ── Leg mimicry safety cap ────────────────────────────────────────────────────
+
+
+def test_leg_targets_are_capped_toward_neutral(monkeypatch):
+    """compute_joint_targets must apply LEG_MIMICRY_SCALE, not just expose
+    the helper.
+
+    An uncapped retargeted leg lift topples this robot (measured: roll
+    -102 deg vs -16 deg capped at 0.5) — so the cap being wired into the
+    real retargeting path, and not merely available, is the thing that
+    keeps it standing. See docs/cbf-whole-body-progress.md Phase 2.7.
+    """
+    body = _build_body(l_knee=(+0.1, 0.25, -0.2), l_ankle=(+0.1, 0.25, 0.1))
+
+    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 1.0)
+    uncapped = compute_joint_targets(body, head_pose=None)
+
+    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 0.5)
+    capped = compute_joint_targets(body, head_pose=None)
+
+    neutral = retarget_neutral_leg_targets()
+    moved = [
+        j for j in ("l_hip_pitch", "l_knee", "r_hip_pitch", "r_knee")
+        if abs(uncapped[j] - neutral[j]) > 1e-3
+    ]
+    assert moved, "test pose should move at least one leg joint"
+
+    for joint in moved:
+        base = neutral[joint]
+        # Halfway from the retargeting's own neutral toward the
+        # uncapped target, same direction.
+        assert capped[joint] == pytest.approx(
+            base + 0.5 * (uncapped[joint] - base), abs=1e-6
+        ), joint
+        assert (capped[joint] - base) * (uncapped[joint] - base) > 0, joint
+
+
+def test_arm_targets_are_not_affected_by_the_leg_cap(monkeypatch):
+    """Arms barely shift this robot's CoM, so capping them would cost
+    mimicry fidelity for no safety gain."""
+    body = _build_body(l_elbow=(+0.45, -0.5, 0.0))
+
+    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 1.0)
+    uncapped = compute_joint_targets(body, head_pose=None)
+    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 0.25)
+    capped = compute_joint_targets(body, head_pose=None)
+
+    for joint in uncapped:
+        if joint in _STAND_LEG_TARGETS:
+            continue
+        assert capped[joint] == pytest.approx(uncapped[joint]), joint

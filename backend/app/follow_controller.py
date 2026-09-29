@@ -24,6 +24,7 @@ from app import config
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
 from app.vision.pose_to_robot import (
+    _STAND_LEG_TARGETS,
     JointAngleSmoother,
     compute_joint_targets,
     targets_to_servo_commands,
@@ -183,6 +184,11 @@ class FollowController:
                 skip_count = 0
                 empty_target_count = 0
                 safety_hold_count = 0
+                # Most recent leg command, logged each heartbeat. Leg
+                # poses are what topple this robot, and reproducing what
+                # live retargeting emits from synthetic landmarks has
+                # proved unreliable -- so record the real thing.
+                last_leg_targets: dict[str, float] | None = None
                 last_heartbeat = asyncio.get_event_loop().time()
                 tick = 1.0 / _FOLLOW_DISPATCH_HZ
                 try:
@@ -247,6 +253,10 @@ class FollowController:
                                     targets, held_back = safety_gate.filter_targets(targets)
                                     if held_back:
                                         safety_hold_count += 1
+                                last_leg_targets = {
+                                    j: round(v, 4) for j, v in targets.items()
+                                    if j in _STAND_LEG_TARGETS
+                                } or None
                                 commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
                                 in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
                                 in_flight.add_done_callback(_log_dispatch_error)
@@ -268,6 +278,7 @@ class FollowController:
                                     dispatch_count, skip_count, empty_target_count,
                                     safety_holds=None if safety_gate is None else safety_hold_count,
                                     stability_margin=margin,
+                                    leg_targets=last_leg_targets,
                                 )
                             dispatch_count = skip_count = empty_target_count = 0
                             safety_hold_count = 0

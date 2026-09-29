@@ -137,6 +137,45 @@ class JointAngleSmoother:
         return out
 
 
+def retarget_neutral_leg_targets() -> dict[str, float]:
+    """What the leg retargeting emits for a person standing straight.
+
+    NOT `_STAND_LEG_TARGETS`. A straight leg retargets to 0 rad, clamped
+    into each joint's range — e.g. `l_hip_pitch` -0.0698 and `l_knee`
+    +0.6737, where the robot's own stand keyframe is -0.4887 and +0.9250.
+    The two differ by up to 0.42 rad. Pinned by `test_standing_legs_neutral`.
+    """
+    return {joint: _clamp_to_limits(joint, 0.0) for joint in _STAND_LEG_TARGETS}
+
+
+def scale_leg_targets_toward_neutral(
+    targets: dict[str, float], scale: float
+) -> dict[str, float]:
+    """Perform only `scale` of each leg movement, measured from the
+    retargeting's own neutral.
+
+    This robot topples at a full retargeted leg lift but stays standing
+    up to ~70% of one, measured against stepped dynamics — see
+    `docs/cbf-whole-body-progress.md` Phase 2.7. Scaling keeps the
+    movement visible while staying inside that limit, and halves
+    vision-jitter amplitude in the leg channel as a side effect.
+
+    Scaling toward `retarget_neutral_leg_targets()` rather than the
+    robot's stand keyframe matters: those are up to 0.42 rad apart, so
+    blending toward the keyframe would bend the robot's legs further the
+    moment a person simply stood still — an offset, not a cap.
+
+    Only the six leg joints are touched; arms, head and anything else
+    pass through untouched. Mutates and returns `targets`.
+    """
+    if scale >= 1.0:
+        return targets
+    for joint, neutral_rad in retarget_neutral_leg_targets().items():
+        if joint in targets:
+            targets[joint] = neutral_rad + scale * (targets[joint] - neutral_rad)
+    return targets
+
+
 def _visible(lm: dict, threshold: float = _VISIBILITY_THRESHOLD) -> bool:
     return lm.get("visibility", 1.0) >= threshold
 
@@ -392,6 +431,10 @@ def compute_joint_targets(
                     )
                     # Mirrored sim sign: right knee flexion = negative
                     targets["r_knee"] = _clamp_to_limits("r_knee", -bend)
+
+            # Cap how far the legs actually go. Applied to the retargeted
+            # branch only -- the branch above already emits stand exactly.
+            scale_leg_targets_toward_neutral(targets, config.LEG_MIMICRY_SCALE)
 
     return targets
 
