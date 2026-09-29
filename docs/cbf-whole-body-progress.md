@@ -93,8 +93,39 @@ for a first pass.
 
 | | Item |
 |---|---|
-| ⬜ | Apply the Phase 1 filter to `follow_controller.py`'s continuous stream, alongside (not replacing) the existing ankle/hip standing-balance loop |
-| ⬜ | Compare behavior side-by-side: ankle/hip controller alone vs. CBF safety layer alone vs. both together |
+| ✅ | Applied to `follow_controller.py`'s continuous stream via `FollowSafetyGate` (`backend/app/balance/safety_filter.py`) — the stateful adapter that carries "where the robot actually is" between frames, since `SafetyFilter` itself is stateless. Filters both the seed move (STAND → the human's first detected pose, the largest single move of a session) and every live tick. The existing ankle/hip standing-balance loop is untouched and unaffected either way. |
+| ✅ | Measured cost before wiring it into a 20 Hz loop rather than assuming: **~1.9 ms per check worst case against a 50 ms tick budget (~4%)**, and ~0.11 s one-time construction. Cheap enough to run inline; no thread offload needed per tick, and the one-time build is done off the event loop. |
+| ✅ | Toggle for the A/B comparison: `CORAL_ENABLE_FOLLOW_SAFETY` (default `true`). Set `false` to run follow mode unfiltered. Does not affect the ankle/hip controller in either position — the two layers are independent, which is what makes the comparison meaningful. |
+| 🚧 | Compare behavior side-by-side. First real result below; a live/visual sim-viewer run is still outstanding. |
+
+### First measured result: this filter only matters once legs are tracked
+
+Ran realistic mimicry frames through the gate (not assertions — actual
+margins):
+
+| Frames | Stability margin | Filter fired? |
+|---|---|---|
+| Arms + head only, including fully-extended and overhead arms | 0.0381 → 0.0385 → 0.0384 | never |
+| Legs engaged, progressive sideways lean | 0.0373 → 0.0155 → 0.0138 | yes, on the 3rd |
+
+`ENABLE_LEG_TRACKING` defaults to **false**, so today's default follow
+mode is arms + head only — and on that path the margin barely moves and
+the filter never intervenes. Two consequences worth being explicit
+about:
+
+1. **Turning this on does not change the default demo's behavior.** It
+   is effectively inert there, which is why defaulting it to `true` is
+   low-risk rather than a gamble on new code.
+2. **Its actual value is that it makes leg tracking safe enough to
+   enable.** `config.py` currently calls leg tracking "experimental and
+   can be unstable in live demos" — instability during big leg motions
+   is precisely the failure this filter catches. That makes re-enabling
+   leg tracking the natural next experiment, not an unrelated feature.
+
+Do not read the arms-only row as "the filter doesn't work" — it means
+arm mass barely shifts this robot's center of mass, which is the
+physically correct answer and matches Phase 0's finding that the
+standing margin is dominated by foot contact and torso/leg geometry.
 
 ## Phase 3 — Real full CBF-QP (if Phase 1's simpler filter isn't sufficient)
 
@@ -104,4 +135,5 @@ for a first pass.
 
 ## Log
 
+- **2026-09-29** — Phase 2 done (bar the live visual run): `FollowSafetyGate` wires the Phase 1 filter into the live-follow stream, closing the gap this whole effort was started for — that path previously had no fall/stability check at all. Measured the per-check cost (~1.9 ms vs. a 50 ms tick) before wiring rather than after. Caught a real ordering bug in the wiring during self-review: the gate was being consulted *before* the loop's existing "skip this tick if the previous dispatch is still in flight" check, so a skipped tick would advance the gate's tracked pose to something that was never actually dispatched, leaving it measuring the next frame from a phantom position — moved the filter inside the dispatch branch. Also found the filter never fires on arms-only mimicry (today's default) but does fire on leg motion; see the table above. 16 new tests, 309 passing overall.
 - **2026-09-22** — Phase 0 done: `backend/app/balance/cbf.py` (center of mass, support polygon from real contact sensors, signed-distance safety function), 14 tests. Found a real settling-dynamics surprise while writing the tests — true steady-state standing contact is 3 pads, not 4 (`r_foot1` never regains contact, a consequence of the robot's known mass asymmetry) — asserted the real pattern, not an idealized one. Explicit scope: separate from, doesn't touch, the existing ankle/hip controller. Next: Phase 1, the shadow-check safety filter that actually modifies an unsafe target pose.

@@ -33,10 +33,14 @@ reproduces the same contact pattern 750 real dynamics steps produce).
 
 from __future__ import annotations
 
+import logging
+
 import mujoco
 
 import app.resource_path as resource_path
 from app.balance.cbf import get_center_of_mass, get_support_polygon, signed_distance_to_polygon
+
+logger = logging.getLogger(__name__)
 
 
 class SafetyFilter:
@@ -98,6 +102,19 @@ class SafetyFilter:
         mj_forward shadow check, unlike the raw stand keyframe."""
         self.data.qpos[:] = self._settled_qpos
         self.data.qvel[:] = 0.0
+
+    def settled_joint_values(self) -> dict[str, float]:
+        """Every hinge joint's angle in the settled-standing baseline.
+
+        The correct "where the robot is right now" seed for a caller
+        tracking a live stream (FollowSafetyGate) at the moment it
+        starts -- taken from this filter's OWN baseline rather than
+        HW_STAND_RAD, so the gate's idea of standing can't drift from
+        the one every check is actually measured against.
+        """
+        return {
+            name: float(self._settled_qpos[addr]) for name, addr in self._qpos_addr.items()
+        }
 
     def _apply_joints(self, joints: dict[str, float]) -> None:
         for name, val in joints.items():
@@ -189,3 +206,67 @@ class SafetyFilter:
             last_safe_margin = margin
 
         return dict(target_joints), 1.0, last_safe_margin
+
+
+class FollowSafetyGate:
+    """Applies SafetyFilter to a continuous mimicry stream (Phase 2).
+
+    SafetyFilter itself is stateless: each call needs to be told where
+    the robot currently is. A live follow session is a stream of frames,
+    so something has to carry that state between them -- this does, and
+    nothing else. It tracks the pose actually commanded so far (which is
+    NOT the pose requested, whenever the filter held something back) and
+    measures each new frame's target against it.
+
+    Tracking the commanded pose frame-to-frame matters for more than
+    bookkeeping: checking every frame against *standing* instead would
+    let the robot creep past a safe limit one individually-safe step at
+    a time, since each small step looks fine in isolation.
+
+    Known limitation carried over from Phase 1: SafetyFilter evaluates
+    the free-floating base from its own settled-standing reference, not
+    the live simulator's actual current base state. Joint state is now
+    tracked live (that was the Phase 1 gap this closes); base drift is
+    not. Fine while the robot mimics from a standing position, which is
+    the only thing follow mode does today.
+    """
+
+    def __init__(self, safety_filter: SafetyFilter | None = None):
+        self._filter = safety_filter if safety_filter is not None else SafetyFilter()
+        self.current_joints: dict[str, float] = {}
+        self.intervention_count = 0
+        self.failure_count = 0
+        self.last_margin: float | None = None
+        self.reset()
+
+    def reset(self) -> None:
+        """Re-seed from standing and clear counters — call at the start
+        of each follow session, since the robot returns to stand between
+        them and stale state would misreport the first frame."""
+        self.current_joints = self._filter.settled_joint_values()
+        self.intervention_count = 0
+        self.failure_count = 0
+        self.last_margin = None
+
+    def filter_targets(self, targets: dict[str, float]) -> tuple[dict[str, float], bool]:
+        """Returns (targets_safe_to_dispatch, whether_anything_was_held_back)."""
+        if not targets:
+            return targets, False
+
+        try:
+            safe, fraction, margin = self._filter.check_trajectory(self.current_joints, targets)
+        except Exception as exc:
+            # Fail OPEN, deliberately. This gate is a new advisory layer
+            # added to a live demo path that worked without it; an
+            # unfiltered move is the pre-existing behavior, whereas
+            # letting this raise would kill the whole follow loop.
+            self.failure_count += 1
+            logger.warning("Safety gate failed, passing targets through unfiltered: %s", exc)
+            return targets, False
+
+        self.current_joints.update(safe)
+        self.last_margin = margin
+        intervened = fraction < 1.0
+        if intervened:
+            self.intervention_count += 1
+        return safe, intervened

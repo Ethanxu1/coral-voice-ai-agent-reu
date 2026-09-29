@@ -38,6 +38,17 @@ ENABLE_FALL_CHECK = os.getenv("ENABLE_FALL_CHECK", "true").lower() in (
     "1",
     "yes",
 )
+# CBF safety filter on the live-follow mimicry stream. Unlike discrete
+# /move calls, follow mode historically had no fall/stability check at
+# all; this applies one (docs/cbf-whole-body-progress.md). Set to
+# "false" to run follow mode unfiltered — needed to A/B the CBF layer
+# against the ankle/hip balance controller, which is separate and is
+# NOT affected by this flag either way.
+ENABLE_FOLLOW_SAFETY = os.getenv("CORAL_ENABLE_FOLLOW_SAFETY", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # ---------------------------------------------------------------------------
 # Langfuse tracing

@@ -19,6 +19,7 @@ from typing import Awaitable, Callable, Optional
 import httpx
 import websockets
 
+from app import config
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
 from app.vision.pose_to_robot import (
@@ -53,6 +54,30 @@ class FollowController:
         self._dispatch = dispatch_fn
         self._task: Optional[asyncio.Task] = None
         self._capture_task: Optional[asyncio.Task] = None
+        self._safety_gate = None
+
+    async def _ensure_safety_gate(self):
+        """Build the CBF safety gate once, off the event loop.
+
+        Constructing it loads its own MuJoCo model and runs a real
+        physics settle (~0.1s) — small, but it's blocking CPU work, so
+        it goes in a thread and is cached rather than rebuilt per
+        session. Returns None when the filter is disabled or fails to
+        build: follow mode must still run, just unfiltered, exactly as
+        it did before this layer existed.
+        """
+        if not config.ENABLE_FOLLOW_SAFETY:
+            return None
+        if self._safety_gate is None:
+            from app.balance.safety_filter import FollowSafetyGate
+
+            try:
+                self._safety_gate = await asyncio.to_thread(FollowSafetyGate)
+            except Exception as e:
+                logger.warning("Safety gate unavailable, follow will run unfiltered: %s", e)
+                return None
+        self._safety_gate.reset()
+        return self._safety_gate
 
     @property
     def is_following(self) -> bool:
@@ -119,6 +144,7 @@ class FollowController:
         smoother = JointAngleSmoother()
         latest: dict | None = None
         latest_event = asyncio.Event()
+        safety_gate = await self._ensure_safety_gate()
 
         try:
             await status_fn({"type": "follow_status", "active": True})
@@ -157,6 +183,7 @@ class FollowController:
                 dispatch_count = 0
                 skip_count = 0
                 empty_target_count = 0
+                safety_hold_count = 0
                 last_heartbeat = asyncio.get_event_loop().time()
                 tick = 1.0 / _FOLLOW_DISPATCH_HZ
                 try:
@@ -175,6 +202,16 @@ class FollowController:
                             latest_event.clear()
                             continue
                         targets = smoother.smooth(targets)
+                        # The seed is the single largest move of a follow
+                        # session (STAND straight to the human's first pose),
+                        # so it gets filtered like any other frame.
+                        if safety_gate is not None:
+                            targets, seed_held = safety_gate.filter_targets(targets)
+                            if seed_held:
+                                logger.info(
+                                    "Follow: safety filter scaled back the seed pose "
+                                    "(margin %.4f)", safety_gate.last_margin or 0.0,
+                                )
                         seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
                         logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
                         if clean_logger is not None:
@@ -202,6 +239,15 @@ class FollowController:
                             if in_flight is not None and not in_flight.done():
                                 skip_count += 1
                             else:
+                                # Filter inside the dispatch branch, not before
+                                # it: the gate tracks the pose the robot was
+                                # actually COMMANDED, so letting a skipped tick
+                                # advance it would leave the gate measuring the
+                                # next frame from a pose that was never sent.
+                                if safety_gate is not None:
+                                    targets, held_back = safety_gate.filter_targets(targets)
+                                    if held_back:
+                                        safety_hold_count += 1
                                 commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
                                 in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
                                 in_flight.add_done_callback(_log_dispatch_error)
@@ -210,13 +256,18 @@ class FollowController:
                         # 2-second heartbeat: shows whether we're flowing.
                         now = asyncio.get_event_loop().time()
                         if now - last_heartbeat >= 2.0:
+                            margin = None if safety_gate is None else safety_gate.last_margin
+                            margin_str = "n/a" if margin is None else f"{margin:.4f}"
                             logger.info(
-                                "Follow: %d dispatches, %d skips, %d empty-targets in last 2s",
+                                "Follow: %d dispatches, %d skips, %d empty-targets, "
+                                "%d safety-holds in last 2s (stability margin %s)",
                                 dispatch_count, skip_count, empty_target_count,
+                                safety_hold_count, margin_str,
                             )
                             if clean_logger is not None:
                                 clean_logger.follow_tick(dispatch_count, skip_count, empty_target_count)
                             dispatch_count = skip_count = empty_target_count = 0
+                            safety_hold_count = 0
                             last_heartbeat = now
                 finally:
                     reader_task.cancel()
