@@ -38,13 +38,23 @@ ENABLE_FALL_CHECK = os.getenv("ENABLE_FALL_CHECK", "true").lower() in (
     "1",
     "yes",
 )
-# CBF safety filter on the live-follow mimicry stream. Unlike discrete
-# /move calls, follow mode historically had no fall/stability check at
-# all; this applies one (docs/cbf-whole-body-progress.md). Set to
-# "false" to run follow mode unfiltered — needed to A/B the CBF layer
-# against the ankle/hip balance controller, which is separate and is
-# NOT affected by this flag either way.
-ENABLE_FOLLOW_SAFETY = os.getenv("CORAL_ENABLE_FOLLOW_SAFETY", "true").lower() in (
+# CBF safety filter on the live-follow mimicry stream
+# (docs/cbf-whole-body-progress.md).
+#
+# DEFAULT OFF as of 2026-09-29. It is not fit to run yet: verified
+# against real physics, it false-positives on ASYMMETRIC single-joint
+# poses — which is exactly what live mimicry produces. Measured
+# r_hip_roll verdicts went unsafe / unsafe / SAFE / unsafe across
+# 0.0625 / 0.125 / 0.25 / 0.5 rad while the robot stayed up in all
+# four. That is noise, not a threshold. In a live session it held back
+# 100% of frames and toppled the robot.
+#
+# Earlier validation (Phase 2.5, 12/12 against dynamics) only covered
+# SYMMETRIC leg poses, which behave; that is why this got through.
+#
+# Set to "true" to re-enable for development. The ankle/hip balance
+# controller is separate and unaffected by this flag either way.
+ENABLE_FOLLOW_SAFETY = os.getenv("CORAL_ENABLE_FOLLOW_SAFETY", "false").lower() in (
     "true",
     "1",
     "yes",

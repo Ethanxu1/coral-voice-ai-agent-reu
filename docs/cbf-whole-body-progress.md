@@ -313,6 +313,79 @@ configuration does not generate.
 
 </details>
 
+## Phase 2.6 — ⛔ NOT FIT TO RUN: asymmetric false positives (open, blocks everything)
+
+**`ENABLE_FOLLOW_SAFETY` is DEFAULT OFF as of 2026-09-29.** Two bugs
+found in one live session, the second of which invalidates Phase 2.5's
+acceptance result.
+
+### Bug 1 — the baseline was not standing (fixed)
+
+`SafetyFilter._apply_stand_keyframe()` reset qpos to the stand keyframe
+but **never synced `ctrl`**. `AiNexSimulator._apply_stand_keyframe` does
+exactly that, with the comment *"so PD controllers hold the pose rather
+than pulling toward zero"* — it wasn't copied. So across the 750-step
+settle the position actuators dragged every joint toward **zero**, and
+that pose became the filter's reference for "standing": straight knees,
+arms at zero, **up to 1.56 rad (89°) from real stand**.
+
+Consequences, all observed live: the gate seeded `current_joints` from
+that wrong pose, so every incoming target looked like an enormous move
+and was refused (**100% hold rate in the logs** —
+`dispatches:12, safety_holds:12`), and at `safe_fraction=0` it commanded
+the robot *to* that pose — straightening the knees — toppling it
+forward instantly.
+
+Fixed, and guarded by `TestBaselineIsActuallyStanding`. **No test caught
+this for two phases** because every other test compared the filter
+against its own baseline, so a wrong baseline still looked
+self-consistent.
+
+### Bug 2 — the margin is noise for asymmetric poses (OPEN)
+
+With the baseline corrected, checked against real dynamics:
+
+| Pose | Filter | Physics |
+|---|---|---|
+| `l_ank_roll` 0.05 (2.9°) | −0.0107 UNSAFE | stays up ❌ |
+| `r_hip_roll` 0.0625 | −0.0104 UNSAFE | stays up ❌ |
+| `r_hip_roll` 0.125 | −0.0214 UNSAFE | stays up ❌ |
+| `r_hip_roll` 0.25 | **+0.0378 safe** | stays up ✅ |
+| `r_hip_roll` 0.5 | −0.0177 UNSAFE | stays up ❌ |
+
+Unsafe → unsafe → **safe** → unsafe as the angle increases
+monotonically. That is not a threshold, it is noise. Along a single
+interpolated path the margin reads −0.032 then **+0.038** then −0.015.
+
+**Why Phase 2.5's 12/12 missed it:** every case there was a *symmetric*
+leg pose. Those genuinely behave — symmetric hips 0 → −0.35 falls
+monotonically 0.0381 → 0.0084 → −1.0 and scales back cleanly to
+fraction 0.5. Live mimicry produces *asymmetric* poses almost
+exclusively, so the validation set was unrepresentative of the actual
+workload.
+
+**Suspected cause** (not yet confirmed): contact-sensor flicker. Real
+stand rests on 3 pads (Phase 0). A small asymmetric tilt drops one, so
+the support polygon collapses discontinuously — sometimes to under 3
+points, returning the −1.0 sentinel. The damped settle fixed ringing
+for symmetric poses but not this.
+
+| | Next steps |
+|---|---|
+| ⬜ | Confirm the flicker hypothesis: log pad-contact counts along an asymmetric sweep and see whether margin jumps coincide with polygon point-count changes. |
+| ⬜ | Likely fix: replace binary contact sensors in `get_support_polygon` with a continuous floor-proximity measure. Note the earlier geometric prototype did this and was tolerance-sensitive (worked only 4–8mm), so it needs a principled tolerance — probably derived from contact-force magnitude rather than a distance guess. |
+| ⬜ | **Re-validate on an ASYMMETRIC case set.** The symmetric-only set is what let this through. |
+| ⬜ | Only then consider re-enabling the default. |
+
+### Lesson worth keeping
+
+Both bugs shared a root: **validating the filter against itself rather
+than against ground truth.** The baseline bug survived because tests
+were self-consistent; the noise bug survived because the ground-truth
+set didn't resemble the real workload. Any future change here should be
+checked against stepped dynamics on poses that look like what mimicry
+actually generates.
+
 ## Phase 3 — Real full CBF-QP (if Phase 1's simpler filter isn't sufficient)
 
 | | Item |

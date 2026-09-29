@@ -50,6 +50,21 @@ class TestCheckPose:
     def test_large_hip_roll_splay_is_unsafe(self, safety_filter):
         assert safety_filter.check_pose({"r_hip_roll": _UNSAFE_HIP_ROLL}) < 0
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "KNOWN FALSE POSITIVE, verified against real dynamics 2026-09-29. "
+            "A 0.05 rad (2.9 deg) ankle tilt measures -0.0107 (unsafe) while "
+            "the robot comfortably stays up. Part of a broader defect: the "
+            "margin is unreliable for ASYMMETRIC single-joint poses, going "
+            "unsafe/unsafe/SAFE/unsafe across r_hip_roll 0.0625/0.125/0.25/0.5 "
+            "with the robot standing throughout. Suspected cause is "
+            "contact-sensor flicker -- the real stand pose rests on 3 pads, and "
+            "a small asymmetric tilt drops one, collapsing the support polygon "
+            "discontinuously. ENABLE_FOLLOW_SAFETY is default-off until fixed; "
+            "see docs/cbf-whole-body-progress.md Phase 2.6."
+        ),
+    )
     def test_small_ankle_roll_change_stays_safe(self, safety_filter):
         assert safety_filter.check_pose({"l_ank_roll": _SAFE_ANKLE_ROLL}) > 0
 
@@ -70,6 +85,15 @@ class TestCheckTrajectory:
         assert safe_fraction == 1.0
         assert margin > 0
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Same asymmetric-pose false positive as "
+            "test_small_ankle_roll_change_stays_safe -- the endpoint itself "
+            "measures unsafe, so the trajectory is scaled back. Fixing that "
+            "fixes this. See docs/cbf-whole-body-progress.md Phase 2.6."
+        ),
+    )
     def test_small_ankle_motion_is_safe_throughout(self, safety_filter):
         """Phase 1 recorded a "genuine mid-motion dip" here. It was not
         genuine.
@@ -92,20 +116,24 @@ class TestCheckTrajectory:
         assert margin > 0.03
 
     def test_unsafe_target_gets_scaled_back(self, safety_filter):
-        current = {"r_hip_roll": 0.0}
-        target = {"r_hip_roll": _UNSAFE_HIP_ROLL}
+        """Uses a SYMMETRIC lean, which real dynamics confirms topples the
+        robot and which the filter handles well (margin falls monotonically
+        0.0381 -> 0.0084 -> -1.0 along the path).
+
+        Deliberately not the single-joint r_hip_roll this used to use:
+        physics says that one stays UP, so it was never a valid "unsafe
+        target", and the filter's verdict on it is noise anyway (see the
+        xfail reasons above)."""
+        current = {"l_hip_roll": 0.0, "r_hip_roll": 0.0}
+        target = {"l_hip_roll": -0.35, "r_hip_roll": -0.35}
         safe_joints, safe_fraction, margin = safety_filter.check_trajectory(current, target)
         # Didn't reach the unsafe target as requested...
         assert safe_fraction < 1.0
-        assert safe_joints["r_hip_roll"] < _UNSAFE_HIP_ROLL
-        # ...but did move meaningfully toward it, not refuse the whole
-        # thing. This is what buffer_steps=1 buys: the margin on this
-        # path goes negative between fraction 0.25 and 0.375, and a
-        # 2-step buffer at 8 steps would back off 25% and collapse the
-        # whole move to zero.
-        assert safe_joints["r_hip_roll"] > 0.0
+        assert safe_joints["l_hip_roll"] > -0.35
+        # ...but did move meaningfully toward it, not refuse the whole thing.
+        assert safe_joints["l_hip_roll"] < 0.0
         # And the pose it settled on is actually safe, not just "less unsafe".
-        assert margin >= 0
+        assert margin > 0
 
     def test_scaled_back_result_is_consistent_with_check_pose(self, safety_filter):
         """The margin check_trajectory reports for its own scaled-back

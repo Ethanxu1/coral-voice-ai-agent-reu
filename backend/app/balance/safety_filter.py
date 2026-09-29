@@ -112,6 +112,18 @@ class SafetyFilter:
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         if key_id >= 0:
             mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
+            # Sync ctrl to the keyframe's joint positions, exactly as
+            # AiNexSimulator._apply_stand_keyframe does, so the position
+            # actuators HOLD the stand pose during the settle below
+            # instead of dragging every joint toward zero.
+            #
+            # Omitting this is what made the settled baseline a pose
+            # with straight knees and arms at zero -- up to 1.56 rad
+            # from real stand -- which the gate then reported as "where
+            # the robot is" and commanded the robot back to.
+            for i in range(self.model.nu):
+                joint_id = int(self.model.actuator_trnid[i, 0])
+                self.data.ctrl[i] = self.data.qpos[int(self.model.jnt_qposadr[joint_id])]
 
     def _reset_to_settled_baseline(self) -> None:
         """Restore the one-time settled reference qpos (base position AND

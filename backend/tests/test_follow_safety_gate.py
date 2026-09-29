@@ -114,6 +114,48 @@ class TestStatefulness:
         assert gate.current_joints == shared_filter.settled_joint_values()
 
 
+class TestBaselineIsActuallyStanding:
+    """The baseline must be the real stand pose, not merely self-consistent.
+
+    This caught nothing for two phases because every other test compared
+    the filter against its own baseline, so a wrong baseline still looked
+    correct. In a live session it broke the robot: `_apply_stand_keyframe`
+    reset qpos but never synced `ctrl`, so the position actuators dragged
+    every joint toward ZERO during the settle. The baseline became a pose
+    with straight knees and arms at zero -- up to 1.56 rad from stand --
+    which the gate reported as "where the robot is" and then commanded the
+    robot back to, toppling it forward instantly.
+    """
+
+    def test_settled_baseline_matches_the_stand_keyframe(self, shared_filter):
+        from app.robot.hardware_angle_utils import HW_STAND_RAD
+
+        settled = shared_filter.settled_joint_values()
+        for joint, stand_rad in HW_STAND_RAD.items():
+            if joint not in settled:
+                continue
+            # 0.1 rad absorbs genuine settling under gravity and the known
+            # r_ank_roll sim/hardware discrepancy; the bug above was 15x this.
+            assert abs(settled[joint] - stand_rad) < 0.1, (
+                f"{joint} baseline {settled[joint]:.4f} is not standing "
+                f"(expected ~{stand_rad:.4f}) -- actuators are not holding "
+                f"the stand pose during the settle"
+            )
+
+    def test_an_ordinary_arms_up_pose_is_not_held_back(self, gate):
+        """A plain arms-raised mimicry target must dispatch unchanged.
+
+        Direct guard for the live symptom: with the broken baseline this
+        was refused, and every frame came back as an intervention."""
+        target = {
+            "l_sho_pitch": -1.0, "r_sho_pitch": 1.0,
+            "l_sho_roll": -0.5, "r_sho_roll": 0.5,
+        }
+        safe, intervened = gate.filter_targets(target)
+        assert intervened is False
+        assert safe == target
+
+
 class TestAsymmetricLegPoses:
     def test_asymmetric_knee_bend_is_flagged_unsafe(self, gate):
         """Regression guard for the Phase 2.5 fix.
