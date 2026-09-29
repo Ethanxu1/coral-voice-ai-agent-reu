@@ -70,20 +70,26 @@ class TestCheckTrajectory:
         assert safe_fraction == 1.0
         assert margin > 0
 
-    def test_small_ankle_motion_can_have_a_genuine_mid_motion_dip(self, safety_filter):
-        """NOT a bug: checked the actual per-step margin trace directly
-        (not guessed) and found part of the foot genuinely, briefly
-        lifts partway through this small ankle-roll motion even though
-        both the start and end poses are safe on their own -- exactly
-        the kind of thing a trajectory-level (not just endpoint) check
-        is supposed to catch. Asserts the filter catches it, not that
-        the specific fraction is some exact value."""
+    def test_small_ankle_motion_is_safe_throughout(self, safety_filter):
+        """Phase 1 recorded a "genuine mid-motion dip" here. It was not
+        genuine.
+
+        That dip was an artifact of pinning the free-floating base: with
+        the body held fixed, rotating the ankle lifted part of the foot
+        and shrank the support polygon, producing a spurious negative
+        margin. Phase 2.5 lets the base settle against each candidate
+        pose, and the margin now stays between +0.034 and +0.038 at
+        every point along this path -- nowhere near the threshold.
+
+        Same root cause as the knee false negative Phase 2.5 was built
+        to fix, just in the false-POSITIVE direction: pinning the base
+        made the filter wrong in both directions, not just one."""
         current = {"l_ank_roll": 0.0}
         target = {"l_ank_roll": _SAFE_ANKLE_ROLL}
         safe_joints, safe_fraction, margin = safety_filter.check_trajectory(current, target)
-        assert safe_fraction < 1.0
-        assert margin >= 0
-        assert safe_joints["l_ank_roll"] < _SAFE_ANKLE_ROLL
+        assert safe_fraction == 1.0
+        assert safe_joints == target
+        assert margin > 0.03
 
     def test_unsafe_target_gets_scaled_back(self, safety_filter):
         current = {"r_hip_roll": 0.0}
@@ -92,7 +98,11 @@ class TestCheckTrajectory:
         # Didn't reach the unsafe target as requested...
         assert safe_fraction < 1.0
         assert safe_joints["r_hip_roll"] < _UNSAFE_HIP_ROLL
-        # ...but did move meaningfully toward it, not refuse the whole thing.
+        # ...but did move meaningfully toward it, not refuse the whole
+        # thing. This is what buffer_steps=1 buys: the margin on this
+        # path goes negative between fraction 0.25 and 0.375, and a
+        # 2-step buffer at 8 steps would back off 25% and collapse the
+        # whole move to zero.
         assert safe_joints["r_hip_roll"] > 0.0
         # And the pose it settled on is actually safe, not just "less unsafe".
         assert margin >= 0

@@ -116,16 +116,176 @@ about:
 1. **Turning this on does not change the default demo's behavior.** It
    is effectively inert there, which is why defaulting it to `true` is
    low-risk rather than a gamble on new code.
-2. **Its actual value is that it makes leg tracking safe enough to
-   enable.** `config.py` currently calls leg tracking "experimental and
-   can be unstable in live demos" — instability during big leg motions
-   is precisely the failure this filter catches. That makes re-enabling
-   leg tracking the natural next experiment, not an unrelated feature.
+2. ~~**Its actual value is that it makes leg tracking safe enough to
+   enable.**~~ **⚠ RETRACTED 2026-09-29 — see Phase 2.5 below.** Tested
+   against real dynamics the same day and this does **not** hold: the
+   filter produced false negatives on exactly the asymmetric leg poses
+   leg tracking would generate. **Fixed in Phase 2.5 the same day** —
+   the filter now agrees with real dynamics 12/12, so this is no longer
+   a blocker, but enabling leg tracking is still a live-demo behaviour
+   change that hasn't been watched in the viewer.
 
 Do not read the arms-only row as "the filter doesn't work" — it means
 arm mass barely shifts this robot's center of mass, which is the
 physically correct answer and matches Phase 0's finding that the
 standing margin is dominated by foot contact and torso/leg geometry.
+
+## Phase 2.5 — Base re-seating ✅ DONE (2026-09-29)
+
+**Resolved. The filter now agrees with real dynamics on 12/12 test
+poses, including every case it previously got wrong.**
+
+### The fix
+
+`SafetyFilter._settle_base()`: after applying a candidate pose, hold
+every joint at its commanded value with the actuators and step physics
+briefly, so what moves is the **base** — the body finds where it would
+actually rest — rather than staying pinned at the standing reference.
+
+Two parameters, both chosen from measurement rather than taste:
+
+- `settle_damping=50.0`, applied to the shadow model *after* the
+  reference stand is established (that has to happen under the model's
+  real dynamics). This is principled, not a fudge: damping changes how
+  fast equilibrium is reached, not where it is. Without it the settle
+  **rings** — a first attempt measured the margin going negative at 25
+  steps, positive again at 50 and 100, with plain standing reading
+  unsafe at 400. Verdicts are now stable across 25/50/100/200 steps,
+  which is the evidence it has actually converged.
+- `settle_steps=25`. 10 was not enough (the knee case still read safe);
+  25 onward is stable.
+
+`num_steps` dropped 20 → 8 and `buffer_steps` 2 → 1. Each interpolation
+step now costs a physics settle instead of one `mj_forward`, so 20
+steps would be ~47ms against a 50ms tick. The buffer change keeps the
+back-off at roughly the same *fraction* of the motion (12.5% at 8
+steps vs. 10% at 20); left at 2 it was 25%, enough to collapse a
+partially-safe move to "refuse everything".
+
+### Result, production filter vs. real dynamics
+
+Control first (robot commanded nothing → held stand). Then 12 poses,
+filter verdict vs. what physics actually did:
+
+| | |
+|---|---|
+| stand, arms wide, arms overhead | stays up → safe ✅ |
+| hips −0.10 / −0.20 / −0.25 / −0.229·−0.225 | stays up → safe ✅ |
+| **hips −0.229/−0.225 + l_knee 0.147** | **falls → UNSAFE ✅** (was +0.0199 "safe" — the false negative) |
+| hips −0.35, hips −0.45 + knee 0.3 | falls → UNSAFE ✅ |
+| **l_knee 0.3 alone, r_knee −0.3 alone** | **falls → UNSAFE ✅** (new cases, not previously tested) |
+
+**12/12.** No false positives on arm/head poses — it did not simply
+become over-restrictive.
+
+### A Phase 1 conclusion this retracts
+
+Phase 1 recorded a "genuine mid-motion dip" on a small ankle-roll
+motion and asserted it in a test as real behaviour. **It was not
+real.** With the base re-seated the margin along that whole path stays
+between +0.034 and +0.038, nowhere near the threshold. It was the same
+base-pinning artifact, in the false-*positive* direction — so pinning
+was making the filter wrong in both directions, not just one. The test
+now asserts the corrected behaviour
+(`test_small_ankle_motion_is_safe_throughout`).
+
+### Cost — the real tradeoff
+
+| | Phase 2 (pinned) | Phase 2.5 (re-seated) |
+|---|---|---|
+| per `filter_targets` call, worst case | 1.9 ms | **14.8 ms** |
+| share of the 50 ms tick | ~4% | **~30%** |
+
+Within budget, but no longer negligible: this is blocking CPU work in
+the event loop, ~200 `mj_step` calls per check. Accepted deliberately —
+correctness of a safety filter beats its cost, and the follow loop
+already tolerates dropped frames by design (it keeps only the freshest
+pose). If it ever needs reclaiming, the obvious lever is warm-starting
+the base across interpolation steps instead of resetting to the
+baseline each time; not done, because it trades a correctness-relevant
+invariant (no drift accumulation) for speed that isn't needed yet.
+
+### Still open
+
+`ENABLE_LEG_TRACKING` remains off. The filter now handles leg poses
+correctly in sim, which removes the blocker, but turning it on is a
+live-demo behaviour change and has not been watched in the browser
+viewer with a person in frame.
+
+<details>
+<summary>Original problem statement (kept for the record)</summary>
+
+**Status when opened: the filter was not trustworthy for leg motion.**
+
+The first real-dynamics test of the filter (2026-09-29) — everything
+before this was `mj_forward`, i.e. kinematics with no gravity
+integration or momentum — found a **false negative**, the dangerous
+direction.
+
+### What the dynamics test showed
+
+Control first (this project has been burned by harness bugs before):
+commanded nothing, robot held stand, roll +0.53° → +0.59°, CoM height
+unchanged. Harness sound.
+
+Sweep of a symmetric sideways lean, filter verdict vs. what physics
+actually did:
+
+| Lean (hip roll) | Filter says | Real physics | Correct? |
+|---|---|---|---|
+| 0.10 / 0.20 / 0.25 | allowed | stayed up | ✅ |
+| 0.30 | held back | stayed up | ✅ conservative (safe direction) |
+| 0.35 / 0.45 | held back | **fell** | ✅ |
+
+That part is a genuinely good result — the filter's boundary sits just
+inside the real one, erring safe. **But** the pose it *substituted* for
+a rejected request fell too:
+
+| Pose | Filter margin | Real physics |
+|---|---|---|
+| `l_hip_roll -0.229, r_hip_roll -0.225, l_knee 0.147` (the filter's own "safe" substitute) | **+0.0199 (safe)** | **fell, at every ramp rate** |
+| identical, minus the knee | +0.0199 | stayed up |
+
+Ruled out momentum as the cause: it falls when stepped instantly and
+when ramped over 0.2s, 1.0s and 2.0s alike. It is the pose itself, not
+how fast it's reached.
+
+### Root cause
+
+`SafetyFilter` pins the **free-floating base** to the settled-standing
+reference and only varies joint angles. Probing the knee pose directly:
+`l_foot2` rises from z=0.0053 to 0.0103 (a pad silently leaves the
+ground) while the CoM moves all of 0.0001m — so the margin stays
+comfortably positive.
+
+In reality a bent knee shortens that leg, the pelvis drops and tilts on
+that side, and the CoM swings out. Pinning the base makes the check
+blind to the dominant effect. For arm motions and *symmetric* hip rolls
+the base genuinely barely moves, which is why those predicted correctly
+— the approximation only breaks where the pose's whole purpose is to
+move the base.
+
+This is the limitation already documented in Phase 1/2 as theoretical
+("fine while the robot mimics from a standing position"). It is not
+theoretical.
+
+### What has to change
+
+| | Item |
+|---|---|
+| ✅ | Re-seat the base against each candidate pose instead of pinning it. |
+| ✅ | Re-run the dynamics sweep; the knee case flipped to "held back". |
+| ⬜ | Only then revisit `ENABLE_LEG_TRACKING`. |
+
+### What was still safe to use meanwhile
+
+The filter stayed enabled by default throughout: strictly better than
+the nothing-at-all that preceded it, provably inert on the arms-only
+default path, and conservative where it did fire on symmetric leans.
+The defect was confined to asymmetric leg poses, which the default
+configuration does not generate.
+
+</details>
 
 ## Phase 3 — Real full CBF-QP (if Phase 1's simpler filter isn't sufficient)
 
@@ -135,5 +295,7 @@ standing margin is dominated by foot contact and torso/leg geometry.
 
 ## Log
 
+- **2026-09-29 (Phase 2.5)** — **Fixed the false negative: the base is now re-seated against each candidate pose instead of pinned.** Production filter agrees with real dynamics 12/12, including two knee-only cases not previously tested, with no false positives on arm/head poses. Two failed approaches on the way, both worth not repeating: a naive physics settle *rings* (margin non-monotonic; plain standing reads unsafe at 400 steps) — fixed by heavy damping on the shadow model, which is principled since damping changes how fast equilibrium is reached, not where it is; and a hand-rolled geometric re-seat passed all six cases but only inside a 4–8mm floor tolerance window, i.e. a constant tuned to the tests, so it was discarded rather than shipped. **Retracts a Phase 1 conclusion too:** the "genuine mid-motion dip" on ankle roll was not genuine, it was the same pinning artifact in the false-positive direction. Cost rose 1.9ms → 14.8ms per call (4% → 30% of the tick), accepted deliberately.
+- **2026-09-29 (later)** — **First real-dynamics test of the filter, and it found a false negative.** Everything through Phase 2 validated with `mj_forward` (kinematics only); this ran actual physics. Good news: the filter's boundary on symmetric leans sits just inside the real one (holds back at 0.30 where physics still copes, catches 0.35/0.45 which genuinely fall) — erring safe. Bad news: the pose it *substitutes* for a rejected leg request falls too, at every ramp rate, because `SafetyFilter` pins the free-floating base — so a bent knee reads as "foot swings up, CoM unchanged, margin fine" when really the pelvis drops and the robot tips. **Retracted the Phase 2 claim that this makes leg tracking safe to enable; it does not.** New Phase 2.5 (base re-seating) now blocks that. Captured as `xfail(strict=True)` so a future fix trips it. Filter stays on by default — still strictly better than the nothing that preceded it, and inert on the arms-only default path.
 - **2026-09-29** — Phase 2 done (bar the live visual run): `FollowSafetyGate` wires the Phase 1 filter into the live-follow stream, closing the gap this whole effort was started for — that path previously had no fall/stability check at all. Measured the per-check cost (~1.9 ms vs. a 50 ms tick) before wiring rather than after. Caught a real ordering bug in the wiring during self-review: the gate was being consulted *before* the loop's existing "skip this tick if the previous dispatch is still in flight" check, so a skipped tick would advance the gate's tracked pose to something that was never actually dispatched, leaving it measuring the next frame from a phantom position — moved the filter inside the dispatch branch. Also found the filter never fires on arms-only mimicry (today's default) but does fire on leg motion; see the table above. 16 new tests, 309 passing overall.
 - **2026-09-22** — Phase 0 done: `backend/app/balance/cbf.py` (center of mass, support polygon from real contact sensors, signed-distance safety function), 14 tests. Found a real settling-dynamics surprise while writing the tests — true steady-state standing contact is 3 pads, not 4 (`r_foot1` never regains contact, a consequence of the robot's known mass asymmetry) — asserted the real pattern, not an idealized one. Explicit scope: separate from, doesn't touch, the existing ankle/hip controller. Next: Phase 1, the shadow-check safety filter that actually modifies an unsafe target pose.

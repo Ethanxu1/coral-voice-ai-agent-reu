@@ -114,6 +114,27 @@ class TestStatefulness:
         assert gate.current_joints == shared_filter.settled_joint_values()
 
 
+class TestAsymmetricLegPoses:
+    def test_asymmetric_knee_bend_is_flagged_unsafe(self, gate):
+        """Regression guard for the Phase 2.5 fix.
+
+        This exact pose was a verified FALSE NEGATIVE before base
+        re-seating landed: measured +0.0199 ("safe") while toppling the
+        robot under real physics at every ramp rate tested (instant,
+        0.2s, 1.0s, 2.0s). The identical pose minus the knee stays up,
+        so it is the pose, not momentum.
+
+        The cause was pinning the free-floating base: a bent knee read
+        as "the foot swings up, the CoM barely moves", when really the
+        leg shortens, the pelvis drops and tilts, and the CoM swings
+        out. If this ever passes through unfiltered again, base
+        re-seating has regressed."""
+        _safe, intervened = gate.filter_targets(
+            {"l_hip_roll": -0.229, "r_hip_roll": -0.225, "l_knee": 0.147}
+        )
+        assert intervened is True
+
+
 class TestFailOpen:
     def test_a_filter_failure_passes_targets_through_rather_than_blocking(self, gate):
         """This gate is a new advisory layer bolted onto a working demo

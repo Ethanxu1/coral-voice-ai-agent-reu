@@ -47,19 +47,29 @@ class SafetyFilter:
     def __init__(
         self,
         model_path: str | None = None,
-        num_steps: int = 20,
-        buffer_steps: int = 2,
+        num_steps: int = 8,
+        buffer_steps: int = 1,
         margin_threshold: float = 0.01,
+        settle_steps: int = 25,
+        settle_damping: float = 50.0,
     ):
         if model_path is None:
             model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
+        # 8, not 20: each step now costs a ~25-step physics settle
+        # (~2.3ms) rather than a single mj_forward (~0.1ms). 20 steps
+        # would be ~47ms against the follow loop's 50ms tick -- fits on
+        # paper, no headroom in practice. 8 costs ~19ms.
         self.num_steps = num_steps
         # Same "extra back-off after the first unsafe step" idea as
         # CollisionChecker's buffer_steps -- stop a little before the
-        # exact margin=0 knife-edge, not right at it.
+        # exact margin=0 knife-edge, not right at it. 1, not 2, because
+        # what matters is the back-off as a FRACTION of the motion: at
+        # 8 steps that is 12.5%, close to the 10% that 2-of-20 gave
+        # before num_steps dropped. Left at 2 it was 25%, enough to
+        # collapse a partially-safe move to "refuse everything".
         self.buffer_steps = buffer_steps
         # Required stability margin (meters) to count as "safe" -- not
         # 0.0. This robot's own foot pads are only a few cm across (see
@@ -90,6 +100,16 @@ class SafetyFilter:
         for _ in range(750):  # ~1.5s -- see cbf.py's own settle-time finding
             mujoco.mj_step(self.model, self.data)
         self._settled_qpos = self.data.qpos.copy()
+
+        # Only NOW crank damping -- the reference stand above must be
+        # established under the model's real dynamics. From here on this
+        # shadow model is only ever asked static questions, so heavy
+        # damping is free: it changes how fast equilibrium is reached,
+        # not where it is. Without it the settle RINGS, and the margin
+        # is read off a bouncing robot -- measured non-monotonic, with
+        # plain standing reading unsafe at 400 steps.
+        self.settle_steps = settle_steps
+        self.model.dof_damping[:] = self.model.dof_damping * settle_damping + settle_damping
 
     def _apply_stand_keyframe(self) -> None:
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
@@ -122,6 +142,43 @@ class SafetyFilter:
             if addr is not None:
                 self.data.qpos[addr] = val
 
+    def _settle_base(self) -> None:
+        """Let the body find where it would actually rest for the pose
+        currently in qpos, instead of leaving it pinned at the standing
+        reference.
+
+        This is the Phase 2.5 fix. Pinning the free-floating base made
+        the filter blind to any pose whose whole point is to move it: a
+        bent knee read as "the foot swings up, the CoM barely moves,
+        margin fine" when in reality the leg shortens, the pelvis drops
+        and tilts, and the robot goes over. That produced a verified
+        false negative -- a pose measured at +0.0199 ("safe") that
+        topples at every ramp rate tested.
+
+        The joints are held at their commanded values by the actuators,
+        so what settles is the BASE, not the pose being evaluated.
+        """
+        for i in range(self.model.nu):
+            joint_id = int(self.model.actuator_trnid[i, 0])
+            self.data.ctrl[i] = self.data.qpos[int(self.model.jnt_qposadr[joint_id])]
+        self.data.qvel[:] = 0.0
+        for _ in range(self.settle_steps):
+            mujoco.mj_step(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)
+
+    def _margin_for(self, joints: dict[str, float]) -> float:
+        """Margin for a full joint configuration, from a clean baseline.
+
+        Always re-seats from `_settled_qpos` rather than continuing from
+        whatever the last call left behind -- `_settle_base` integrates
+        real physics, so accumulating across calls would drift.
+        """
+        self._reset_to_settled_baseline()
+        self._apply_joints(joints)
+        mujoco.mj_forward(self.model, self.data)
+        self._settle_base()
+        return self._margin_now()
+
     def _margin_now(self) -> float:
         """Stability margin for whatever qpos self.data currently holds.
         Caller must have already called mj_forward this tick."""
@@ -136,10 +193,7 @@ class SafetyFilter:
         CollisionChecker.render_pose's convention (stand as the default
         for anything unspecified), for the same reason: a caller
         checking one candidate pose in isolation, not a trajectory."""
-        self._reset_to_settled_baseline()
-        self._apply_joints(joints)
-        mujoco.mj_forward(self.model, self.data)
-        return self._margin_now()
+        return self._margin_for(joints)
 
     def check_trajectory(
         self,
@@ -163,10 +217,6 @@ class SafetyFilter:
         known, documented limitation of this first version, not an
         oversight.
         """
-        self._reset_to_settled_baseline()
-        self._apply_joints(current_joints)
-        mujoco.mj_forward(self.model, self.data)
-
         moving: dict[str, tuple[float, float]] = {}
         for j, target in target_joints.items():
             if j not in self._qpos_addr:
@@ -176,15 +226,17 @@ class SafetyFilter:
                 moving[j] = (start, target)
 
         if not moving:
-            return dict(target_joints), 1.0, self._margin_now()
+            return dict(target_joints), 1.0, self._margin_for(current_joints)
 
-        last_safe_margin = self._margin_now()
-        for step in range(1, self.num_steps + 1):
-            t = step / self.num_steps
+        def pose_at(fraction: float) -> dict[str, float]:
+            pose = dict(current_joints)
             for j, (start, end) in moving.items():
-                self.data.qpos[self._qpos_addr[j]] = start + t * (end - start)
-            mujoco.mj_forward(self.model, self.data)
-            margin = self._margin_now()
+                pose[j] = start + fraction * (end - start)
+            return pose
+
+        last_safe_margin = self._margin_for(current_joints)
+        for step in range(1, self.num_steps + 1):
+            margin = self._margin_for(pose_at(step / self.num_steps))
 
             if margin < self.margin_threshold:
                 safe_step = max(0, step - 1 - self.buffer_steps)
@@ -196,12 +248,7 @@ class SafetyFilter:
                 # last-sampled step's margin -- buffer_steps means these
                 # can differ, and a caller relying on this number should
                 # see what the returned pose really measures.
-                for name, val in safe_joints.items():
-                    addr = self._qpos_addr.get(name)
-                    if addr is not None:
-                        self.data.qpos[addr] = val
-                mujoco.mj_forward(self.model, self.data)
-                return safe_joints, safe_fraction, self._margin_now()
+                return safe_joints, safe_fraction, self._margin_for(pose_at(safe_fraction))
 
             last_safe_margin = margin
 
