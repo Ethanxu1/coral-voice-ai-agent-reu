@@ -205,6 +205,32 @@ the base across interpolation steps instead of resetting to the
 baseline each time; not done, because it trades a correctness-relevant
 invariant (no drift accumulation) for speed that isn't needed yet.
 
+### ⚠ The Phase 2 heartbeat never worked (found 2026-09-29, fixed)
+
+The first live session watching for `safety-holds` found **nothing in
+`logs/server.log`** — not the heartbeat, not even "seeding initial
+pose", despite five `follow_start` intents firing.
+
+Cause: `follow_controller.py` logged through stdlib `logging` while
+this app logs through **loguru**, and there is no `InterceptHandler`
+bridging them anywhere in the backend. With no handler configured,
+stdlib falls back to `logging.lastResort`, which only emits **WARNING
+and above** — so every `logger.info` in that module was silently
+dropped. Pre-existing for the module, but Phase 2's entire
+observability story rested on it, so it shipped as a false claim.
+
+Fixed: `follow_controller.py` and `safety_filter.py` now use loguru
+(with `%`-style format strings converted to `{}`, which loguru
+requires — left as `%s` they would have printed literally). The safety
+numbers were also added to `CleanLogger.follow_tick`, since
+`logs/clean_logs/` was the channel that *did* work throughout.
+
+Guarded by `TestObservability` in
+`backend/tests/test_follow_safety_wiring.py`.
+
+**Any module added to the main server process should use loguru**,
+not stdlib logging. The failure is completely silent.
+
 ### Still open
 
 `ENABLE_LEG_TRACKING` remains off. The filter now handles leg poses

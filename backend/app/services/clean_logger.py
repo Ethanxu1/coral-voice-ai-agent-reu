@@ -96,17 +96,27 @@ class CleanLogger:
         extras = {"reason": reason} if reason else None
         self._write("FOLLOW", "stopped", extras)
 
-    def follow_tick(self, dispatches: int, skips: int, empty_targets: int) -> None:
+    def follow_tick(
+        self,
+        dispatches: int,
+        skips: int,
+        empty_targets: int,
+        safety_holds: int | None = None,
+        stability_margin: float | None = None,
+    ) -> None:
         """Log a periodic follow-mode health snapshot."""
-        self._write(
-            "FOLLOW",
-            "tick",
-            {
-                "dispatches": dispatches,
-                "skips": skips,
-                "empty_targets": empty_targets,
-            },
-        )
+        payload: dict[str, Any] = {
+            "dispatches": dispatches,
+            "skips": skips,
+            "empty_targets": empty_targets,
+        }
+        # Omitted entirely rather than logged as null when the CBF
+        # safety layer is disabled, so its absence is unambiguous.
+        if safety_holds is not None:
+            payload["safety_holds"] = safety_holds
+        if stability_margin is not None:
+            payload["stability_margin"] = round(stability_margin, 4)
+        self._write("FOLLOW", "tick", payload)
 
     def follow_event(self, message: str, extras: Optional[dict[str, Any]] = None) -> None:
         """Log a one-off follow-mode event (seed, tracking start, etc.)."""

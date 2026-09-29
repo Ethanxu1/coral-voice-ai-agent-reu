@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from typing import Awaitable, Callable, Optional
 
 import httpx
 import websockets
+
+from loguru import logger
 
 from app import config
 from app.robot.interface import ServoCommand
@@ -27,8 +28,6 @@ from app.vision.pose_to_robot import (
     compute_joint_targets,
     targets_to_servo_commands,
 )
-
-logger = logging.getLogger("follow_controller")
 
 VISION_HTTP_BASE = "http://localhost:8001"
 VISION_WS_URL = "ws://localhost:8001/ws/pose"
@@ -74,7 +73,7 @@ class FollowController:
             try:
                 self._safety_gate = await asyncio.to_thread(FollowSafetyGate)
             except Exception as e:
-                logger.warning("Safety gate unavailable, follow will run unfiltered: %s", e)
+                logger.warning("Safety gate unavailable, follow will run unfiltered: {}", e)
                 return None
         self._safety_gate.reset()
         return self._safety_gate
@@ -101,7 +100,7 @@ class FollowController:
             async with httpx.AsyncClient(timeout=3.0) as http:
                 await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
         except Exception as e:
-            logger.debug("Vision continue on follow-start failed: %s", e)
+            logger.debug("Vision continue on follow-start failed: {}", e)
         self._task = asyncio.create_task(self._follow_loop(status_fn, sim_only, clean_logger))
         if clean_logger is not None:
             clean_logger.follow_started()
@@ -167,7 +166,7 @@ class FollowController:
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
-                        logger.warning("Follow reader exited: %s", e)
+                        logger.warning("Follow reader exited: {}", e)
                         if clean_logger is not None:
                             clean_logger.follow_error("vision reader exited", e)
 
@@ -176,7 +175,7 @@ class FollowController:
                         return
                     exc = t.exception()
                     if exc is not None:
-                        logger.warning("Follow dispatch error: %s", exc)
+                        logger.warning("Follow dispatch error: {}", exc)
 
                 reader_task = asyncio.create_task(reader())
                 in_flight: Optional[asyncio.Task] = None
@@ -210,10 +209,10 @@ class FollowController:
                             if seed_held:
                                 logger.info(
                                     "Follow: safety filter scaled back the seed pose "
-                                    "(margin %.4f)", safety_gate.last_margin or 0.0,
+                                    "(margin {:.4f})", safety_gate.last_margin or 0.0,
                                 )
                         seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
-                        logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
+                        logger.info("Follow: seeding initial pose ({} joints)", len(seed_cmds))
                         if clean_logger is not None:
                             clean_logger.follow_event("seeding initial pose", {"joints": len(seed_cmds)})
                         await self._dispatch(seed_cmds, sim_only)
@@ -259,13 +258,17 @@ class FollowController:
                             margin = None if safety_gate is None else safety_gate.last_margin
                             margin_str = "n/a" if margin is None else f"{margin:.4f}"
                             logger.info(
-                                "Follow: %d dispatches, %d skips, %d empty-targets, "
-                                "%d safety-holds in last 2s (stability margin %s)",
+                                "Follow: {} dispatches, {} skips, {} empty-targets, "
+                                "{} safety-holds in last 2s (stability margin {})",
                                 dispatch_count, skip_count, empty_target_count,
                                 safety_hold_count, margin_str,
                             )
                             if clean_logger is not None:
-                                clean_logger.follow_tick(dispatch_count, skip_count, empty_target_count)
+                                clean_logger.follow_tick(
+                                    dispatch_count, skip_count, empty_target_count,
+                                    safety_holds=None if safety_gate is None else safety_hold_count,
+                                    stability_margin=margin,
+                                )
                             dispatch_count = skip_count = empty_target_count = 0
                             safety_hold_count = 0
                             last_heartbeat = now
@@ -279,7 +282,7 @@ class FollowController:
                 clean_logger.follow_stopped(reason="cancelled")
             raise
         except Exception as exc:
-            logger.warning("Follow loop error: %s", exc)
+            logger.warning("Follow loop error: {}", exc)
             if clean_logger is not None:
                 clean_logger.follow_error("loop crashed", exc)
             await status_fn({"type": "follow_status", "active": False, "error": str(exc)})
@@ -364,7 +367,7 @@ class FollowController:
                 try:
                     await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
                 except Exception as e:
-                    logger.debug("Vision continue post failed: %s", e)
+                    logger.debug("Vision continue post failed: {}", e)
 
             await self._dispatch(commands, sim_only)
             await status_fn({"type": "capture_status", "stage": "done"})
@@ -377,7 +380,7 @@ class FollowController:
                 clean_logger.capture_error("timeout waiting for frozen frame")
             await status_fn({"type": "capture_status", "stage": "error", "error": "timeout"})
         except Exception as exc:
-            logger.warning("Capture flow error: %s", exc)
+            logger.warning("Capture flow error: {}", exc)
             if clean_logger is not None:
                 clean_logger.capture_error("flow failed", exc)
             await status_fn({"type": "capture_status", "stage": "error", "error": str(exc)})

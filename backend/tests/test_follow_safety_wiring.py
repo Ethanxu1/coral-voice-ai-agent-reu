@@ -80,6 +80,36 @@ class TestGateConstruction:
         assert reused.current_joints == reused._filter.settled_joint_values()
 
 
+class TestObservability:
+    """The filter is unobservable in a live session unless these hold,
+    and both failed silently once already.
+
+    The follow heartbeat originally used stdlib `logging` while this app
+    logs through loguru, with no bridge between them. Stdlib's
+    last-resort handler only emits WARNING and above, so every heartbeat
+    was dropped and a live debugging session was spent watching a log
+    line that could never appear.
+    """
+
+    def test_follow_controller_logs_through_loguru(self):
+        import loguru
+
+        from app import follow_controller
+
+        assert isinstance(follow_controller.logger, type(loguru.logger))
+
+    def test_clean_logger_tick_carries_the_safety_fields(self):
+        """clean_logs is the channel that actually worked during the
+        failure above, so the safety numbers have to reach it too."""
+        import inspect
+
+        from app.services.clean_logger import CleanLogger
+
+        params = inspect.signature(CleanLogger.follow_tick).parameters
+        assert "safety_holds" in params
+        assert "stability_margin" in params
+
+
 class TestFilteredTargetsAreWhatGetsDispatched:
     @pytest.mark.anyio
     async def test_unsafe_targets_are_reduced_before_servo_conversion(self, restore_flag):

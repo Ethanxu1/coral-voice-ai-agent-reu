@@ -33,14 +33,11 @@ reproduces the same contact pattern 750 real dynamics steps produce).
 
 from __future__ import annotations
 
-import logging
-
 import mujoco
+from loguru import logger
 
 import app.resource_path as resource_path
 from app.balance.cbf import get_center_of_mass, get_support_polygon, signed_distance_to_polygon
-
-logger = logging.getLogger(__name__)
 
 
 class SafetyFilter:
@@ -308,7 +305,7 @@ class FollowSafetyGate:
             # unfiltered move is the pre-existing behavior, whereas
             # letting this raise would kill the whole follow loop.
             self.failure_count += 1
-            logger.warning("Safety gate failed, passing targets through unfiltered: %s", exc)
+            logger.warning("Safety gate failed, passing targets through unfiltered: {}", exc)
             return targets, False
 
         self.current_joints.update(safe)
