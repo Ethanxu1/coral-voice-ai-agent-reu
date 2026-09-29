@@ -39,7 +39,7 @@ def _enable_leg_tracking_for_tests(monkeypatch):
     """Existing pose-to-robot tests exercise leg retargeting; keep it enabled.
 
     These tests assert the retargeting GEOMETRY — which body pose maps to
-    which joint angle. The safety cap (`LEG_MIMICRY_SCALE`, see
+    which joint angle. The safety limit (`LEG_MIMICRY_MAX_TRAVEL`, see
     `test_leg_mimicry_cap.py`) deliberately shrinks those angles toward
     stand, so it is disabled here; otherwise every expected angle would
     have to be written as a fraction of itself and these tests would stop
@@ -49,7 +49,7 @@ def _enable_leg_tracking_for_tests(monkeypatch):
     default, so these keep working whichever way that default goes.
     """
     monkeypatch.setattr(config, "ENABLE_LEG_TRACKING", True)
-    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 1.0)
+    monkeypatch.setattr(config, "LEG_MIMICRY_MAX_TRAVEL", 1.0)
 
 
 def _empty_landmark() -> dict:
@@ -266,16 +266,19 @@ def test_head_pan_tilt_clamps_to_caps():
 
 
 def test_standing_legs_neutral():
-    """Legs straight down → all six leg targets emitted at the clamp of 0.
+    """Legs straight down → the robot's own stand pose, exactly.
 
-    The hardware-derived hip-pitch/knee ranges don't include a fully straight
-    leg (the robot always stands slightly bent), so 0 rad clamps to the nearest
-    bound; hip_roll's range contains 0 and stays exactly neutral."""
+    Leg angles are measured as deviations FROM stand, so a motionless
+    person leaves the robot standing naturally. It used to measure from
+    0 rad clamped into range, which left a motionless person's robot up
+    to 0.42 rad off its keyframe — 8.7° pitched back instead of +2.7° —
+    and lurching whenever the knee-visibility fallback (which emits the
+    keyframe) kicked in. Every leg lift then began from a tipped stance.
+    """
     body = _build_body()  # defaults are standing
     targets = compute_joint_targets(body, head_pose=None)
-    for joint in ("l_hip_pitch", "r_hip_pitch", "l_hip_roll", "r_hip_roll",
-                  "l_knee", "r_knee"):
-        assert targets[joint] == pytest.approx(JOINT_LIMITS[joint].clamp(0.0), abs=1e-3), joint
+    for joint, stand_rad in _STAND_LEG_TARGETS.items():
+        assert targets[joint] == pytest.approx(stand_rad, abs=1e-3), joint
 
 
 def test_knee_raise_maps_to_robot_left_leg():
@@ -291,14 +294,16 @@ def test_knee_raise_maps_to_robot_left_leg():
     )
     targets = compute_joint_targets(body, head_pose=None)
 
-    assert targets["l_hip_pitch"] == pytest.approx(-math.radians(30), abs=1e-3)
-    # +30° knee bend is shallower than the hardware range's minimum bend, so
-    # it clamps up to the bound.
-    assert targets["l_knee"] == pytest.approx(JOINT_LIMITS["l_knee"].clamp(math.radians(30)), abs=1e-3)
+    # Angles are deviations from the stand pose.
+    assert targets["l_hip_pitch"] == pytest.approx(
+        _STAND_LEG_TARGETS["l_hip_pitch"] - math.radians(30), abs=1e-3)
+    assert targets["l_knee"] == pytest.approx(
+        JOINT_LIMITS["l_knee"].clamp(_STAND_LEG_TARGETS["l_knee"] + math.radians(30)), abs=1e-3)
     assert targets["l_hip_roll"] == pytest.approx(0.0, abs=1e-3)
-    # Person's left leg (robot right) is still standing (0 clamps to the bound)
-    assert targets["r_hip_pitch"] == pytest.approx(JOINT_LIMITS["r_hip_pitch"].clamp(0.0), abs=1e-3)
-    assert targets["r_knee"] == pytest.approx(JOINT_LIMITS["r_knee"].clamp(0.0), abs=1e-3)
+    # Person's left leg (robot right) is still standing.
+    assert targets["r_hip_pitch"] == pytest.approx(
+        _STAND_LEG_TARGETS["r_hip_pitch"], abs=1e-3)
+    assert targets["r_knee"] == pytest.approx(_STAND_LEG_TARGETS["r_knee"], abs=1e-3)
 
 
 def test_leg_abduction_maps_mirrored():
@@ -315,8 +320,9 @@ def test_leg_abduction_maps_mirrored():
     targets = compute_joint_targets(body, head_pose=None)
 
     assert targets["l_hip_roll"] == pytest.approx(-math.radians(20), abs=1e-3)
-    assert targets["l_hip_pitch"] == pytest.approx(JOINT_LIMITS["l_hip_pitch"].clamp(0.0), abs=1e-3)
-    assert targets["l_knee"] == pytest.approx(JOINT_LIMITS["l_knee"].clamp(0.0), abs=1e-3)
+    assert targets["l_hip_pitch"] == pytest.approx(
+        _STAND_LEG_TARGETS["l_hip_pitch"], abs=1e-3)
+    assert targets["l_knee"] == pytest.approx(_STAND_LEG_TARGETS["l_knee"], abs=1e-3)
     assert targets["r_hip_roll"] == pytest.approx(0.0, abs=1e-3)
 
 
@@ -433,51 +439,51 @@ def test_leg_tracking_disabled_does_not_emit_stand_leg_targets(monkeypatch):
 # ── Leg mimicry safety cap ────────────────────────────────────────────────────
 
 
-def test_leg_targets_are_capped_toward_neutral(monkeypatch):
-    """compute_joint_targets must apply LEG_MIMICRY_SCALE, not just expose
-    the helper.
+def test_leg_targets_are_limited_by_compute_joint_targets(monkeypatch):
+    """The limit must be wired into the real retargeting path, not just
+    available as a helper.
 
-    An uncapped retargeted leg lift topples this robot (measured: roll
-    -102 deg vs -16 deg capped at 0.5) — so the cap being wired into the
-    real retargeting path, and not merely available, is the thing that
-    keeps it standing. See docs/cbf-whole-body-progress.md Phase 2.7.
+    An uncapped full leg lift topples this robot; with the limit every
+    lift from 5% to 100% of what a person can do stays up. See
+    docs/cbf-whole-body-progress.md Phase 2.7.
     """
-    body = _build_body(l_knee=(+0.1, 0.25, -0.2), l_ankle=(+0.1, 0.25, 0.1))
+    # A 30 deg knee raise. The limit is 0.15 of 0.838 rad of travel,
+    # i.e. ~7.2 deg, so this comfortably exceeds it. (A steeper raise
+    # trips the depth gate and emits no leg targets at all.)
+    dy = 0.4 * math.cos(math.radians(30))
+    dz = -0.4 * math.sin(math.radians(30))
+    body = _build_body(
+        r_knee=(-0.1, dy, dz),
+        r_ankle=(-0.1, dy + 0.4, dz),
+        img_r_knee=(0.45, 0.75),
+    )
 
-    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 1.0)
-    uncapped = compute_joint_targets(body, head_pose=None)
+    monkeypatch.setattr(config, "LEG_MIMICRY_MAX_TRAVEL", 1.0)
+    unlimited = compute_joint_targets(body, head_pose=None)
 
-    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 0.5)
-    capped = compute_joint_targets(body, head_pose=None)
+    monkeypatch.setattr(config, "LEG_MIMICRY_MAX_TRAVEL", 0.15)
+    limited = compute_joint_targets(body, head_pose=None)
 
-    neutral = retarget_neutral_leg_targets()
-    moved = [
-        j for j in ("l_hip_pitch", "l_knee", "r_hip_pitch", "r_knee")
-        if abs(uncapped[j] - neutral[j]) > 1e-3
-    ]
-    assert moved, "test pose should move at least one leg joint"
-
-    for joint in moved:
-        base = neutral[joint]
-        # Halfway from the retargeting's own neutral toward the
-        # uncapped target, same direction.
-        assert capped[joint] == pytest.approx(
-            base + 0.5 * (uncapped[joint] - base), abs=1e-6
-        ), joint
-        assert (capped[joint] - base) * (uncapped[joint] - base) > 0, joint
+    joint = "l_hip_pitch"
+    stand = _STAND_LEG_TARGETS[joint]
+    reach = stand - JOINT_LIMITS[joint].min
+    assert abs(unlimited[joint] - stand) > 0.15 * reach, "test pose should exceed the limit"
+    assert limited[joint] == pytest.approx(stand - 0.15 * reach, abs=1e-6)
+    # Cut back, not reversed.
+    assert (limited[joint] - stand) * (unlimited[joint] - stand) > 0
 
 
-def test_arm_targets_are_not_affected_by_the_leg_cap(monkeypatch):
-    """Arms barely shift this robot's CoM, so capping them would cost
+def test_arm_targets_are_not_affected_by_the_leg_limit(monkeypatch):
+    """Arms barely shift this robot's CoM, so limiting them would cost
     mimicry fidelity for no safety gain."""
     body = _build_body(l_elbow=(+0.45, -0.5, 0.0))
 
-    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 1.0)
-    uncapped = compute_joint_targets(body, head_pose=None)
-    monkeypatch.setattr(config, "LEG_MIMICRY_SCALE", 0.25)
-    capped = compute_joint_targets(body, head_pose=None)
+    monkeypatch.setattr(config, "LEG_MIMICRY_MAX_TRAVEL", 1.0)
+    unlimited = compute_joint_targets(body, head_pose=None)
+    monkeypatch.setattr(config, "LEG_MIMICRY_MAX_TRAVEL", 0.05)
+    limited = compute_joint_targets(body, head_pose=None)
 
-    for joint in uncapped:
+    for joint in unlimited:
         if joint in _STAND_LEG_TARGETS:
             continue
-        assert capped[joint] == pytest.approx(uncapped[joint]), joint
+        assert limited[joint] == pytest.approx(unlimited[joint]), joint

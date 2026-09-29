@@ -98,14 +98,31 @@ CORAL_NO_VIEWER = os.getenv("CORAL_NO_VIEWER", "0").lower() in ("true", "1", "ye
 # ---------------------------------------------------------------------------
 # Vision / pose retargeting
 # ---------------------------------------------------------------------------
-# Leg tracking is experimental and can be unstable in live demos. Default to
-# disabled so the robot only mirrors the upper body, head, and hips; set to
-# "true" to re-enable continuous leg retargeting.
-ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in (
+# Enabled 2026-09-29, now that LEG_MIMICRY_MAX_TRAVEL below caps how far a
+# leg movement actually goes. It was disabled because an uncapped
+# retargeted leg lift topples the robot — verified: roll -102 deg
+# uncapped vs -16 deg capped at 0.5, and -104 vs -6 with vision jitter
+# injected (docs/cbf-whole-body-progress.md Phase 2.7).
+#
+# Set to "false" to go back to upper-body-only mimicry.
+ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "true").lower() in (
     "true",
     "1",
     "yes",
 )
+# Ceiling on leg mimicry, as a fraction of each leg joint's available
+# travel from the stand pose. A LIMIT, not a scale: gentle leg
+# movements pass through at full fidelity and only large ones are cut
+# back.
+#
+# Measured against stepped dynamics (docs/cbf-whole-body-progress.md
+# Phase 2.7), holding a maximum lift for 5s: 0.1 and 0.2 stay standing,
+# 0.3 and above topple. 0.2 already rolls to -16 deg -- visibly
+# struggling -- so the default sits below it.
+#
+# Raising this makes the lift more dramatic and less stable. 1.0
+# disables the limit and will topple the robot on a full lift.
+LEG_MIMICRY_MAX_TRAVEL = float(os.getenv("CORAL_LEG_MIMICRY_MAX_TRAVEL", "0.15"))
 
 # ---------------------------------------------------------------------------
 # Server binding

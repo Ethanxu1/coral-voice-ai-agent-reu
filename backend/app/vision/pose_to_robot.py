@@ -140,39 +140,50 @@ class JointAngleSmoother:
 def retarget_neutral_leg_targets() -> dict[str, float]:
     """What the leg retargeting emits for a person standing straight.
 
-    NOT `_STAND_LEG_TARGETS`. A straight leg retargets to 0 rad, clamped
-    into each joint's range — e.g. `l_hip_pitch` -0.0698 and `l_knee`
-    +0.6737, where the robot's own stand keyframe is -0.4887 and +0.9250.
-    The two differ by up to 0.42 rad. Pinned by `test_standing_legs_neutral`.
+    This IS the robot's stand pose, because leg angles are measured as
+    deviations from it (see `compute_joint_targets`).
+
+    It did not used to be: a straight leg retargeted to 0 rad clamped
+    into range, giving `l_hip_pitch` -0.0698 and `l_knee` +0.6737 against
+    the keyframe's -0.4887 and +0.9250 — up to 0.42 rad out. A person
+    standing still therefore put the robot in a straighter-legged stance
+    than its own keyframe, measured at 8.7° pitched back versus +2.7°,
+    and the knee-visibility fallback (which emits the keyframe) snapped
+    between the two. Starting every leg lift already pitched back left
+    far less balance margin.
     """
-    return {joint: _clamp_to_limits(joint, 0.0) for joint in _STAND_LEG_TARGETS}
+    return dict(_STAND_LEG_TARGETS)
 
 
-def scale_leg_targets_toward_neutral(
-    targets: dict[str, float], scale: float
-) -> dict[str, float]:
-    """Perform only `scale` of each leg movement, measured from the
-    retargeting's own neutral.
+def limit_leg_travel(targets: dict[str, float], fraction: float) -> dict[str, float]:
+    """Clamp each leg joint to `fraction` of its available travel from stand.
 
-    This robot topples at a full retargeted leg lift but stays standing
-    up to ~70% of one, measured against stepped dynamics — see
-    `docs/cbf-whole-body-progress.md` Phase 2.7. Scaling keeps the
-    movement visible while staying inside that limit, and halves
-    vision-jitter amplitude in the leg channel as a side effect.
+    A LIMIT, not a scale. Small leg movements pass through at full
+    fidelity and only large ones are cut back — scaling everything
+    proportionally shrank gentle movements too, costing mimicry quality
+    for no safety benefit.
 
-    Scaling toward `retarget_neutral_leg_targets()` rather than the
-    robot's stand keyframe matters: those are up to 0.42 rad apart, so
-    blending toward the keyframe would bend the robot's legs further the
-    moment a person simply stood still — an offset, not a cap.
+    Sizing, measured against stepped dynamics from the corrected stand
+    stance: at a maximum lift the robot survives 0.1 and 0.2 of
+    available travel (0.2 already rolls to -16°, visibly struggling) and
+    falls from 0.3 upward. The default sits inside that.
 
-    Only the six leg joints are touched; arms, head and anything else
-    pass through untouched. Mutates and returns `targets`.
+    Only the six leg joints are touched. Mutates and returns `targets`.
     """
-    if scale >= 1.0:
+    if fraction >= 1.0:
         return targets
-    for joint, neutral_rad in retarget_neutral_leg_targets().items():
-        if joint in targets:
-            targets[joint] = neutral_rad + scale * (targets[joint] - neutral_rad)
+    for joint, stand_rad in _STAND_LEG_TARGETS.items():
+        value = targets.get(joint)
+        if value is None:
+            continue
+        limit = JOINT_LIMITS.get(joint)
+        if limit is None:
+            continue
+        reach = (limit.max - stand_rad) if value > stand_rad else (stand_rad - limit.min)
+        allowed = fraction * reach
+        delta = value - stand_rad
+        if abs(delta) > allowed:
+            targets[joint] = stand_rad + math.copysign(allowed, delta)
     return targets
 
 
@@ -397,8 +408,10 @@ def compute_joint_targets(
                     geometry.world_xyz(hp), geometry.world_xyz(kn), R_pelvis, side="right"
                 )
                 # Sim signs: left hip flexion = negative, left abduction = negative
-                targets["l_hip_pitch"] = _clamp_to_limits("l_hip_pitch", -pitch)
-                targets["l_hip_roll"] = _clamp_to_limits("l_hip_roll", -roll_abd)
+                targets["l_hip_pitch"] = _clamp_to_limits(
+                    "l_hip_pitch", _STAND_LEG_TARGETS["l_hip_pitch"] - pitch)
+                targets["l_hip_roll"] = _clamp_to_limits(
+                    "l_hip_roll", _STAND_LEG_TARGETS["l_hip_roll"] - roll_abd)
                 an = body_landmarks[_LM_R_ANKLE]
                 if _visible(an) and _has_world(an):
                     bend = geometry.knee_bend(
@@ -407,7 +420,8 @@ def compute_joint_targets(
                         geometry.world_xyz(an),
                     )
                     # Sim sign: left knee flexion = positive
-                    targets["l_knee"] = _clamp_to_limits("l_knee", bend)
+                    targets["l_knee"] = _clamp_to_limits(
+                        "l_knee", _STAND_LEG_TARGETS["l_knee"] + bend)
 
             # Person's LEFT leg → robot's RIGHT leg
             if all(
@@ -420,8 +434,10 @@ def compute_joint_targets(
                     geometry.world_xyz(hp), geometry.world_xyz(kn), R_pelvis, side="left"
                 )
                 # Mirrored sim signs: right hip flexion = positive, abduction = positive
-                targets["r_hip_pitch"] = _clamp_to_limits("r_hip_pitch", pitch)
-                targets["r_hip_roll"] = _clamp_to_limits("r_hip_roll", roll_abd)
+                targets["r_hip_pitch"] = _clamp_to_limits(
+                    "r_hip_pitch", _STAND_LEG_TARGETS["r_hip_pitch"] + pitch)
+                targets["r_hip_roll"] = _clamp_to_limits(
+                    "r_hip_roll", _STAND_LEG_TARGETS["r_hip_roll"] + roll_abd)
                 an = body_landmarks[_LM_L_ANKLE]
                 if _visible(an) and _has_world(an):
                     bend = geometry.knee_bend(
@@ -430,11 +446,12 @@ def compute_joint_targets(
                         geometry.world_xyz(an),
                     )
                     # Mirrored sim sign: right knee flexion = negative
-                    targets["r_knee"] = _clamp_to_limits("r_knee", -bend)
+                    targets["r_knee"] = _clamp_to_limits(
+                        "r_knee", _STAND_LEG_TARGETS["r_knee"] - bend)
 
             # Cap how far the legs actually go. Applied to the retargeted
             # branch only -- the branch above already emits stand exactly.
-            scale_leg_targets_toward_neutral(targets, config.LEG_MIMICRY_SCALE)
+            limit_leg_travel(targets, config.LEG_MIMICRY_MAX_TRAVEL)
 
     return targets
 
