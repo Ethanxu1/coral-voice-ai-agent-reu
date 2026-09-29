@@ -386,6 +386,73 @@ set didn't resemble the real workload. Any future change here should be
 checked against stepped dynamics on poses that look like what mimicry
 actually generates.
 
+## Phase 2.7 — ⛔ The support-polygon metric is the WRONG TOOL for leg lifts (2026-09-29)
+
+Tested directly against the project's actual goal — lift a leg and stay
+balanced. Conclusion: **static CoM-in-support-polygon cannot express
+this problem**, regardless of the noise bugs above.
+
+### What the robot can actually do
+
+Left leg lifted by a fraction of a full lift, ramped in over 1.2s, then
+held. Ground truth from stepped dynamics:
+
+| Lift | Margin says | Physics |
+|---|---|---|
+| 0% | +0.0382 | stands, roll +0.6° |
+| 10% | −0.0009 | **stands**, roll −0.1° |
+| 20% | −0.0009 | **stands**, roll −2.0° |
+| 30% | −0.0009 | **stands**, roll −6.9° |
+| 40% | −0.0009 | **stands**, roll −14.8° |
+| 50% | −0.0010 | **stands**, roll −16.5° |
+| 70% | −0.0010 | **stands**, roll −22.2° |
+| 100% | −0.0009 | falls, roll −102.5° |
+
+**The robot can already lift its leg ~70% and stay up.** That is a real,
+demoable capability that needs no CBF at all.
+
+**And the margin is flat at −0.0009 across the entire range.** It calls
+10% (which stands comfortably) exactly as unsafe as 100% (which falls).
+It is not merely noisy here — it carries no information at all.
+
+### Why the metric fails in single support
+
+The instant the leg leaves the ground, support collapses to one foot and
+the CoM sits ~1mm outside it (measured: CoM 0.0259m from the support
+foot centre, foot half-width 0.0250m). That is true at 10% lift and at
+100% lift alike, so the margin saturates immediately and stops varying.
+Static stability is a yes/no question; how *recoverable* a single-support
+pose is, is not.
+
+### Other things ruled out along the way
+
+- **The pose itself is fine.** Placed directly into a full single-leg
+  stance with the actuators holding it, the robot drifts only 0.52° →
+  −1.99° over 2.8s and keeps its CoM height. It is the *weight transfer*
+  that fails, not the destination.
+- **Sequencing does not rescue it.** Shifting weight first, then lifting,
+  falls the same as doing both together (−106° vs −103°).
+- **Support-leg adduction was an artifact.** `r_hip_roll −0.20` appeared
+  to swing the support foot 3.5cm inward under the CoM, which looked like
+  the answer — but that is base-pinning again. A planted foot has
+  friction; hip roll tilts the pelvis instead of translating the foot.
+- **The existing ankle/hip balance controller is not enough.** It helps
+  measurably (roll −89.6° vs −102.6° and a higher final CoM) but is
+  tuned for a few degrees of push recovery with saturation caps, not for
+  transferring full body weight onto one foot.
+
+### Where this leaves the approach
+
+| | Option |
+|---|---|
+| ⬜ | **Demoable now, no new theory:** cap leg mimicry at a known-safe fraction (~50%, comfortably inside the measured 70% limit) and enable leg tracking with that cap. Real capability, low risk, no dependence on the broken margin. |
+| ⬜ | **The right metric:** replace static CoM-in-polygon with **ZMP / capture point**, which incorporates momentum and *does* vary continuously through single support. This is what the humanoid whole-body-control literature actually uses, and it is the honest technical answer to "lift a leg and stay balanced". Substantially more work. |
+| ⬜ | Support-polygon margin remains fine for **double-support** poses (leaning, squatting) and could stay as a guard for those only. |
+
+**Do not invest further in fixing the support-polygon margin for leg
+lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
+still leave a metric that reads −0.0009 for every lift from 10% to 100%.
+
 ## Phase 3 — Real full CBF-QP (if Phase 1's simpler filter isn't sufficient)
 
 | | Item |
