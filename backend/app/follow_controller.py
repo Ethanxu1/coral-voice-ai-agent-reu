@@ -23,6 +23,7 @@ from loguru import logger
 from app import config
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
+from app.vision.leg_lift_controller import ANKLES, LegLiftController
 from app.vision.pose_to_robot import (
     _STAND_LEG_TARGETS,
     JointAngleSmoother,
@@ -145,6 +146,14 @@ class FollowController:
         latest: dict | None = None
         latest_event = asyncio.Event()
         safety_gate = await self._ensure_safety_gate()
+        # Sequences leg lifts (weight shift -> settle -> lift) so the robot
+        # can raise a foot visibly without toppling. Only meaningful when
+        # legs are tracked; fresh per session so no state leaks across.
+        lift_ctl = LegLiftController() if config.ENABLE_LEG_TRACKING else None
+        # The controller applies its own phase-dependent leg limit, so it
+        # needs the unlimited retargeting; without it keep the static one.
+        leg_limit = 1.0 if lift_ctl is not None else None
+        last_ctl_t = 0.0
 
         try:
             await status_fn({"type": "follow_status", "active": True})
@@ -201,12 +210,18 @@ class FollowController:
                             continue
                         body = data.get("body_landmarks") or []
                         head = data.get("head_pose")
-                        targets = compute_joint_targets(body, head) if body else {}
+                        targets = compute_joint_targets(body, head, leg_travel_limit=leg_limit) if body else {}
                         if not targets:
                             # Person partly out of frame — try again on the next push.
                             latest_event.clear()
                             continue
                         targets = smoother.smooth(targets)
+                        if lift_ctl is not None:
+                            # dt=0: legs and ankles are commanded at stand for
+                            # the seed. A lift, if the person is already doing
+                            # one, is then sequenced properly from the loop.
+                            targets = lift_ctl.update(targets, 0.0)
+                            last_ctl_t = asyncio.get_event_loop().time()
                         # The seed is the single largest move of a follow
                         # session (STAND straight to the human's first pose),
                         # so it gets filtered like any other frame.
@@ -236,7 +251,7 @@ class FollowController:
 
                         body = data.get("body_landmarks") or []
                         head = data.get("head_pose")
-                        targets = compute_joint_targets(body, head) if body else {}
+                        targets = compute_joint_targets(body, head, leg_travel_limit=leg_limit) if body else {}
                         if not targets:
                             empty_target_count += 1
                         else:
@@ -249,13 +264,20 @@ class FollowController:
                                 # actually COMMANDED, so letting a skipped tick
                                 # advance it would leave the gate measuring the
                                 # next frame from a pose that was never sent.
+                                if lift_ctl is not None:
+                                    # Advanced only on frames that are actually
+                                    # dispatched, with real elapsed time, for the
+                                    # same reason as the gate below.
+                                    now_t = asyncio.get_event_loop().time()
+                                    targets = lift_ctl.update(targets, now_t - last_ctl_t)
+                                    last_ctl_t = now_t
                                 if safety_gate is not None:
                                     targets, held_back = safety_gate.filter_targets(targets)
                                     if held_back:
                                         safety_hold_count += 1
                                 last_leg_targets = {
                                     j: round(v, 4) for j, v in targets.items()
-                                    if j in _STAND_LEG_TARGETS
+                                    if j in _STAND_LEG_TARGETS or j in ANKLES
                                 } or None
                                 commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
                                 in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
@@ -279,6 +301,7 @@ class FollowController:
                                     safety_holds=None if safety_gate is None else safety_hold_count,
                                     stability_margin=margin,
                                     leg_targets=last_leg_targets,
+                                    lift_phase=None if lift_ctl is None else lift_ctl.phase.value,
                                 )
                             dispatch_count = skip_count = empty_target_count = 0
                             safety_hold_count = 0

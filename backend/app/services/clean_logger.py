@@ -104,6 +104,7 @@ class CleanLogger:
         safety_holds: int | None = None,
         stability_margin: float | None = None,
         leg_targets: dict[str, float] | None = None,
+        lift_phase: str | None = None,
     ) -> None:
         """Log a periodic follow-mode health snapshot."""
         payload: dict[str, Any] = {
@@ -113,6 +114,8 @@ class CleanLogger:
         }
         if leg_targets:
             payload["leg_targets"] = leg_targets
+        if lift_phase is not None:
+            payload["lift_phase"] = lift_phase
         # Omitted entirely rather than logged as null when the CBF
         # safety layer is disabled, so its absence is unambiguous.
         if safety_holds is not None:

@@ -460,6 +460,136 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.8 — Visible single-leg lift ✅ ACHIEVED (2026-09-29)
+
+**Resolved by `LegLiftController` (`backend/app/vision/leg_lift_controller.py`),
+wired into the follow loop.** The robot lifts either leg 3–6.6cm when
+the person does, holds it, lowers it, and never falls.
+
+### How it works
+
+A small state machine that reproduces the one sequence verified to work
+in isolation, with **every leg and ankle joint rate-limited** so nothing
+it outputs ever steps:
+
+1. **Shift** — roll both ankles 0.15 rad toward the support foot, ramped
+   over 0.9s.
+2. **Settle** — hold 1.0s with the swing foot planted, so the weight
+   physically arrives.
+3. **Lift** — raise the swing leg (up to 0.8 of its travel), ramped.
+4. Lower, then un-shift, on the way back. Support leg and both hip
+   rolls hold stand throughout.
+
+The follow loop requests *unlimited* retargeted legs
+(`compute_joint_targets(..., leg_travel_limit=1.0)`) and lets the
+controller apply its phase-dependent limit. Capture and `/map-features`
+keep the static 0.15 limit. The controller advances only on frames that
+are actually dispatched, with real elapsed time (same reason as the
+Phase 2 gate).
+
+### Why the earlier sequencer failed — traced, not guessed
+
+A frame-by-frame trace showed the robot toppling during **settling**,
+with both feet down and the legs untouched: roll +3.5° → +64°. The ankle
+rate had been sized by the joint's full range, so the 0.15 shift
+finished in 0.3s instead of the verified 0.9s, and the momentum carried
+the body past its resting lean and over. Fixed by sizing the ankle rate
+from the shift itself (`SHIFT_RAD / SHIFT_SECONDS`).
+
+### Verification
+
+| Test | Result |
+|---|---|
+| 10-case matrix: both legs, 20–60° raises, 0.5–1.0s, raise/hold 4s/lower | shift 0.10 → 8/10 (robot-right fails, weight never arrives — right-heavy mass); **0.12, 0.14, 0.16, 0.18 → 10/10**; ~0.20 is the cliff. Default 0.15, mid-band. |
+| Clean, 12 runs | 12/12, 4.4–6.6cm |
+| Jitter 0.05 rad | 12/12, 4.6–6.6cm |
+| 30% leg dropout + 20% frame drops + jitter | 12/12, 4.3–6.5cm |
+| **50% leg dropout + 30% frame drops + jitter** (worse than the live session) | **12/12**, 2.6–5.3cm |
+
+Dropouts needed a 0.3s release debounce: a dropped or knee-gated frame
+retargets the legs to stand, which otherwise reads as "leg lowered" and
+aborts the lift mid-air. A lift that resumes while lowering goes back to
+lifting without re-shifting.
+
+Regression-guarded by `backend/tests/test_leg_lift_controller.py`,
+including a physics test on both legs through the real retargeting at
+20Hz. **Confirmed it catches the real failure modes:** with the shift
+disabled it fails (falls at 1.75–1.90s); with the old 0.3s shift it
+fails (1.05s); restored, it passes.
+
+### Not yet done
+
+- Watched in the browser viewer with a person in frame — everything
+  above is headless simulation through the real retargeting code.
+- Real hardware. Shift magnitude and timing are sim-tuned; the
+  documented right-heavy mass asymmetry may need a per-side shift there.
+- Capture-and-mimic (one-shot pose) still uses the static 0.15 limit, so
+  a captured lifted leg only lifts slightly. Safe, not visible.
+
+<details>
+<summary>What the first attempt found (kept for the record)</summary>
+
+Goal: robot lifts a leg visibly when the person does, and stays up.
+Initially not reached; code was left at `LEG_MIMICRY_MAX_TRAVEL=0.15`,
+which never falls but lifts the foot only ~0.4cm.
+
+### The core constraint (measured, 5s hold)
+
+| Travel limit | Foot clearance | Result |
+|---|---|---|
+| 0.10–0.25 | 0.3–1.0 cm | stands |
+| 0.30 | 12.7 cm | falls |
+
+A cliff, not a slope. Every stable setting is invisible; the first
+visible one topples it.
+
+### What works in isolation, and why it didn't carry over
+
+**Ankle-roll weight shift, sequenced, works when commanded alone.**
+Verified with correct stand bases (`HW_STAND_RAD.get(j, 0.0)`, which an
+earlier attempt got wrong for `r_ank_roll`):
+
+- Negative ankle delta moves the CoM toward the **right** foot
+  (measured, not assumed).
+- Shift ankles −0.15, settle 1.0s, then lift left leg at full range →
+  **8.1cm clearance, stays up**. Right leg mirrors at +0.10..+0.20 →
+  ~7.9cm, stays up. No shift → both sides fall.
+- **Sequencing is essential.** Shift and lift commanded together falls
+  at lift durations of 1.2 / 2.4 / 4.0 / 6.0s and only survives at
+  9.0s. The weight needs ~1s to physically arrive over the support
+  foot before the swing foot can leave.
+
+**It did not survive the full retargeting path.** Built a stateful
+`LiftSequencer` (shift → hold swing leg down 1s → release) fed by real
+`compute_joint_targets` output at a simulated 20Hz: falls on both legs
+at every raise speed tested. Pinning the support leg and hip rolls to
+stand made no difference — after the stand-anchoring fix a straight
+standing leg already retargets to exactly stand, so there was nothing
+to pin. The remaining difference between the isolated success and the
+full path was **not identified**. Removed rather than left half-working.
+
+### Mistakes made along the way, worth not repeating
+
+- Two apparent solutions were artifacts of test-script bugs: hip
+  adduction (base pinning again) and the first ankle-shift run (wrong
+  `r_ank_roll` stand base). A third near-miss was a single shared sign
+  for hip and knee — they move in *opposite* directions for a lift.
+- Short holds hide slow topples. A 1.5s hold called 70% of a lift safe;
+  a 5s hold showed 0.3 falls.
+- Isolated joint sweeps do not predict the full path. Verify through
+  `compute_joint_targets` with every joint it emits, not a hand-picked
+  subset.
+
+### Recommendation
+
+~~A visible single-leg lift on this robot needs closed-loop balance.~~
+Superseded the same day — an open-loop sequence works once every joint
+is rate-limited (see above). Closed-loop balance (Option B, ZMP /
+capture point) remains the principled next step for robustness on real
+hardware, where open-loop timings may not transfer.
+
+</details>
+
 ## Phase 3 — Real full CBF-QP (if Phase 1's simpler filter isn't sufficient)
 
 | | Item |

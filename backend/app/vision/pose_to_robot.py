@@ -274,6 +274,7 @@ def _limb_depth_gated(proximal: dict, distal: dict) -> bool:
 def compute_joint_targets(
     body_landmarks: list[dict],
     head_pose: Optional[dict],
+    leg_travel_limit: Optional[float] = None,
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
@@ -451,7 +452,13 @@ def compute_joint_targets(
 
             # Cap how far the legs actually go. Applied to the retargeted
             # branch only -- the branch above already emits stand exactly.
-            limit_leg_travel(targets, config.LEG_MIMICRY_MAX_TRAVEL)
+            # None -> the static safety limit. Callers that manage leg
+            # balance themselves (the follow loop's LegLiftController)
+            # pass 1.0 and apply their own, phase-dependent limit.
+            limit_leg_travel(
+                targets,
+                config.LEG_MIMICRY_MAX_TRAVEL if leg_travel_limit is None else leg_travel_limit,
+            )
 
     return targets
 
