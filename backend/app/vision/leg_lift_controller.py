@@ -1,25 +1,29 @@
-"""Lets the robot lift a leg visibly during follow mode without falling.
+"""Lets the robot lift a leg during follow mode, upright and without falling.
 
 This robot cannot lift a foot visibly while its weight is spread across
 both feet: every statically-safe leg pose clears under 1cm, and the
-first visible one (12.7cm) topples it. What works, measured in
-simulation with both legs:
+first visible one (12.7cm) topples it. The weight has to be moved over
+the standing foot first -- and HOW it is moved decides how the lift looks.
 
-  1. roll BOTH ankles ~0.15 rad toward the support side, ramped over
-     ~0.9s -- this carries the centre of mass over the standing foot;
-  2. wait ~1s for the weight to actually arrive;
-  3. only then raise the swing leg, again ramped over ~0.9s.
+Tilting the whole robot sideways (both ankles only) works but leans the
+torso 10-13 deg, makes the two legs lift to different heights (the lean
+itself raises the swing side, and differs per side because this robot is
+right-heavy), and needs a ~1s pause to let the tilting body settle.
 
-Done that way, a full lift clears ~8cm and the robot stays up. Done any
-other way it falls: shift and lift together topples it at any speed
-short of a 9s lift, and -- the reason an earlier attempt failed -- any
-of those steps applied as a single-frame jump rather than a ramp
-topples it too. So this is a small state machine with every leg and
-ankle joint rate-limited; nothing it outputs ever steps.
+What this does instead is what a person does: slide the hips over the
+standing foot with the torso vertical. Both ankles roll by A and both
+hips roll by 1.5*A the same way, so the legs form a parallelogram --
+pelvis moves ~27mm sideways, torso stays within ~2 deg of upright, both
+feet stay flat. Measured with it:
 
-Driven with an explicit `dt` per call so it can be tested
-deterministically, and stateful because the whole point is sequencing
-across frames.
+  torso roll during a lift          <= 0.7 deg   (was 10-13)
+  left vs right lift height         5.2 vs 5.2cm (was unequal)
+  shift + lift, sequential          stable down to 0.2s + 0.2s, no pause
+  shift + lift, fully concurrent    falls, both legs, at any speed
+
+So the one thing that must still be sequenced is that the swing foot
+leaves only once the shift has arrived -- about 0.25s. Everything is
+rate-limited; nothing this outputs ever steps.
 """
 
 from __future__ import annotations
@@ -31,44 +35,70 @@ from app.validation import JOINT_LIMITS
 from app.vision.pose_to_robot import _STAND_LEG_TARGETS, limit_leg_travel
 
 ANKLES = ("l_ank_roll", "r_ank_roll")
+HIP_ROLLS = ("l_hip_roll", "r_hip_roll")
 LEG_JOINTS = tuple(_STAND_LEG_TARGETS)
 
-# Ankle roll applied to both feet toward the support side. A negative
-# delta moves the centre of mass toward the RIGHT foot (measured, not
-# assumed), so lifting the left leg uses -SHIFT.
-#
-# Swept over a 10-case matrix (both legs; 20-60 deg raises; 0.5-1.0s;
-# raise, hold 4s, lower): 0.10 fails on the robot's right leg -- the
-# weight never arrives, consistent with the robot's documented
-# right-heavy mass -- while 0.12, 0.14, 0.16 and 0.18 all pass 10/10.
-# Around 0.20 the shift alone topples it. 0.15 sits mid-band.
-SHIFT_RAD = 0.15
-# Ramp times that reproduce the verified sequence.
-SHIFT_SECONDS = 0.9
-LIFT_SECONDS = 0.9
-SETTLE_SECONDS = 1.0
-# Swing-leg travel once the weight is across. Verified stable at 0.8
-# (6.6cm clearance) and 1.0 (8.1cm); 0.8 keeps some margin.
+# Parallelogram shift. A negative delta moves the centre of mass toward
+# the RIGHT foot (measured), so lifting the left leg uses -ANKLE_SHIFT.
+# Hips roll the same way at HIP_RATIO x the ankles to keep the torso
+# upright: at 1.5 torso roll settles at +1.8 deg with a 27mm pelvis shift
+# and both feet down; at 2.5 and above it falls over.
+ANKLE_SHIFT = 0.12
+HIP_RATIO = 1.5
+SHIFT_SECONDS = 0.25
+# Swing-leg joints cover their full range in this long. Stable down to a
+# 0.2s lift once the shift has arrived; the person's own movement is
+# usually the slower of the two.
+LIFT_SECONDS = 0.3
+# Swing-leg travel during a supported lift.
 LIFT_TRAVEL = 0.8
-# Travel allowed when NOT in a supported lift -- the static safety limit.
-IDLE_TRAVEL = 0.15
-# Hysteresis on "is the person lifting a leg", as a fraction of the
-# swing hip's travel: must clearly exceed the idle limit to start a
-# lift, and drop well back to end one.
-LIFT_ON = 0.20
-LIFT_OFF = 0.10
-# How long the leg must read as lowered before the lift is ended. Live
-# vision drops frames (one session lost the person on ~half of them),
-# and a dropped or knee-gated frame retargets the legs to stand -- which
-# would otherwise read as "leg lowered" and abort the lift mid-air.
-RELEASE_SECONDS = 0.3
+# Leg travel allowed when NOT in a supported lift. Near zero on purpose:
+# any lift made before the weight has shifted is unsupported, and even a
+# partial one starts the robot rolling. When dropped frames then delay
+# the shift, the shift arrives against an already-moving body, overshoots
+# past upright and the robot falls the other way (traced). Below the lift
+# threshold a lift is under 1cm anyway, so nothing visible is lost.
+IDLE_TRAVEL = 0.03
+# "Is the person lifting a leg", as a fraction of swing-hip travel.
+# Deliberately low. Until a lift is detected the leg follows the person
+# unsupported, and an unsupported partial lift leans the robot (0.15 of
+# travel measured at ~7 deg) -- so the shift must start almost at once.
+LIFT_ON = 0.08
+LIFT_OFF = 0.04
+# How long the leg must read as lowered before the lift ends. Dropped or
+# knee-gated vision frames retarget the legs to stand, which would
+# otherwise read as "leg lowered" and abort a lift mid-air.
+RELEASE_SECONDS = 0.2
+# How long a lift must read as present before the hips slide. The
+# detection threshold is low, so without this, vision jitter alone set
+# off ~6 spurious hip slides per 20s while the person stood still.
+ONSET_SECONDS = 0.1
+# Largest time step one update may act on. After a run of dropped
+# frames the next update sees a long dt, and a rate limiter given a long
+# dt moves the whole distance at once -- a step, which is exactly what
+# topples this robot. Capping it means the robot simply moves a little
+# slower across a gap instead of jumping.
+MAX_DT = 0.06
+# Phase decisions (lift started / lift ended) use the lift reading
+# low-passed with this time constant. With the thresholds this low,
+# raw vision jitter kept resetting the "leg is down" timer, so a lift
+# was never confirmed as ended: the robot stayed shifted onto one foot
+# after the person put their leg down, and slowly rolled over.
+DECISION_TAU = 0.1
+# While standing on one foot the lifted leg rises as fast as the person
+# does but comes down no faster than this (fraction of each joint's
+# travel per second). A dropped or knee-gated frame reads as "leg at
+# stand"; followed directly, a run of them pumped the lifted leg up and
+# down and tipped the robot. Rate-limiting only the DOWNWARD direction
+# means one bad frame nudges the leg by a few percent and the next good
+# frame restores it, while a real lowering still comes through, smoothly.
+LOWER_RATE = 2.0
 _AT_GOAL = 0.005  # rad
 
 
 class Phase(str, Enum):
     IDLE = "idle"
     SHIFTING = "shifting"
-    SETTLING = "settling"
     LIFTING = "lifting"
     LOWERING = "lowering"
     UNSHIFTING = "unshifting"
@@ -81,31 +111,52 @@ def _stand(joint: str) -> float:
 
 
 def _reach(joint: str) -> float:
-    """Full travel from stand to whichever limit is further, used to
-    size a joint's rate so a full-range ramp takes the stated time."""
     lim = JOINT_LIMITS[joint]
     s = _stand(joint)
     return max(lim.max - s, s - lim.min)
 
 
 def _rate(joint: str) -> float:
-    """Max speed (rad/s) for a joint.
-
-    Ankles move at the rate of the verified shift -- the full SHIFT_RAD
-    over SHIFT_SECONDS -- NOT a fraction of their full range. Sizing it
-    by range made the shift finish in 0.3s, and the extra momentum
-    rolled the robot past its resting lean and over while both feet
-    were still down (traced: roll +3.5 -> +64 deg during settling).
-    Legs cover their full range in LIFT_SECONDS.
-    """
+    """Max speed (rad/s). Shift joints move at the rate that completes the
+    shift in SHIFT_SECONDS -- sized from the shift itself, NOT the joint's
+    range. Sizing ankles by range once made a shift finish 3x too fast and
+    the momentum toppled the robot with both feet still down."""
     if joint in ANKLES:
-        return SHIFT_RAD / SHIFT_SECONDS
+        return ANKLE_SHIFT / SHIFT_SECONDS
+    if joint in HIP_ROLLS:
+        return HIP_RATIO * ANKLE_SHIFT / SHIFT_SECONDS
     return _reach(joint) / LIFT_SECONDS
 
 
-def lift_fraction(side: str, targets: dict[str, float]) -> float:
-    """How far a leg is raised, 0..1 of its hip-pitch travel from stand.
-    Left hip lifts toward its minimum, right toward its maximum."""
+def _lift_side_only(joint: str, value: float) -> float:
+    """Clamp a swing-leg joint so it can only move in the LIFT direction
+    from stand, never past stand the other way. Past stand the leg is
+    straighter, i.e. longer, and planting a too-long leg while the hips are
+    slid over pushed the robot onto its side."""
+    stand = _STAND_LEG_TARGETS[joint]
+    return min(value, stand) if _lift_sign(joint) < 0 else max(value, stand)
+
+
+def _lift_sign(joint: str) -> float:
+    """Direction a swing-leg joint moves to LIFT the leg (mirrored sim
+    signs: left hip flexes negative and left knee bends positive; the
+    right leg is the mirror)."""
+    return -1.0 if joint in ("l_hip_pitch", "r_knee") else 1.0
+
+
+def _shift(swing: str) -> dict[str, float]:
+    """Offsets from stand that put the weight on the non-swing foot."""
+    sign = -1.0 if swing == "l" else 1.0
+    return {
+        **{a: sign * ANKLE_SHIFT for a in ANKLES},
+        **{h: sign * HIP_RATIO * ANKLE_SHIFT for h in HIP_ROLLS},
+    }
+
+
+def signed_lift(side: str, targets: dict[str, float]) -> float:
+    """How far a leg is raised as a fraction of its hip-pitch travel,
+    SIGNED and unclamped, so jitter about stand averages to zero. Left hip
+    lifts toward its minimum, right toward its maximum."""
     joint = f"{side}_hip_pitch"
     value = targets.get(joint)
     if value is None:
@@ -114,7 +165,12 @@ def lift_fraction(side: str, targets: dict[str, float]) -> float:
     lim = JOINT_LIMITS[joint]
     travel = (stand - lim.min) if side == "l" else (lim.max - stand)
     raised = (stand - value) if side == "l" else (value - stand)
-    return 0.0 if travel <= 0 else max(0.0, min(1.0, raised / travel))
+    return 0.0 if travel <= 0 else raised / travel
+
+
+def lift_fraction(side: str, targets: dict[str, float]) -> float:
+    """`signed_lift` clamped to 0..1."""
+    return max(0.0, min(1.0, signed_lift(side, targets)))
 
 
 class LegLiftController:
@@ -124,11 +180,14 @@ class LegLiftController:
     def reset(self) -> None:
         self.phase = Phase.IDLE
         self.swing: str | None = None
-        self._settle_left = 0.0
         self._below = 0.0
+        self._above = 0.0
+        # Swing leg's held lift, per joint, as rad from stand in the lift
+        # direction (see LOWER_RATE).
+        self._held_swing: dict[str, float] | None = None
+        self._lift_f = {"l": 0.0, "r": 0.0}
+        self._dt = 0.0
         self._cmd: dict[str, float] = {j: _stand(j) for j in LEG_JOINTS + ANKLES}
-
-    # -- helpers ---------------------------------------------------------
 
     def _slew(self, goals: dict[str, float], dt: float) -> None:
         for joint, goal in goals.items():
@@ -137,36 +196,42 @@ class LegLiftController:
             delta = goal - cur
             self._cmd[joint] = goal if abs(delta) <= step else cur + (step if delta > 0 else -step)
 
-    def _at(self, goals: dict[str, float]) -> bool:
-        return all(abs(self._cmd[j] - g) <= _AT_GOAL for j, g in goals.items())
-
-    # -- main ------------------------------------------------------------
+    def _at(self, goals: dict[str, float], joints) -> bool:
+        return all(abs(self._cmd[j] - goals[j]) <= _AT_GOAL for j in joints)
 
     def update(self, desired: dict[str, float], dt: float) -> dict[str, float]:
         """`desired` is one frame of UNLIMITED retargeted targets. Returns
         it with every leg and ankle joint replaced by the controlled,
         rate-limited command. Other joints pass through untouched."""
-        left, right = lift_fraction("l", desired), lift_fraction("r", desired)
-        lifting_side = "l" if left > right else "r"
-        asym = abs(left - right)
-
-        self._below = self._below + dt if asym <= LIFT_OFF else 0.0
-        self._advance(asym, lifting_side)
+        dt = min(dt, MAX_DT)
+        # Phase decisions use each leg's SIGNED lift, low-passed, with the
+        # difference taken afterwards. Filtering |left - right| instead
+        # does not work: jitter through an absolute value averages ~0.07,
+        # permanently above LIFT_OFF, so a lowered leg was never confirmed
+        # and the robot stayed shifted onto one foot until it rolled over.
+        alpha = dt / (DECISION_TAU + dt)
+        for s_ in ("l", "r"):
+            self._lift_f[s_] += alpha * (signed_lift(s_, desired) - self._lift_f[s_])
+        lf = max(0.0, self._lift_f["l"])
+        rf = max(0.0, self._lift_f["r"])
+        side = "l" if lf > rf else "r"
+        asym_f = abs(lf - rf)
+        self._below = self._below + dt if asym_f <= LIFT_OFF else 0.0
+        self._above = self._above + dt if asym_f >= LIFT_ON else 0.0
+        self._dt = dt
+        self._advance(asym_f, side)
 
         goals = self._goals(desired)
         self._slew(goals, dt)
 
-        if self.phase is Phase.SHIFTING and self._at({j: goals[j] for j in ANKLES}):
-            self.phase, self._settle_left = Phase.SETTLING, SETTLE_SECONDS
-        elif self.phase is Phase.SETTLING:
-            self._settle_left -= dt
-            if self._settle_left <= 0:
-                self.phase = Phase.LIFTING
+        shift_joints = ANKLES + HIP_ROLLS
+        if self.phase is Phase.SHIFTING and self._at(goals, shift_joints):
+            self.phase = Phase.LIFTING
         elif self.phase is Phase.LOWERING and self._at(
-            {j: goals[j] for j in (f"{self.swing}_hip_pitch", f"{self.swing}_knee")}
+            goals, (f"{self.swing}_hip_pitch", f"{self.swing}_knee")
         ):
             self.phase = Phase.UNSHIFTING
-        elif self.phase is Phase.UNSHIFTING and self._at({j: goals[j] for j in ANKLES}):
+        elif self.phase is Phase.UNSHIFTING and self._at(goals, shift_joints):
             self.phase, self.swing = Phase.IDLE, None
 
         out = dict(desired)
@@ -175,16 +240,17 @@ class LegLiftController:
 
     def _advance(self, asym: float, side: str) -> None:
         released = self._below >= RELEASE_SECONDS
-        if self.phase is Phase.IDLE and asym >= LIFT_ON:
+        onset = self._above >= ONSET_SECONDS
+        if self.phase is Phase.IDLE and onset:
             self.phase, self.swing = Phase.SHIFTING, side
-        elif self.phase in (Phase.SHIFTING, Phase.SETTLING) and released:
+        elif self.phase is Phase.SHIFTING and released:
             self.phase = Phase.UNSHIFTING
         elif self.phase is Phase.LIFTING and released:
             self.phase = Phase.LOWERING
         elif self.phase is Phase.LOWERING and asym >= LIFT_ON and side == self.swing:
-            # Leg coming back up while the weight is still shifted.
             self.phase = Phase.LIFTING
-        elif self.phase is Phase.UNSHIFTING and asym >= LIFT_ON:
+        elif self.phase is Phase.UNSHIFTING and onset:
+            # Re-shift -- toward whichever side is lifting now.
             self.phase, self.swing = Phase.SHIFTING, side
 
     def _goals(self, desired: dict[str, float]) -> dict[str, float]:
@@ -194,25 +260,36 @@ class LegLiftController:
         if self.phase is Phase.IDLE:
             return {**idle_legs, **{a: _stand(a) for a in ANKLES}}
 
-        swing, support = self.swing, ("r" if self.swing == "l" else "l")
-        shift = -SHIFT_RAD if swing == "l" else SHIFT_RAD
-        shifted = self.phase in (Phase.SHIFTING, Phase.SETTLING, Phase.LIFTING, Phase.LOWERING)
-        goals = {a: _stand(a) + (shift if shifted else 0.0) for a in ANKLES}
+        swing = self.swing
+        support = "r" if swing == "l" else "l"
+        shifted = self.phase is not Phase.UNSHIFTING
+        offsets = _shift(swing) if shifted else {j: 0.0 for j in ANKLES + HIP_ROLLS}
+        goals = {j: _stand(j) + offsets[j] for j in ANKLES + HIP_ROLLS}
 
-        # The robot stands on the support leg; it holds a known-good
-        # stance, and hip roll (which fights the ankle shift) is neutral.
-        for j in (f"{support}_hip_pitch", f"{support}_knee", "l_hip_roll", "r_hip_roll"):
+        # The robot stands on the support leg; it holds its stance.
+        for j in (f"{support}_hip_pitch", f"{support}_knee"):
             goals[j] = _stand(j)
 
         swing_joints = (f"{swing}_hip_pitch", f"{swing}_knee")
         if self.phase is Phase.LIFTING:
-            lifted = limit_leg_travel(
+            limited = limit_leg_travel(
                 {j: desired.get(j, _stand(j)) for j in swing_joints}, LIFT_TRAVEL
             )
-            goals.update(lifted)
-        elif self.phase in (Phase.LOWERING, Phase.UNSHIFTING):
-            goals.update({j: idle_legs[j] for j in swing_joints})
-        else:
-            # Weight still moving: foot stays planted.
+            held = {}
+            for j in swing_joints:
+                wanted = abs(_lift_side_only(j, limited[j]) - _stand(j))
+                previous = self._held_swing.get(j, 0.0) if self._held_swing else 0.0
+                floor = previous - LOWER_RATE * _reach(j) * self._dt
+                held[j] = max(wanted, floor, 0.0)
+            self._held_swing = held
+            for j, amount in held.items():
+                goals[j] = _lift_side_only(j, _stand(j) + _lift_sign(j) * amount)
+        elif self.phase is Phase.SHIFTING:
+            self._held_swing = None
+            # Weight not across yet: foot fully planted, so the only thing
+            # moving is the hip slide. Even a small unsupported lift here
+            # leans the robot before the shift can catch it.
             goals.update({j: _stand(j) for j in swing_joints})
+        else:  # LOWERING, UNSHIFTING -- back down to stand, never past it.
+            goals.update({j: _lift_side_only(j, idle_legs[j]) for j in swing_joints})
         return goals

@@ -460,6 +460,73 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.9 — Upright, symmetric, faster leg lift ✅ (2026-09-29)
+
+Live feedback on Phase 2.8: the lift worked but (1) the robot leaned
+to one side while the person stood straight, (2) the two legs lifted
+to different heights for the same person movement, (3) there was a
+noticeable delay, and (4) it fell if the person leaned while lifting.
+
+**One root cause for (1) and (2):** the weight shift rolled only the
+ankles, which tilts the *whole robot* — measured, it actually left only
+one foot's pads on the ground with the torso at +12°. The tilt itself
+raises the swing side, and differs per side (right-heavy mass), hence
+unequal heights.
+
+**Fix: an upright "hip slide".** Both ankles roll by A and both hips
+roll by 1.5·A the same way, so the legs form a parallelogram — the
+pelvis moves over the standing foot with the torso vertical and both
+feet flat. Swept the hip:ankle ratio: 1.5 → torso +1.8°, CoM moves 27mm
+(26mm needed to reach the right foot; 0.12 moves it 35mm toward the
+left, 34mm needed), 3–4 pads down; ≥2.5 falls. Sign conventions were
+measured, not assumed.
+
+**Fix for (3):** with no whole-body tilt there is no sideways momentum
+to wait out, so the 1s settle pause is gone. Shift + lift sequential is
+stable down to 0.2s + 0.2s. *Fully concurrent* still falls on both legs,
+so the swing foot waits for the shift (0.25s). Faster shifts (0.12,
+0.18s) lost one case each in 30; 0.25s kept 30/30.
+
+**Robustness bugs found by tracing, not guessed:**
+
+- A lowered leg was never confirmed as down: phase decisions used
+  `|left − right|`, and jitter through an absolute value averages ~0.07,
+  permanently above the 0.04 "down" threshold. The robot stayed shifted
+  onto one foot after the person lowered their leg and slowly rolled
+  over. Fixed by low-passing each leg's *signed* lift and differencing
+  afterwards.
+- Dropped frames pumped the lifted leg up and down. Downward motion
+  during a lift is now rate-limited (`LOWER_RATE`), upward is not.
+- Before a lift was detected, the leg could partially lift unsupported;
+  when dropped frames then delayed the shift, the shift hit an
+  already-rolling body, overshot and toppled it the other way. Legs now
+  barely move before a lift is detected (`IDLE_TRAVEL=0.03`, <1cm).
+- Onset debounce (0.1s) + filtering removed spurious hip slides while
+  standing still (6 per 20s → 0 at 0.05 rad jitter).
+- `MAX_DT` caps a single update's time step so a run of dropped frames
+  cannot turn into one big jump.
+
+### Result (headless sim, real retargeting at 20Hz)
+
+| | Before (2.8) | Now |
+|---|---|---|
+| Torso lean during a lift | 10–13° | 3.0° (L), 4.8° (R) |
+| Lift height, same person raise | unequal | 3.1/3.2, 4.7/4.8, 5.2/5.2cm |
+| Robot foot 1cm off ground after person starts | ~2s+ | 0.50–0.55s |
+| Person leaning ±1 while lifting | falls | 8/8 stay up |
+| 50% leg dropout + 30% frame drops + jitter | 48/48 (lower spec) | 58/60 |
+
+Regression tests: `test_torso_stays_upright_while_lifting`,
+`test_both_legs_lift_to_the_same_height`,
+`test_robot_trails_the_person_by_well_under_a_second`. Confirmed that
+with the old tilting shift restored they fail exactly as reported
+(torso 12.0°, right leg falls, heights 5.9 vs 11.1cm).
+
+**Trade-off left in place:** two-footed leg motion (knee bends, sways)
+is no longer mimicked — the legs hold stand except during a one-leg
+lift. Allowing unsupported partial lifts was what caused the traced
+falls.
+
 ## Phase 2.8 — Visible single-leg lift ✅ ACHIEVED (2026-09-29)
 
 **Resolved by `LegLiftController` (`backend/app/vision/leg_lift_controller.py`),
