@@ -460,6 +460,47 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.12 — Hip sway on landing ✅ (2026-09-30)
+
+Live report: landings no longer fall, but the hips sway sideways when the
+foot is set down, and it takes a while.
+
+**Measured before changing anything** — a side-by-side harness
+(`compare_landing.py` pattern: same scenarios and seeds, both legs,
+lowering over 0.15/0.3/0.6/1.0s, clean and with 30% leg drops + 20% frame
+drops + jitter) reporting peak lean, pelvis overshoot, **pelvis direction
+reversals** (the sway), settle time and foot taps.
+
+**Cause:** before a lift is detected the legs still copied the person's
+hips by up to 0.03 of travel — invisible as mimicry (<1cm), but camera
+jitter flipped the hip rolls back and forth every frame, rocking the
+pelvis. Under noise the hips reversed direction ~4.8 times per landing.
+
+**Fix:** `IDLE_TRAVEL = 0.0` — legs hold stand until a lift is detected.
+
+| Under realistic noise | Before | After |
+|---|---|---|
+| Pelvis direction reversals per landing | 4.8 | 0.7 |
+| Pelvis settle time after leg is down | 2.33s | 1.45s |
+| Foot taps (24 runs) | 5 | 0 |
+| Peak lean, lift, symmetry, lag | — | unchanged |
+
+**Tried and rejected, with evidence:**
+- *"Foot down first, then move the weight"* along a measured contact line
+  (first contact at 6.5% / 10.5% of lift travel, L / R). Looked better on
+  one lowering speed; the fair comparison showed it worse: noisy peak lean
+  6.0° vs 3.3°, foot taps 21 vs 1. Reverted.
+- *Removing the dead time* at the end of the slide-back: freed the
+  controller sooner but settled the pelvis slightly slower (1.51 vs 1.45s)
+  with an extra tap; re-lifts were never blocked by it. Reverted.
+- *One-way landing weight* (never drifts back out): no measurable effect.
+- *Faster final approach*: settle time unchanged (~1.4s is the pelvis
+  physically sliding 32mm back), lean/sway/taps worse. Kept 0.25 / 0.4.
+
+**Note on "delay":** the remaining ~1.4s is physical — the hips slide
+~32mm back to centre and settle. The visible improvement is that under
+real noise they no longer wander back and forth first (2.3s → 1.45s).
+
 ## Phase 2.11 — High knee raises lift again ✅ (2026-09-29)
 
 Live report after 2.10: "it's not lifting its leg". The follow log showed

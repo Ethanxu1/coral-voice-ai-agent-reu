@@ -52,13 +52,18 @@ SHIFT_SECONDS = 0.25
 LIFT_SECONDS = 0.3
 # Swing-leg travel during a supported lift.
 LIFT_TRAVEL = 0.8
-# Leg travel allowed when NOT in a supported lift. Near zero on purpose:
-# any lift made before the weight has shifted is unsupported, and even a
-# partial one starts the robot rolling. When dropped frames then delay
-# the shift, the shift arrives against an already-moving body, overshoots
-# past upright and the robot falls the other way (traced). Below the lift
-# threshold a lift is under 1cm anyway, so nothing visible is lost.
-IDLE_TRAVEL = 0.03
+# Leg travel allowed when NOT in a supported lift: none -- the legs hold
+# stand until a lift is detected.
+#   - Any lift before the weight has shifted is unsupported; even a partial
+#     one starts the robot rolling, and a shift arriving late against a
+#     moving body overshoots and topples it (traced).
+#   - Even a tiny allowance (0.03 of travel, <1cm, invisible as mimicry)
+#     let camera jitter flip the hip rolls back and forth every frame, which
+#     rocked the pelvis sideways -- the "hips sway when setting the foot
+#     down" report. Under realistic noise, holding still cut hip direction
+#     reversals during a landing from 4.8 to 0.7 and settle time from 2.3s
+#     to 1.5s, with no change to the lift itself.
+IDLE_TRAVEL = 0.0
 # "Is the person lifting a leg", as a fraction of swing-hip travel.
 # Deliberately low. Until a lift is detected the leg follows the person
 # unsupported, and an unsupported partial lift leans the robot (0.15 of

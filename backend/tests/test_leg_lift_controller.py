@@ -298,6 +298,41 @@ class TestUnseenLegs:
             assert j not in omitted, j
 
 
+class TestNoSwayFromCameraJitter:
+    """Reported: the hips sway sideways when the foot is set down. Traced to
+    the legs copying tiny, jittery hip movements whenever no lift was active
+    -- invisible as mimicry, but the hip rolls flipped every frame and rocked
+    the pelvis. Under realistic noise that meant ~4.8 direction reversals of
+    the hips per landing; holding the legs still made it 0.7."""
+
+    def test_legs_hold_stand_under_jitter_when_not_lifting(self):
+        import random
+
+        rng = random.Random(0)
+        ctl = LegLiftController()
+        for _ in range(int(3.0 / DT)):
+            noisy = {j: v + rng.gauss(0.0, 0.05) for j, v in STAND.items()}
+            out = ctl.update(noisy, DT)
+            if ctl.phase is Phase.IDLE:
+                for j in STAND:
+                    assert out[j] == pytest.approx(STAND[j], abs=1e-9), j
+
+    def test_legs_hold_stand_under_jitter_after_a_landing(self):
+        import random
+
+        rng = random.Random(1)
+        ctl = LegLiftController()
+        _run(ctl, _lifted("l"), 2.0)
+        _run(ctl, dict(STAND), 4.0)
+        assert ctl.phase is Phase.IDLE
+        for _ in range(int(2.0 / DT)):
+            noisy = {j: v + rng.gauss(0.0, 0.05) for j, v in STAND.items()}
+            out = ctl.update(noisy, DT)
+            if ctl.phase is Phase.IDLE:
+                for j in ("l_hip_roll", "r_hip_roll"):
+                    assert out[j] == pytest.approx(STAND[j], abs=1e-9), j
+
+
 class TestNothingSteps:
     def test_every_leg_and_ankle_joint_is_rate_limited(self):
         ctl = LegLiftController()
