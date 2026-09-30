@@ -460,6 +460,31 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.16 — Hardware leg-lift check (tool) ✅ (2026-09-30)
+
+Before the first real-robot leg lift. Known gaps: **both ankle-roll
+directions are unverified guesses** (`hardware_angle_utils.py` HW_DIRECTION)
+and the whole shift relies on them; knee/hip-pitch ranges were never swept;
+the ~3cm shift was tuned in sim.
+
+`scripts/leg_lift_hardware_check.py` (planning in
+`backend/app/robot/leg_lift_check.py`, tests `test_leg_lift_check.py`),
+run in order:
+
+| Step | Robot | Checks |
+|---|---|---|
+| `ankles` | held in the air | each ankle roll alone: sole edge on the robot's right rises (sim-measured) |
+| `hips` | held in the air | each hip roll alone: foot swings ~3cm to the robot's left |
+| `shift` | standing, spotter | full parallelogram each way, 2s, no lift; IMU roll change (sim 1–3°) |
+| `lift` | standing, spotter | real `LegLiftController`, scripted person, default 20% height, 3x slower; IMU checked every tick, >8° lean → foot comes down the controller's usual way |
+
+All moves go through the server's `/move` (collision + fall check, sim
+mirror, normal hardware conversion); only the 8 leg/ankle-roll servos.
+A "no" answer names the HW_DIRECTION entry to flip. `--dry-run` prints the
+plan; `--rehearse` runs everything on an in-process simulator (never the
+server or robot). Rehearsed: all steps pass, shift 1.2/3.2°, lift 1.0/2.0°;
+forced abort brings the foot down upright.
+
 ## Phase 2.15 — No wobble after the foot is down ✅ (2026-09-30)
 
 Live report after 2.14: lifts and lands cleanly, but once the foot is on
