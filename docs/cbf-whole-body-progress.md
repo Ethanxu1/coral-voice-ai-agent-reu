@@ -460,6 +460,76 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.14 — Knee follows the hip; leg readings logged ✅ (2026-09-30)
+
+Live report after 2.13: fell a couple of times, often didn't recognise the
+raised leg, foot wobbled and **kicked forward** before landing, and the
+robot **turned sideways** while lifting.
+
+**From the follow log:** lifted legs often had the hip raised with the knee
+at stand (`r_hip_pitch 1.06, r_knee -0.925`), i.e. a straight leg raised
+forward, and on lowering the knee straightened before the hip. The knee
+was copied from the camera, whose knee reading is unreliable when the knee
+comes toward it (ankle depth flattened, or ankle not seen). Every earlier
+test used a bent knee (bend == hip flex), so none saw this.
+
+**Reproduced** (`knee_shape.py`, person knee shapes: bent / straight /
+knee-first / noisy / ankle not seen): straight or unseen-ankle raises put
+the foot up to 95mm forward, rolled ~10° and **turned the robot 20–46°**.
+
+**Fix:** during a lift the knee is no longer copied — it bends
+`KNEE_PER_HIP = 1.8` rad per rad of hip flex, so the foot rises and lowers
+under the hip whatever the camera reports for the knee.
+
+| KNEE_PER_HIP | foot forward within 15mm of floor | peak clearance (45°) |
+|---|---|---|
+| 1.0 (= what was tested) | 27mm | 4.2cm |
+| **1.8** | **5mm** | **6.8cm** |
+| 2.2 | 0mm | 6.8cm, but knee saturates by 30° |
+
+After: every knee shape behaves the same — 30/30 up under noise, yaw ≤ 2°,
+kick ≤ 5mm. Sequences 25/25, holds 24/24, high raises lift 6.8cm and hold,
+live pipeline noisy 12/12 (lean at touchdown ≤ 7%, roll ≤ 2.6°).
+
+**Not recognised:** the log could not say why — it sampled one leg pose
+per 2s. The follow tick now logs `leg_reading`: peak lift reading per leg
+(a lift starts at `LIFT_ON` = 0.08) and the share of frames each leg was
+unseen (`LegLiftController.take_reading()`). Next live session will show
+whether the camera lost the leg or read it too low.
+
+## Phase 2.13 — Straighten up while the foot comes down ✅ (2026-09-30)
+
+Live report after 2.12: the robot sets the foot down still leaned over at
+the hips, holds that, then straightens ~a second later. Wanted: the lean
+corrected as the foot comes down, so both finish together.
+
+**Measured** (live pipeline, pelvis sideways offset at the moment the swing
+foot first touches): robot-R landed with the pelvis **75–92% still
+across** in a third of runs, then took 0.5–0.8s more to centre. The weight
+was coupled only to the last `TOUCHDOWN_ZONE` (0.25) of foot travel, i.e.
+it started back ~10mm above the floor.
+
+**Fix:** new `WEIGHT_ZONE = 0.5` — the weight comes back in step with the
+foot over the lower half of the lift — and `TOUCHDOWN_RATE` 0.4 → 0.7,
+cutting the slow final approach from ~0.6s to ~0.35s.
+
+| Live pipeline, noisy (12 runs) | Before | After |
+|---|---|---|
+| Worst lean left at touchdown | 76% | 15% |
+| Mean lean left at touchdown | 6.3mm | 2.1mm |
+| Worst landing roll | 3.0° | 2.8° |
+| Stay up | 12/12 | 12/12 |
+
+Safety check for the new risk (standing on one foot with the weight only
+partly across when the leg is **held** part-raised): holds at 12–40°, both
+legs, clean and noisy — 24/24 up, lean while held ≤ 1.7°. Sequences,
+50% dropout (60/60) and high raises unchanged. `WEIGHT_ZONE = 0.7` was
+tried: no better, rolled slightly more (3.2°).
+
+Remaining time from the person's foot down to the robot's foot down
+(~0.5–1.0s) is mostly vision smoothing + the lift-ended decision, not the
+landing itself.
+
 ## Phase 2.12 — Hip sway on landing ✅ (2026-09-30)
 
 Live report: landings no longer fall, but the hips sway sideways when the

@@ -52,6 +52,18 @@ SHIFT_SECONDS = 0.25
 LIFT_SECONDS = 0.3
 # Swing-leg travel during a supported lift.
 LIFT_TRAVEL = 0.8
+# During a lift the knee is NOT copied from the person: it bends by this
+# many rad per rad of hip flex, so the foot always rises and lowers under
+# the hip. Traced live: the camera's knee reading is unreliable when the
+# knee comes toward it (ankle depth flattened, or ankle not seen at all),
+# so the robot lifted a STRAIGHT leg -- hip raised, knee at stand -- and on
+# the way down the knee straightened before the hip. Straight-leg raises put
+# the foot up to 95mm forward, rolled the robot ~10 deg and TURNED it 20-46
+# deg; the foot also kicked forward just before landing.
+# Sweep (foot forward within 15mm of the floor / peak clearance, 45 deg):
+#   1.0  27mm / 4.2cm    1.8  5mm / 6.8cm    2.2  0mm, but the knee hits its
+#   limit by a 30 deg raise, so small and large raises look the same.
+KNEE_PER_HIP = 1.8
 # Leg travel allowed when NOT in a supported lift: none -- the legs hold
 # stand until a lift is detected.
 #   - Any lift before the weight has shifted is unsupported; even a partial
@@ -111,13 +123,22 @@ LOWER_RATE = 2.0
 #      (Waiting after touchdown made it worse for the same reason.)
 # So, within TOUCHDOWN_ZONE of the floor (fraction of each joint's travel):
 #   - the foot comes down no faster than TOUCHDOWN_RATE (fraction/s);
-#   - the weight comes back IN STEP with the foot (_landing_weight_fraction),
-#     so it is centred by the time the leg is straight;
 #   - on the way back UP the foot may not outrun the shift in place
 #     (_supported_lift), or re-lifting mid-landing topples it.
+# And within WEIGHT_ZONE of the floor the weight comes back IN STEP with
+# the foot (_landing_weight_fraction), so it is centred as the foot lands.
 # Whatever shift remains after touchdown eases out over UNSHIFT_SECONDS.
 TOUCHDOWN_ZONE = 0.25
-TOUCHDOWN_RATE = 0.4
+TOUCHDOWN_RATE = 0.7
+# Reported live: the foot was set down with the hips still leaned over,
+# and the robot straightened ~a second later. With the weight coupled only
+# to the last TOUCHDOWN_ZONE, it started back ~10mm above the floor, and
+# the pelvis was still 75-92% across when the foot touched (live pipeline,
+# robot-R). Spread over the lower half of the lift instead, under noise:
+# worst lean at touchdown 76% -> 15%, worst landing roll 3.0 -> 2.8 deg,
+# 12/12 stay up; holding a leg part-raised anywhere from 12-40 deg stays up
+# (24/24) and leans at most 1.7 deg. 0.7 was no better and rolled more.
+WEIGHT_ZONE = 0.5
 UNSHIFT_SECONDS = 0.7
 # A leg joint missing from a frame means "not seen", not "at stand". A knee
 # raised toward the camera is dropped by the depth gate from ~75 deg up
@@ -206,6 +227,10 @@ def lift_fraction(side: str, targets: dict[str, float]) -> float:
     return max(0.0, min(1.0, signed_lift(side, targets)))
 
 
+def _new_reading() -> dict[str, float]:
+    return {"frames": 0, "l_peak": 0.0, "r_peak": 0.0, "l_unseen": 0, "r_unseen": 0}
+
+
 class LegLiftController:
     def __init__(self) -> None:
         self.reset()
@@ -228,6 +253,16 @@ class LegLiftController:
         self._unshift_from: dict[str, float] | None = None
         self._unshift_t = 0.0
         self._cmd: dict[str, float] = {j: _stand(j) for j in LEG_JOINTS + ANKLES}
+        self._reading = _new_reading()
+
+    def take_reading(self) -> dict[str, float]:
+        """What the camera reported for the legs since the last call: peak
+        lift per leg (fraction of hip travel; a lift starts at LIFT_ON) and
+        the share of frames each leg was not seen. For the follow log --
+        without it, a lift that was never recognised cannot be diagnosed."""
+        r, self._reading = self._reading, _new_reading()
+        n = max(1, r.pop("frames"))
+        return {k: round(v / n if k.endswith("unseen") else v, 3) for k, v in r.items()}
 
     def _slew(self, goals: dict[str, float], dt: float) -> None:
         unshifting = self.phase is Phase.UNSHIFTING
@@ -250,6 +285,13 @@ class LegLiftController:
         it with every leg and ankle joint replaced by the controlled,
         rate-limited command. Other joints pass through untouched."""
         dt = min(dt, MAX_DT)
+        self._reading["frames"] += 1
+        for s_ in ("l", "r"):
+            if f"{s_}_hip_pitch" in desired:
+                self._reading[f"{s_}_peak"] = max(
+                    self._reading[f"{s_}_peak"], signed_lift(s_, desired))
+            else:
+                self._reading[f"{s_}_unseen"] += 1
         desired = self._fill_unseen_legs(desired, dt)
         # Phase decisions use each leg's SIGNED lift, low-passed, with the
         # difference taken afterwards. Filtering |left - right| instead
@@ -325,7 +367,7 @@ class LegLiftController:
         """How much of the weight shift to hold, 0..1, as the foot comes down.
 
         Full shift until the lifted foot has been clear of the floor and is
-        now coming back into the last TOUCHDOWN_ZONE; from there the hips
+        now coming back into the last WEIGHT_ZONE; from there the hips
         ease back in step with the foot, so the weight is centred by the time
         the leg is straight.
 
@@ -347,7 +389,7 @@ class LegLiftController:
             # shift only grows as the foot rises -- so a re-lift crept up.
             return 1.0
         joint = f"{self.swing}_hip_pitch"
-        zone = TOUCHDOWN_ZONE * _reach(joint)
+        zone = WEIGHT_ZONE * _reach(joint)
         # Only a lowering the PERSON actually made counts: use the higher of
         # the commanded leg and the smoothed reading. A run of dropped frames
         # can pull the commanded leg into the final approach while the person
@@ -408,11 +450,10 @@ class LegLiftController:
 
         swing_joints = (f"{swing}_hip_pitch", f"{swing}_knee")
         if self.phase in (Phase.LIFTING, Phase.LOWERING):
-            limited = limit_leg_travel(
-                {j: desired.get(j, _stand(j)) for j in swing_joints}, LIFT_TRAVEL
-            )
+            hip = f"{swing}_hip_pitch"
+            limited = limit_leg_travel({hip: desired.get(hip, _stand(hip))}, LIFT_TRAVEL)
             held = {}
-            for j in swing_joints:
+            for j in (hip,):
                 if self.phase is Phase.LOWERING:
                     wanted = 0.0
                 else:
@@ -430,10 +471,10 @@ class LegLiftController:
                 # upward movement; it never forces the foot down.
                 ceiling = self._supported_lift(j)
                 held[j] = min(amount, max(previous, ceiling))
-                if j == f"{swing}_hip_pitch":
-                    self._rising = self.phase is Phase.LIFTING and wanted > previous + 1e-3
+                self._rising = self.phase is Phase.LIFTING and wanted > previous + 1e-3
+            knee = f"{swing}_knee"
+            held[knee] = min(KNEE_PER_HIP * held[hip], _reach(knee))
             self._held_swing = held
-            hip = f"{swing}_hip_pitch"
             if held[hip] > TOUCHDOWN_ZONE * _reach(hip):
                 # Foot has been properly clear of the floor this lift, so the
                 # way it comes back down counts as a landing. Never set on the

@@ -25,6 +25,7 @@ from app.vision.leg_lift_controller import (
     HIP_ROLLS,
     HOLD_MISSING_SECONDS,
     IDLE_TRAVEL,
+    KNEE_PER_HIP,
     LOWER_RATE,
     TOUCHDOWN_RATE,
     TOUCHDOWN_ZONE,
@@ -226,6 +227,39 @@ class TestWeightComesBackWhileLanding:
                 return
         pytest.fail("foot never came down")
 
+    def test_hips_are_already_coming_back_as_the_foot_nears_the_floor(self):
+        """Reported live: the foot was set down with the hips still leaned
+        over, then the robot straightened ~a second later. Traced: the
+        weight only started back in the last ~10mm of foot height, so the
+        pelvis was still 75-92% across at touchdown. (Instant drop here, so
+        the rate-limited hips trail: 70% now, 100% before.)"""
+        ctl = LegLiftController()
+        _run(ctl, _lifted("l"), 2.0)
+        reach = _reach("l_hip_pitch")
+        for _ in range(int(4.0 / DT)):
+            out = ctl.update(dict(STAND), DT)
+            lift = STAND["l_hip_pitch"] - out["l_hip_pitch"]
+            if lift <= TOUCHDOWN_ZONE * reach:
+                shift = abs(out["l_ank_roll"] - _stand("l_ank_roll")) / ANKLE_SHIFT
+                assert shift <= 0.8, f"hips still {shift:.0%} across entering the final approach"
+                return
+        pytest.fail("foot never came down")
+
+    def test_final_approach_is_brief(self):
+        """The slow last stretch before the floor was 0.6s of the delay
+        between the person's foot and the robot's being down."""
+        ctl = LegLiftController()
+        _run(ctl, _lifted("l"), 2.0)
+        zone = TOUCHDOWN_ZONE * _reach("l_hip_pitch")
+        in_zone = 0
+        for _ in range(int(4.0 / DT)):
+            out = ctl.update(dict(STAND), DT)
+            lift = STAND["l_hip_pitch"] - out["l_hip_pitch"]
+            if lift <= 1e-6:
+                break
+            in_zone += lift <= zone
+        assert in_zone * DT <= 0.45, f"final approach took {in_zone * DT:.2f}s"
+
     def test_weight_stays_across_while_the_foot_is_high(self):
         """Only the last stretch before the floor moves the weight back --
         high up, the robot is still standing on one foot."""
@@ -250,6 +284,64 @@ class TestWeightComesBackWhileLanding:
                 assert lift <= zone + 1e-6, "foot rose high before the weight was across"
         assert ctl.phase is Phase.LIFTING
         assert STAND["l_hip_pitch"] - out["l_hip_pitch"] > 0.3
+
+
+class TestKneeFollowsHip:
+    """Reported live: the robot raised a straight leg, kicked the foot
+    forward before landing, turned sideways and fell. The camera's knee
+    reading is unreliable when the knee comes toward it, and the robot
+    copied it: hip raised with the knee at stand (log: r_hip_pitch 1.06,
+    r_knee at stand), and on lowering the knee straightened first."""
+
+    @staticmethod
+    def _bend(out, side="l"):
+        return abs(out[f"{side}_knee"] - STAND[f"{side}_knee"])
+
+    @staticmethod
+    def _flex(out, side="l"):
+        return abs(out[f"{side}_hip_pitch"] - STAND[f"{side}_hip_pitch"])
+
+    def _expected(self, out):
+        return min(KNEE_PER_HIP * self._flex(out), _reach("l_knee"))
+
+    def test_a_straight_leg_reading_still_bends_the_knee(self):
+        ctl = LegLiftController()
+        straight = _lifted("l")
+        straight["l_knee"] = STAND["l_knee"]
+        out = _run(ctl, straight, 2.0)
+        assert self._flex(out) > 0.3
+        assert self._bend(out) == pytest.approx(self._expected(out), abs=1e-6)
+
+    def test_a_missing_knee_reading_still_bends_the_knee(self):
+        ctl = LegLiftController()
+        no_knee = _lifted("l")
+        del no_knee["l_knee"]
+        out = _run(ctl, no_knee, 2.0)
+        assert self._bend(out) == pytest.approx(self._expected(out), abs=1e-6)
+
+    def test_knee_does_not_straighten_ahead_of_the_hip_when_lowering(self):
+        ctl = LegLiftController()
+        _run(ctl, _lifted("l"), 2.0)
+        knee_first = _lifted("l")
+        knee_first["l_knee"] = STAND["l_knee"]
+        frames = [ctl.update(knee_first, DT) for _ in range(5)]
+        frames += [ctl.update(dict(STAND), DT) for _ in range(int(3.0 / DT))]
+        for out in frames:
+            assert self._bend(out) == pytest.approx(self._expected(out), abs=1e-6)
+
+
+class TestLegReadingLog:
+    def test_reports_peak_lift_and_unseen_share_then_resets(self):
+        ctl = LegLiftController()
+        ctl.update(_lifted("l", 0.5), DT)
+        unseen = dict(STAND)
+        del unseen["r_hip_pitch"]
+        ctl.update(unseen, DT)
+        r = ctl.take_reading()
+        assert r["l_peak"] == pytest.approx(0.5, abs=1e-3)
+        assert r["r_unseen"] == pytest.approx(0.5)
+        assert r["l_unseen"] == 0
+        assert ctl.take_reading() == {"l_peak": 0.0, "r_peak": 0.0, "l_unseen": 0, "r_unseen": 0}
 
 
 class TestUnseenLegs:

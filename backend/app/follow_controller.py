@@ -308,6 +308,7 @@ class FollowController:
                                     stability_margin=margin,
                                     leg_targets=last_leg_targets,
                                     lift_phase=None if lift_ctl is None else lift_ctl.phase.value,
+                                    leg_reading=None if lift_ctl is None else lift_ctl.take_reading(),
                                 )
                             dispatch_count = skip_count = empty_target_count = 0
                             safety_hold_count = 0
