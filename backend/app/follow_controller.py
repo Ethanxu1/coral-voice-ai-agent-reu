@@ -210,7 +210,10 @@ class FollowController:
                             continue
                         body = data.get("body_landmarks") or []
                         head = data.get("head_pose")
-                        targets = compute_joint_targets(body, head, leg_travel_limit=leg_limit) if body else {}
+                        targets = compute_joint_targets(
+                            body, head, leg_travel_limit=leg_limit,
+                            omit_untrusted_legs=lift_ctl is not None,
+                        ) if body else {}
                         if not targets:
                             # Person partly out of frame — try again on the next push.
                             latest_event.clear()
@@ -251,7 +254,10 @@ class FollowController:
 
                         body = data.get("body_landmarks") or []
                         head = data.get("head_pose")
-                        targets = compute_joint_targets(body, head, leg_travel_limit=leg_limit) if body else {}
+                        targets = compute_joint_targets(
+                            body, head, leg_travel_limit=leg_limit,
+                            omit_untrusted_legs=lift_ctl is not None,
+                        ) if body else {}
                         if not targets:
                             empty_target_count += 1
                         else:

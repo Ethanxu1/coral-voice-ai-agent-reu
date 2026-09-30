@@ -460,6 +460,104 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.11 — High knee raises lift again ✅ (2026-09-29)
+
+Live report after 2.10: "it's not lifting its leg". The follow log showed
+the lift phase stuck at `idle` all session.
+
+**Cause, reproduced:** with realistic camera geometry — the knee's
+on-screen position rising toward the hip as it comes forward — the depth
+gate drops the raised leg from ~75°, because the thigh looks too short on
+screen. Raised knees also often fall below the knee-visibility threshold,
+in which case retargeting emitted the stand pose. Both read as "leg at
+stand", so the robot started the lift and put the foot straight back
+down (peak 2.5–2.9cm, then idle). **Every earlier test missed it:** the
+test bodies gave the hips no image position and kept the knee's fixed,
+so the thigh always looked long.
+
+**Fix:** "not seen" is no longer "at stand".
+- `compute_joint_targets(..., omit_untrusted_legs=True)` (follow loop only)
+  leaves legs out when the knees aren't trusted, instead of emitting stand.
+- `LegLiftController` holds the last value actually seen for a missing leg
+  joint for up to `HOLD_MISSING_SECONDS` (4s), then treats it as down.
+
+**Two follow-on bugs found while verifying, both fixed:**
+- The landing weight-shift could be triggered by a run of dropped frames
+  pulling the commanded leg low while the person still held it up. It now
+  also requires the smoothed reading to be low.
+- Re-lifting after an un-shift let the foot rise in proportion to a
+  partial re-shift — effectively shift and lift together, which topples
+  it. On the way up the foot now waits until the shift is complete.
+
+**Result:** 90° raise held 2.5s → foot up 100% of the hold, both legs,
+with and without knee-visibility loss (was 0%). 12/12 realistic high-raise
+cycles stay up (worst roll 1.7°). Adversarial dropout 60/60; no-gap
+marching and rapid stepping worst roll now 1.7–2.4°.
+
+Tests: `TestUnseenLegs`, `test_high_knee_raise_toward_the_camera_lifts_and_holds`
+(realistic geometry, both legs, ± knee-visibility loss) — shown to fail
+with the hold disabled (foot up 0/40 hold frames) and with lost legs
+reported as stand.
+
+## Phase 2.10 — Robust landing (putting the foot down) ✅ (2026-09-29)
+
+Live report: after putting the lifted foot down the robot wobbled "as if
+about to fall", and fell once.
+
+**Reproducing it took a more faithful test.** The fast harness (stepping
+physics by hand) never fell, even with the old landing. A new harness runs
+the *real* follow loop end to end — fake vision WebSocket streaming a
+scripted person at 30Hz → `FollowController` (real smoothing, 20Hz ticks,
+skip-while-in-flight) → threaded `SimController` dispatch → the
+simulator's own real-time physics thread. It captured 2 falls in 16 runs,
+with full timelines.
+
+**Cause (traced, both falls identical):** the real foot touched the floor
+while the *command* was still easing through the final approach (with the
+hips shifted, the floor comes before the leg is straight). For ~0.6s the
+leg kept extending against the floor with the hips still over the other
+foot; that pushed the landing side of the pelvis up and the robot tipped
+steadily (−0.7° → −5.8°). By the time the hip slide-back began, the landed
+foot was lifting off again and it rolled over. An earlier hypothesis —
+slide-back starting before the real foot was down — was checked with
+contact sensing and ruled out (foot down in every run).
+
+**Fixes, each verified:**
+
+- The weight comes back **in step with the foot** during the final
+  approach (`_landing_weight_fraction`), centred by the time the leg is
+  straight. Safe on the way down: with the hips half back the CoM is
+  still over the standing foot.
+- The foot slows in the final approach (`TOUCHDOWN_ZONE/RATE`).
+- On the way back **up**, the foot may not rise faster than the shift in
+  place (`_supported_lift`). Needed because the first version of the
+  landing fix made no-gap marching fall every time; and coupling shift to
+  foot height on the way up deadlocked a re-lift, so that coupling applies
+  only while descending.
+- Remaining shift eases out (zero speed at both ends) over 0.7s.
+- **Removed:** a pause after touchdown. Sweeping it showed it only lets the
+  tip develop (noisy worst landing roll 4.9° → 7.4–8.5° with a 0.1–0.2s
+  pause).
+
+**Result:**
+
+| | Before | After |
+|---|---|---|
+| Live pipeline, 16 runs | 2 falls | 32/32 up across two batches, worst roll 4.9° (run-to-run variance; most 1–3°) |
+| Landing roll, robot-R (fixture) | 6.59° | 1.89° |
+| Landing roll under noise, 20 runs | worst 4.9° | worst 3.4° |
+| No-gap marching / rapid stepping | up (old) / fell (1st fix) | up, worst ≤4.7° |
+| 50% leg dropout + frame drops + jitter | 58/60 | 60/60 |
+
+Tests: `TestWeightComesBackWhileLanding`, `TestLanding`, and a physics
+landing-roll threshold (3.0°) that fails with the weight not moved back
+(4.7°) and with the original landing (6.6°). Each fix was confirmed caught
+by removing it.
+
+**Still true:** nothing here reproduces the user's *exact* live fall —
+the faithful pipeline reproduces *a* landing fall with the same symptom,
+and that one is fixed. Not yet on hardware.
+
 ## Phase 2.9 — Upright, symmetric, faster leg lift ✅ (2026-09-29)
 
 Live feedback on Phase 2.8: the lift worked but (1) the robot leaned

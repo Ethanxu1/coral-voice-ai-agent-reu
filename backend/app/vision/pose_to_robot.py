@@ -275,8 +275,15 @@ def compute_joint_targets(
     body_landmarks: list[dict],
     head_pose: Optional[dict],
     leg_travel_limit: Optional[float] = None,
+    omit_untrusted_legs: bool = False,
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
+
+    `omit_untrusted_legs`: when the knees are not confidently visible, leave
+    the leg joints OUT instead of emitting the stand pose. Callers that track
+    legs over time (the follow loop's LegLiftController) need to tell "legs
+    not seen this frame" apart from "legs at stand" -- a raised knee often
+    loses tracking, and reading that as standing aborted lifts mid-air.
 
     Mirror mapping: MediaPipe LEFT (person's left) → robot RIGHT arm/leg; vice
     versa. Returns a subset of joint names — only those with confident
@@ -395,8 +402,10 @@ def compute_joint_targets(
         # of driving the legs off bad data we snap them back to the stand pose.
         if R_pelvis is None or not knees_confidently_visible(body_landmarks):
             # Knees not confidently visible (or degenerate pelvis frame) → return
-            # the legs to stand rather than holding a stale/bent pose.
-            targets.update(_STAND_LEG_TARGETS)
+            # the legs to stand rather than holding a stale/bent pose -- unless
+            # the caller tracks legs itself and wants "not seen" instead.
+            if not omit_untrusted_legs:
+                targets.update(_STAND_LEG_TARGETS)
         else:
             # Person's RIGHT leg → robot's LEFT leg
             if all(
