@@ -260,6 +260,37 @@ class TestWeightComesBackWhileLanding:
             in_zone += lift <= zone
         assert in_zone * DT <= 0.45, f"final approach took {in_zone * DT:.2f}s"
 
+    def test_camera_jitter_does_not_push_the_weight_back_while_landing(self):
+        """Reported live: after the foot was down the robot kept wobbling for
+        about a second. Traced: a jitter of the leg reading upward -- even
+        0.001 rad -- counted as the person lifting again, which sends the
+        weight straight back over the standing foot; the hips slid 17mm back
+        with both feet down and the landed foot partly lifted off."""
+        ctl = LegLiftController()
+        _run(ctl, _lifted("l"), 2.0)
+        jitter = 0.03  # rad of hip pitch, ~3.6% of travel
+        lowering = int(1.0 / DT)  # the person lowers gradually, as people do
+        lowest = 1.0
+        for i in range(int(4.0 / DT)):
+            frame = _lifted("l", 0.8 * max(0.0, 1 - (i + 1) / lowering))
+            frame["l_hip_pitch"] -= jitter if i % 2 else 0.0
+            out = ctl.update(frame, DT)
+            shift = abs(out["l_ank_roll"] - _stand("l_ank_roll")) / ANKLE_SHIFT
+            # Was 24% back up. A ~1% (0.3mm) wiggle from the smoothed
+            # reading's own jitter is invisible and allowed.
+            assert shift <= lowest + 0.03, f"weight went back up to {shift:.0%} at {i * DT:.2f}s"
+            lowest = min(lowest, shift)
+        assert ctl.phase is Phase.IDLE
+
+    def test_a_leg_held_low_keeps_the_full_shift(self):
+        """A 12 deg hold sat at half weight on one foot (the weight was tied
+        to height alone) and, with camera jitter, tipped 19.7 deg."""
+        ctl = LegLiftController()
+        out = _run(ctl, _lifted("l", 0.3), 2.0)
+        assert ctl.phase is Phase.LIFTING
+        shift = abs(out["l_ank_roll"] - _stand("l_ank_roll")) / ANKLE_SHIFT
+        assert shift == pytest.approx(1.0, abs=0.02)
+
     def test_weight_stays_across_while_the_foot_is_high(self):
         """Only the last stretch before the floor moves the weight back --
         high up, the robot is still standing on one foot."""

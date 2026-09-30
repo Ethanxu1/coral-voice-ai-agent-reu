@@ -460,6 +460,50 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.15 — No wobble after the foot is down ✅ (2026-09-30)
+
+Live report after 2.14: lifts and lands cleanly, but once the foot is on
+the ground the robot wobbles for about a second before standing still.
+
+**Measured** (`live_settle.py`: live pipeline, noisy; roll/pitch range and
+time to stay within 0.4° after swing-foot touchdown; standing under the
+same noise rocks only 0.1°): a third of landings kept rocking up to 1.2s.
+Clean landings settled in 0.2s. Leg commands were still after touchdown
+in calm runs.
+
+**Rejected on evidence first:** "hips arrive too fast" — returning the
+weight earlier (done at 8% / 15% of travel, or `WEIGHT_ZONE` 0.7), or
+keeping 15–30% until touchdown, all rocked MORE (roll range 1.5–2.0° vs
+1.0°, still-after 0.5–1.3s). Slower touchdown (0.4) rocked more too.
+
+**Cause:** `_rising` (→ full weight shift at once) fired on ANY rise of the
+leg reading, 0.001 rad. While the person lowered their leg, camera jitter
+flickered it on, pushing the weight 24–49% back toward the standing foot
+around touchdown: pelvis slid 17mm back with both feet down, part of the
+landed foot lifted, then it rocked back. Every wobbly run had it; the
+calm one did not.
+
+**Fix:** `RISE_MARGIN = 0.1` — the reading must rise 10% of travel above
+the held foot to count as lifting again.
+
+**Exposed a hidden flaw:** with the flicker gone, a leg held LOW (12°)
+sat at half weight (the weight was tied to height alone) and tipped 19.7°
+under jitter — the flicker had been masking it. Fix: the landing weight is
+measured from **this lift's peak** (`_peak`): full shift while held at any
+height, coming back only as the foot descends from there.
+
+| Live pipeline, noisy (12 runs) | Before | After |
+|---|---|---|
+| Worst time still moving after touchdown | 1.22s | 0.50s |
+| Mean | 0.51s | 0.24s |
+| Mean roll range after touchdown | 1.27° | 0.84° |
+
+Holds 24/24 (12° noisy 19.7° → ok), sequences 25/25, dropout 60/60, knee
+shapes 30/30, high raises unchanged. **Cost:** rapid 0.3s up/down stepping
+under noise rolls up to 4.7° (was 2.5°, still 5/5 up) — the old flicker
+kept the weight across longer there. Robot-R still pitches ~2° as the
+foot takes weight (single step, settles in ~0.2s).
+
 ## Phase 2.14 — Knee follows the hip; leg readings logged ✅ (2026-09-30)
 
 Live report after 2.13: fell a couple of times, often didn't recognise the

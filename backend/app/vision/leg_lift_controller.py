@@ -140,6 +140,15 @@ TOUCHDOWN_RATE = 0.7
 # (24/24) and leans at most 1.7 deg. 0.7 was no better and rolled more.
 WEIGHT_ZONE = 0.5
 UNSHIFT_SECONDS = 0.7
+# How far the leg reading must rise above the held foot (fraction of travel)
+# to count as lifting again, which sends the weight fully back across.
+# Reported live: the robot kept wobbling for ~1s after the foot was down.
+# Traced: any rise at all (was 0.001 rad) counted, so camera jitter while
+# the person lowered their leg re-shifted the hips 24-49% back toward the
+# standing foot around touchdown -- a 17mm slide with both feet down that
+# partly lifted the landed foot. Every wobbly noisy landing had it; calm
+# ones did not. A real re-lift clears this in a frame or two.
+RISE_MARGIN = 0.1
 # A leg joint missing from a frame means "not seen", not "at stand". A knee
 # raised toward the camera is dropped by the depth gate from ~75 deg up
 # (the thigh looks too short on screen), and raised knees often fall below
@@ -244,6 +253,8 @@ class LegLiftController:
         # direction (see LOWER_RATE).
         self._held_swing: dict[str, float] | None = None
         self._cleared = False
+        # Highest the foot has been held this lift (rad of hip flex).
+        self._peak = 0.0
         self._rising = False
         self._last_seen: dict[str, float] = {}
         self._unseen_for: dict[str, float] = {}
@@ -367,7 +378,8 @@ class LegLiftController:
         """How much of the weight shift to hold, 0..1, as the foot comes down.
 
         Full shift until the lifted foot has been clear of the floor and is
-        now coming back into the last WEIGHT_ZONE; from there the hips
+        now coming back into the last WEIGHT_ZONE (or down from its peak, if
+        it was held lower than that); from there the hips
         ease back in step with the foot, so the weight is centred by the time
         the leg is straight.
 
@@ -389,7 +401,10 @@ class LegLiftController:
             # shift only grows as the foot rises -- so a re-lift crept up.
             return 1.0
         joint = f"{self.swing}_hip_pitch"
-        zone = WEIGHT_ZONE * _reach(joint)
+        # Measured from THIS lift's peak, so a leg held low still gets the
+        # full shift: a 12 deg hold otherwise sat at half weight on one foot
+        # and, with camera jitter, tipped 19.7 deg (traced).
+        zone = min(WEIGHT_ZONE * _reach(joint), self._peak)
         # Only a lowering the PERSON actually made counts: use the higher of
         # the commanded leg and the smoothed reading. A run of dropped frames
         # can pull the commanded leg into the final approach while the person
@@ -419,7 +434,7 @@ class LegLiftController:
             {j: desired.get(j, _stand(j)) for j in LEG_JOINTS}, IDLE_TRAVEL
         )
         if self.phase is Phase.IDLE:
-            self._cleared = False
+            self._cleared, self._peak = False, 0.0
             return {**idle_legs, **{a: _stand(a) for a in ANKLES}}
 
         swing = self.swing
@@ -471,10 +486,12 @@ class LegLiftController:
                 # upward movement; it never forces the foot down.
                 ceiling = self._supported_lift(j)
                 held[j] = min(amount, max(previous, ceiling))
-                self._rising = self.phase is Phase.LIFTING and wanted > previous + 1e-3
+                self._rising = (self.phase is Phase.LIFTING
+                                and wanted > previous + RISE_MARGIN * _reach(j))
             knee = f"{swing}_knee"
             held[knee] = min(KNEE_PER_HIP * held[hip], _reach(knee))
             self._held_swing = held
+            self._peak = max(self._peak, held[hip])
             if held[hip] > TOUCHDOWN_ZONE * _reach(hip):
                 # Foot has been properly clear of the floor this lift, so the
                 # way it comes back down counts as a landing. Never set on the
@@ -484,7 +501,7 @@ class LegLiftController:
                 goals[j] = _lift_side_only(j, _stand(j) + _lift_sign(j) * amount)
         elif self.phase is Phase.SHIFTING:
             self._held_swing = None
-            self._cleared = False
+            self._cleared, self._peak = False, 0.0
             # Weight not across yet: foot fully planted, so the only thing
             # moving is the hip slide. Even a small unsupported lift here
             # leans the robot before the shift can catch it.
