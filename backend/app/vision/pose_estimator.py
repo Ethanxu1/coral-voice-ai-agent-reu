@@ -725,7 +725,10 @@ class PoseEstimator:
         if not ret:
             return None
 
-        # Mirror the frame across the vertical axis so it reads like a reflection.
+        # Mirror the frame across the vertical axis so the preview reads like a
+        # reflection. This also flips MediaPipe's own left/right landmark labels
+        # relative to the child's true sides; pose_to_robot.py swaps them back,
+        # so the net robot behavior is a shadow convention, not a mirror one.
         frame = cv2.flip(frame, 1)
 
         if self.stability.is_frozen:

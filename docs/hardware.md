@@ -299,7 +299,7 @@ the two, so it is safe, but the true mechanical floor has not been re-measured.
 
 ## 6. Conventions and gotchas
 
-**Left and right are the robot's.** Throughout the code, "left" and "right" refer to the robot's own left and right, not the perspective of a person facing it. The retargeting mirrors accordingly: a person's right arm drives the robot's left arm.
+**Left and right are the robot's.** Throughout the code, "left" and "right" refer to the robot's own left and right, not the perspective of a person facing it. The retargeting follows a shadow convention: a person's right arm drives the robot's right arm (see the "Shadow convention" note in `docs/overview.md`).
 
 **Keep the battery above 10V.** A full charge takes roughly one hour. To maintain the robot's optimal performance, charge it promptly once the voltage drops to **≤10V**
 

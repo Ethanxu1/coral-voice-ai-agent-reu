@@ -79,7 +79,7 @@ Separate process, separate port, because it owns the webcam and runs a continuou
 - `smpl_fit.py` / `smpl_loader.py` — optional per-user body-shape calibration, so the same pose maps to the same joint angles across adults and children. Degrades silently if the SMPL weights aren't installed.
 - `frame_broadcaster.py` — streams frames to the frontend.
 
-**Mirror convention:** the person's right side drives the robot's left arm, so the robot behaves like a partner facing the child rather than a shadow behind them. This mirroring is the single most common source of confusion when reading the code.
+**Shadow convention:** the child's true right side drives the robot's right side, so the robot copies the child directly rather than mirroring them like a partner facing them. This falls out of two flips that cancel each other: `pose_estimator.py` flips the camera frame before MediaPipe runs (so the on-screen preview reads like a reflection), which swaps MediaPipe's own left/right landmark labels relative to the child's true sides, and `pose_to_robot.py` swaps those labels back when mapping to robot joints. Tracing either file in isolation looks like a mirror mapping — this is the single most common source of confusion when reading the code.
 
 ### Pose capture — `/map-features`
 
@@ -138,7 +138,7 @@ Both converge at the safety layer. That convergence is deliberate — it means t
 
 ## 5. Cross-cutting conventions
 
-**Left and right are the robot's**, everywhere in the code. Combined with the mirroring above: a person's right arm drives the robot's left arm.
+**Left and right are the robot's**, everywhere in the code. Combined with the shadow convention above: a person's right arm drives the robot's right arm.
 
 **Angles are radians internally**, degrees at the LLM boundary, and 0–1000 Hiwonder units at the servo boundary.
 

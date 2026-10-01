@@ -1,7 +1,14 @@
 """Map MediaPipe pose_world_landmarks + head pose to robot joint targets.
 
-Mirror mode: person's right side (MediaPipe right_*) → robot's left arm/leg,
-and vice versa. This makes the robot feel like a partner facing the user.
+Landmark labels here are MediaPipe's, computed on the camera frame *after*
+it has already been horizontally flipped upstream in pose_estimator.py (so
+the preview reads like a mirror). That pre-flip swaps MediaPipe's left/right
+labels relative to the child's true anatomical sides, so this module swaps
+them back: MediaPipe right_* → robot's left arm/leg, and vice versa. The two
+swaps together net out to a shadow convention — the child's true right side
+drives the robot's true right side, so the robot copies the child directly
+rather than mirroring them. Don't "fix" the swap in this file in isolation;
+it only produces the shadow behavior in combination with the upstream flip.
 
 Arm angles are extracted in the torso-local frame so shoulder pitch and roll
 are decoupled from each other and from any global torso rotation. Leg angles
@@ -227,9 +234,12 @@ def compute_joint_targets(
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
-    Mirror mapping: MediaPipe LEFT (person's left) → robot RIGHT arm/leg; vice
-    versa. Returns a subset of joint names — only those with confident
-    landmarks and non-degenerate viewing geometry.
+    Landmark-label swap: MediaPipe LEFT (person's left) → robot RIGHT arm/leg;
+    vice versa. This undoes the upstream frame flip in pose_estimator.py, so
+    the net real-world result is a shadow convention: the child's true right
+    arm drives the robot's right arm. See the module docstring. Returns a
+    subset of joint names — only those with confident landmarks and
+    non-degenerate viewing geometry.
 
     Leg sign conventions (sim frame: X forward, Y left, Z up — pinned by the
     hip body placement in ainex.xml; cross-checked against the STAND_LOW_PULSE
