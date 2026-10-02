@@ -146,26 +146,33 @@ def collision_checked_targets(
     return safe_joints, report
 
 
+def sends_to_hardware(sim_only: bool | None) -> bool:
+    """Whether a dispatch with this ``sim_only`` reaches the physical robot."""
+    return sim_only is False or (sim_only is None and state.robot_mode in ("robot", "hardware"))
+
+
 async def dispatch_servo_commands(
-    commands: list[ServoCommand], sim_only: bool | None = None
+    commands: list[ServoCommand], sim_only: bool | None = None, stream: bool = False
 ) -> None:
     """Send commands to the simulator and, when requested, the physical robot.
 
     ``sim_only`` is set by an approved frontend motion request. ``None`` keeps
     the existing server-mode behavior for background flows such as following.
+    ``stream`` sends to the robot without waiting for the motion to finish
+    (``AiNexHardwareController.stream_commands``) -- for continuous streams.
     """
     if not commands:
         return
     dispatches: list[Awaitable[Any]] = []
     if state.sim_dispatcher is not None:
         dispatches.append(asyncio.to_thread(state.sim_dispatcher.send_commands, commands))
-    send_to_hardware = sim_only is False or (
-        sim_only is None and state.robot_mode in ("robot", "hardware")
-    )
+    send_to_hardware = sends_to_hardware(sim_only)
     if send_to_hardware:
         if state.hardware_dispatcher is None:
             state.hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
-        dispatches.append(asyncio.to_thread(state.hardware_dispatcher.send_commands, commands))
+        send = (state.hardware_dispatcher.stream_commands if stream
+                else state.hardware_dispatcher.send_commands)
+        dispatches.append(asyncio.to_thread(send, commands))
     if dispatches:
         results = await asyncio.gather(*dispatches, return_exceptions=True)
         # Hardware is only in sync with what was just built if this dispatch
@@ -178,6 +185,14 @@ async def dispatch_servo_commands(
             raise results[0]
     else:
         state.hardware_in_sync = send_to_hardware
+
+
+async def stream_servo_commands(
+    commands: list[ServoCommand], sim_only: bool | None = None
+) -> None:
+    """dispatch_servo_commands for a continuous stream (follow mode's live
+    ticks): the robot is handed each target without waiting for the motion."""
+    await dispatch_servo_commands(commands, sim_only, stream=True)
 
 
 async def _execute_on_hardware_if_connected(

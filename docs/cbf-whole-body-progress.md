@@ -460,6 +460,26 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.18 — Step 1 of the real-robot plan: streamed servo commands (2026-10-02)
+
+Plan after 2.17: (1) fast commands, (2) servo compliance in sim, (3) IMU
+feedback on the standing leg, then hardware; CBF guard later; WBC only if
+needed. Feed-forward stays as the base layer in sim AND on the robot.
+
+Step 1 done in code (not yet on the robot): Pi `/stream` endpoint +
+`/body_stream` topic play targets without waiting; follow mode's live ticks
+use it; `/move` unchanged for poses, resets, the seed move. Old Pi code →
+automatic fallback to `/move`. After the first deploy: follow waited on
+each Wi-Fi round trip (median 93 ms, worst 765 ms) — now a background
+sender sends only the newest target and stretches each move to outlast the
+gap; and follow no longer stops when a throwaway transcript socket closes. Needs deploying `server.py` and `body.py`
+to `~/ros_ws/src/ainex_demo/nodes/` and a robot check (see fix entry
+`2026-10-02-follow-blocking-moves-on-hardware.md`).
+
+**Then the robot tipped** during arms-only follow: lost legs read as lifted
+and the lift controller slid the hips. Follow now holds the real robot's
+legs at stand (`CORAL_HARDWARE_LEG_MIMICRY`, default off) until steps 2–3.
+
 ## Phase 2.17 — First real-robot check: right ankle was reversed ✅ (2026-10-02)
 
 Results of `leg_lift_hardware_check.py` on the robot:

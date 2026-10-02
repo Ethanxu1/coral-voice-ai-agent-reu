@@ -7,6 +7,9 @@ when the motion is done. No vision, no classifier, no named motions.
 
 Endpoints
     POST /move    execute raw servo commands (blocks until the body finishes)
+    POST /stream  hand servo targets to the body and return at once -- for
+                  continuous streams (follow mode). Latest wins; refused (429)
+                  while a blocking /move is playing.
     GET  /health  liveness probe
     GET  /imu     raw accel/gyro/(magnetometer) floats from the onboard board,
                   straight from ainex_sdk.Board().get_imu() — no
@@ -104,6 +107,10 @@ SERVO_LIMITS: Dict[int, Tuple[int, int]] = {
 }
 
 MIN_MOVE_MS = 100  # floor for any single move duration
+# Floor for a /stream move. Follow mode sends ~45 ms moves every ~50 ms; the
+# /move floor of 100 ms would make every move outlast the gap to the next.
+MIN_STREAM_MS = 20
+STREAM_TOPIC = "/body_stream"
 
 
 def clamp_position(servo_id: int, position: int) -> int:
@@ -116,6 +123,7 @@ _body_srv = None
 _BodyCommandReq = None
 _board = None  # ainex_sdk.Board — onboard IMU (and LED/button/buzzer, unused here)
 _balance_loop = None  # balance_loop.BalanceLoop — None if it failed to load (see _init_ros)
+_stream_pub = None  # rospy.Publisher on STREAM_TOPIC — None until ROS is up
 
 # One motion at a time: overlapping motor commands fight each other, so a
 # second /move while one is playing gets a 429 instead of a hardware lock.
@@ -125,7 +133,7 @@ _move_lock = threading.Lock()
 
 
 def _init_ros() -> None:
-    global _body_srv, _BodyCommandReq, _board, _balance_loop
+    global _body_srv, _BodyCommandReq, _board, _balance_loop, _stream_pub
 
     import rospy
 
@@ -137,7 +145,12 @@ def _init_ros() -> None:
     rospy.loginfo("[server] waiting for /body_commands service...")
     rospy.wait_for_service("/body_commands", timeout=60.0)
     _body_srv = rospy.ServiceProxy("/body_commands", BodyCommand)
-    rospy.loginfo("[server] ROS ready — body service wired")
+    from std_msgs.msg import String  # type: ignore
+
+    # queue_size=1: if the body node falls behind, older targets are dropped
+    # and only the newest is played -- right for a continuous stream.
+    _stream_pub = rospy.Publisher(STREAM_TOPIC, String, queue_size=1)
+    rospy.loginfo("[server] ROS ready — body service and stream wired")
 
     # IMU init failing shouldn't take down /move and /health, which have
     # nothing to do with it and already work fine on their own — log and
@@ -291,6 +304,31 @@ async def move(moves: List[ServoMove]):
         _move_lock.release()
 
     return {"status": "done", "count": sum(len(p) for p in by_duration.values())}
+
+
+@app.post("/stream")
+def stream(moves: List[ServoMove]):
+    """Hand servo targets to the body node and return immediately.
+
+    For continuous streams (follow mode), where /move's wait-until-done made
+    each 45 ms move cost ~0.3 s and turned smooth motion into move-stop
+    jolts (measured 2026-10-02). The servos glide to each target over its
+    duration on their own; the next target simply replaces it.
+    """
+    if _stream_pub is None:
+        raise HTTPException(status_code=503, detail="body stream not initialized")
+    if _move_lock.locked():
+        raise HTTPException(status_code=429, detail="robot busy: a move is already executing")
+    by_duration: Dict[int, Dict[str, int]] = {}
+    for m in moves:
+        name = ID_TO_NAME.get(m.servo_id)
+        if name is None or m.servo_id in _SKIP_SERVO_IDS:
+            continue
+        dur = max(MIN_STREAM_MS, m.duration_ms)
+        by_duration.setdefault(dur, {})[name] = clamp_position(m.servo_id, m.position)
+    if by_duration:
+        _stream_pub.publish(json.dumps([[pulse, dur] for dur, pulse in by_duration.items()]))
+    return {"status": "sent", "count": sum(len(p) for p in by_duration.values())}
 
 
 def main():

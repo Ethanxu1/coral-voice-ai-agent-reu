@@ -105,6 +105,17 @@ CORAL_NO_VIEWER = os.getenv("CORAL_NO_VIEWER", "0").lower() in ("true", "1", "ye
 # injected (docs/cbf-whole-body-progress.md Phase 2.7).
 #
 # Set to "false" to go back to upper-body-only mimicry.
+# Leg mimicry on the REAL robot in follow mode. Off: legs and ankles hold
+# stand whenever follow drives the hardware; arms still follow. 2026-10-02:
+# arms-only follow, the camera misread lost legs as raised, the leg-lift
+# controller slid the hips and the robot tipped -- one-foot stance sags ~10
+# deg on hardware and isn't solved yet (docs/cbf-whole-body-progress.md
+# Phase 2.17). The sim always keeps leg mimicry.
+HARDWARE_LEG_MIMICRY = os.getenv("CORAL_HARDWARE_LEG_MIMICRY", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "true").lower() in (
     "true",
     "1",

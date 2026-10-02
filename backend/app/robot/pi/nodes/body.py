@@ -12,6 +12,10 @@ An optional ``global_duration`` (ms) overrides every frame's duration, e.g. to
 run a multi-frame motion at a single uniform speed.
 
 Service:  /body_commands   (ainex_demo/BodyCommand)
+Topic:    /body_stream     (std_msgs/String) -- the same JSON frames, played
+          at once with NO waiting, for continuous streams (follow mode). The
+          server only publishes here while no /body_commands sequence is
+          playing, so the two never overlap.
 Requires: the BodyCommand srv built in the ainex catkin workspace (see
           ../srv/BodyCommand.srv for the definition and build steps).
 """
@@ -19,7 +23,7 @@ import json
 import time
 
 import rospy
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
 from ainex_kinematics.motion_manager import MotionManager
 from ainex_demo.srv import BodyCommand, BodyCommandResponse  # type: ignore
@@ -47,6 +51,8 @@ SERVO_ID = {
 EMPTY_SERVOS = {}
 
 MIN_FRAME_MS = 100  # floor for any single move duration
+MIN_STREAM_MS = 20  # floor for a /body_stream move (server.py MIN_STREAM_MS)
+STREAM_TOPIC = '/body_stream'
 
 
 def pulse_to_servos(pulse):
@@ -75,6 +81,8 @@ class BodyNode:
         self.motion_manager = MotionManager()
 
         rospy.Service('/body_commands', BodyCommand, self._handle_command)
+        # queue_size=1: only the newest target matters in a stream.
+        rospy.Subscriber(STREAM_TOPIC, String, self._handle_stream, queue_size=1)
         rospy.Subscriber(SHUTDOWN_TOPIC, Bool, self._shutdown_cb)
 
         # Start at the stand pose.
@@ -114,6 +122,28 @@ class BodyNode:
 
         rospy.loginfo('[BodyNode] played %d frames (%.0f ms)', len(sequence), total_ms)
         return BodyCommandResponse(success=True, duration_ms=total_ms)
+
+    def _handle_stream(self, msg):
+        """Play stream frames immediately, without waiting for the motion.
+
+        The servos glide to each target over its duration by themselves; the
+        next frame (typically ~50 ms later) just replaces the target. Waiting
+        here, as _handle_command does, is what made follow mode move-stop-move
+        on the real robot (measured 2026-10-02).
+        """
+        try:
+            frames = json.loads(msg.data)
+        except (ValueError, TypeError) as e:
+            rospy.logwarn('[BodyNode] bad stream frame: %s', e)
+            return
+        for frame in frames:
+            try:
+                pulse, duration = frame[0], frame[1]
+            except (IndexError, TypeError, KeyError):
+                continue
+            servos = pulse_to_servos(pulse)
+            if servos:
+                self.motion_manager.set_servos_position(max(MIN_STREAM_MS, int(duration)), servos)
 
     def run(self):
         rospy.spin()

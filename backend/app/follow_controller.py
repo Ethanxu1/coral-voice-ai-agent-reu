@@ -23,7 +23,7 @@ from loguru import logger
 from app import config
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
-from app.vision.leg_lift_controller import ANKLES, LegLiftController
+from app.vision.leg_lift_controller import ANKLES, LEG_JOINTS, LegLiftController, _stand
 from app.vision.pose_to_robot import (
     _STAND_LEG_TARGETS,
     JointAngleSmoother,
@@ -50,9 +50,31 @@ DispatchFn = Callable[[list[ServoCommand], bool | None], Awaitable[None]]
 StatusFn = Callable[[dict], Awaitable[None]]
 
 
+def legs_follow_person(sim_only: bool | None) -> bool:
+    """Whether follow mode may move the legs this session.
+
+    Not on the real robot unless config.HARDWARE_LEG_MIMICRY: one-foot
+    stance sags ~10 deg there and isn't solved, and on 2026-10-02 the camera
+    misread lost legs as raised during arms-only follow -- the robot slid its
+    hips and tipped over. The sim (or the sim-only toggle) keeps leg mimicry.
+    """
+    from app.services.motion import sends_to_hardware
+
+    return config.HARDWARE_LEG_MIMICRY or not sends_to_hardware(sim_only)
+
+
+def pin_legs_to_stand(targets: dict[str, float]) -> dict[str, float]:
+    """`targets` with every leg and ankle joint held at the stand pose."""
+    return {**targets, **{j: _stand(j) for j in LEG_JOINTS + ANKLES}}
+
+
 class FollowController:
-    def __init__(self, dispatch_fn: DispatchFn):
+    def __init__(self, dispatch_fn: DispatchFn, stream_fn: Optional[DispatchFn] = None):
         self._dispatch = dispatch_fn
+        # Live ticks go through stream_fn when given: on the real robot the
+        # blocking dispatch waits ~0.3 s per 45 ms move (2026-10-02), so a
+        # 20 Hz stream must not wait. The seed move keeps the blocking path.
+        self._live_dispatch = stream_fn or dispatch_fn
         self._task: Optional[asyncio.Task] = None
         self._capture_task: Optional[asyncio.Task] = None
         self._safety_gate = None
@@ -149,7 +171,12 @@ class FollowController:
         # Sequences leg lifts (weight shift -> settle -> lift) so the robot
         # can raise a foot visibly without toppling. Only meaningful when
         # legs are tracked; fresh per session so no state leaks across.
-        lift_ctl = LegLiftController() if config.ENABLE_LEG_TRACKING else None
+        legs_pinned = not legs_follow_person(sim_only)
+        if legs_pinned:
+            logger.info("Follow: real robot -- legs held at stand, arms follow "
+                        "(CORAL_HARDWARE_LEG_MIMICRY=false)")
+        lift_ctl = (LegLiftController()
+                    if config.ENABLE_LEG_TRACKING and not legs_pinned else None)
         # The controller applies its own phase-dependent leg limit, so it
         # needs the unlimited retargeting; without it keep the static one.
         leg_limit = 1.0 if lift_ctl is not None else None
@@ -219,6 +246,8 @@ class FollowController:
                             latest_event.clear()
                             continue
                         targets = smoother.smooth(targets)
+                        if legs_pinned:
+                            targets = pin_legs_to_stand(targets)
                         if lift_ctl is not None:
                             # dt=0: legs and ankles are commanded at stand for
                             # the seed. A lift, if the person is already doing
@@ -262,6 +291,8 @@ class FollowController:
                             empty_target_count += 1
                         else:
                             targets = smoother.smooth(targets)
+                            if legs_pinned:
+                                targets = pin_legs_to_stand(targets)
                             if in_flight is not None and not in_flight.done():
                                 skip_count += 1
                             else:
@@ -286,7 +317,7 @@ class FollowController:
                                     if j in _STAND_LEG_TARGETS or j in ANKLES
                                 } or None
                                 commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
-                                in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
+                                in_flight = asyncio.create_task(self._live_dispatch(commands, sim_only))
                                 in_flight.add_done_callback(_log_dispatch_error)
                                 dispatch_count += 1
 

@@ -34,7 +34,11 @@ from app.data.pose_db import clear_all_poses
 from app.follow_controller import FollowController
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.sim_controller import SimController
-from app.services.motion import _sync_sim_to_hardware, dispatch_servo_commands
+from app.services.motion import (
+    _sync_sim_to_hardware,
+    dispatch_servo_commands,
+    stream_servo_commands,
+)
 from app.services.transcription import _get_whisper_model
 from app.simulator import AiNexSimulator
 from app.state import state
@@ -146,7 +150,7 @@ async def lifespan(app: FastAPI):
         state.stability_checker = None
         logger.info("Fall check disabled via ENABLE_FALL_CHECK=false")
 
-    state.follow_controller = FollowController(dispatch_servo_commands)
+    state.follow_controller = FollowController(dispatch_servo_commands, stream_fn=stream_servo_commands)
 
     langfuse_keys_present = bool(LANGFUSE_PUBLIC_KEY) and bool(LANGFUSE_SECRET_KEY)
     langfuse_client = Langfuse(tracing_enabled=langfuse_keys_present)
