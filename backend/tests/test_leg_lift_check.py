@@ -14,12 +14,18 @@ from app.robot.angle_utils import rad_to_servo_units
 from app.robot.leg_lift_check import (
     ABORT_ROLL_DEG,
     CHECK_JOINTS,
+    HARD_ABORT_DEG,
+    LeanGuard,
+    foot_fraction,
+    lean_breakdown,
     lift_poses,
+    shift_fraction,
     shift_pose,
     should_abort,
     single_joint_pose,
     stand_pose,
     to_moves,
+    with_stance_comp,
 )
 from app.robot.servo_config import SERVO_ID_MAP
 from app.vision.leg_lift_controller import ANKLE_SHIFT, HIP_RATIO, _stand
@@ -72,8 +78,63 @@ def test_lift_runs_the_real_controller_and_ends_at_stand(swing):
     assert all(set(p) == LEG for p in poses)
 
 
+@pytest.mark.parametrize("swing", ["l", "r"])
+def test_shift_and_foot_fractions_read_back_from_poses(swing):
+    assert shift_fraction(stand_pose(), swing) == pytest.approx(0.0)
+    assert shift_fraction(shift_pose(swing), swing) == pytest.approx(1.0)
+    poses = list(lift_poses(swing, height=0.3))
+    assert max(foot_fraction(p, swing) for p in poses) == pytest.approx(0.3, abs=0.02)
+
+
+def test_lean_breakdown_separates_the_slide_from_the_foot_lift():
+    rows = [(0.0, 0.0, 0.0, 0.0), (0.1, 1.0, 0.5, 0.0), (0.2, 2.0, 1.0, 0.0),
+            (0.3, 3.0, 1.0, 0.05), (0.4, -8.5, 1.0, 0.2), (0.5, None, 1.0, 0.2)]
+    b = lean_breakdown(rows)
+    assert b["after_shift"] == 2.0
+    assert b["foot_leaves"] == 3.0
+    assert b["worst"] == -8.5 and b["worst_foot"] == 0.2
+    assert b["worst_foot_up"] == -8.5
+
+
 def test_abort_on_a_lean_beyond_the_limit_either_way():
     assert not should_abort(2.0 + ABORT_ROLL_DEG - 0.1, 2.0)
     assert should_abort(2.0 + ABORT_ROLL_DEG + 0.1, 2.0)
     assert should_abort(2.0 - ABORT_ROLL_DEG - 0.1, 2.0)
     assert should_abort(None, 2.0), "no IMU reading mid-lift must stop the test"
+
+
+def test_one_jolt_past_the_limit_does_not_stop_the_lift():
+    """The 2026-10-02 left lift: clean, but one reading hit -9.2 deg."""
+    g = LeanGuard(-2.5)
+    for roll in (-2.3, -7.5, -2.0, -11.7, -3.0):
+        assert not g.update(roll)
+
+
+def test_a_lean_that_persists_stops_the_lift():
+    g = LeanGuard(0.0)
+    assert not g.update(9.0)
+    assert g.update(9.5)
+
+
+def test_a_large_lean_stops_the_lift_at_once():
+    assert LeanGuard(0.0).update(-(HARD_ABORT_DEG + 0.1))
+
+
+def test_lost_imu_readings_stop_the_lift():
+    g = LeanGuard(0.0)
+    assert not g.update(None)
+    assert g.update(None)
+
+
+@pytest.mark.parametrize("swing,stance,sign", [("l", "r", 1.0), ("r", "l", -1.0)])
+def test_stance_comp_eases_the_standing_hip_back_only_while_the_foot_is_up(swing, stance, sign):
+    poses = list(lift_poses(swing, height=0.3))
+    hip = f"{stance}_hip_roll"
+    up = max(poses, key=lambda p: foot_fraction(p, swing))
+    assert with_stance_comp(up, swing, 0.1)[hip] - up[hip] == pytest.approx(sign * 0.1)
+    # standing hip only; swing hip and ankles untouched
+    changed = {j for j in up if with_stance_comp(up, swing, 0.1)[j] != up[j]}
+    assert changed == {hip}
+    # nothing while both feet are down (during the slide, after landing)
+    assert with_stance_comp(shift_pose(swing), swing, 0.1) == shift_pose(swing)
+    assert with_stance_comp(poses[-1], swing, 0.1) == poses[-1]

@@ -32,6 +32,7 @@ Ctrl-C at any time sends the legs back to stand.
 from __future__ import annotations
 
 import argparse
+import itertools
 import math
 import os
 import sys
@@ -45,18 +46,24 @@ from app.config import ROBOT_AGENT_PORT, ROBOT_IP  # noqa: E402
 from app.robot.leg_lift_check import (  # noqa: E402
     ABORT_ROLL_DEG,
     DT,
+    LeanGuard,
+    foot_fraction,
+    lean_breakdown,
     lift_poses,
+    shift_fraction,
     shift_pose,
-    should_abort,
     single_joint_pose,
     stand_pose,
     to_moves,
+    with_stance_comp,
 )
 from app.vision.leg_lift_controller import ANKLE_SHIFT, HIP_RATIO  # noqa: E402
 
 MAIN_SERVER = os.environ.get("CORAL_SERVER", "http://localhost:8000")
 SLOW_MOVE_MS = 1500
 SHIFT_MOVE_MS = 2000
+# Wall time each lift command covers (see step_lift).
+SEGMENT_S = 0.6
 DIRECTION_FILE = "backend/app/robot/hardware_angle_utils.py"
 
 # What each move does in the sim (measured there), so it can be compared.
@@ -85,6 +92,7 @@ class Robot:
     def __init__(self, dry_run: bool):
         self.dry = dry_run
         self.rehearse = False
+        self.last_raw: list[float] | None = None  # raw IMU of the last roll_deg() call
         self.http = httpx.Client(timeout=5.0)
 
     def move(self, pose: dict[str, float], duration_ms: int) -> None:
@@ -92,6 +100,13 @@ class Robot:
         if self.dry:
             return
         r = self.http.post(f"{MAIN_SERVER}/move", json={"moves": moves})
+        if r.status_code == 503:
+            # The robot's Pi refuses a move while another is still executing
+            # ("robot busy"); the app reports that as 503. Seen once,
+            # 2026-10-02, on the first lift command. One retry after a pause.
+            print("  (robot busy -- retrying that move once)")
+            time.sleep(0.4)
+            r = self.http.post(f"{MAIN_SERVER}/move", json={"moves": moves})
         r.raise_for_status()
         body = r.json()
         if body.get("status") == "blocked":
@@ -104,6 +119,7 @@ class Robot:
         try:
             r = self.http.get(f"http://{ROBOT_IP}:{ROBOT_AGENT_PORT}/imu", timeout=1.0)
             values = r.json().get("values")
+            self.last_raw = values
             if not values or len(values) < 3:
                 return None
             return math.degrees(math.atan2(values[0], values[1]))
@@ -251,7 +267,27 @@ def step_shift(robot: Robot) -> bool:
     return ok
 
 
-def step_lift(robot: Robot, legs: str, height: float, slow: float) -> bool:
+def report_lean(rows: list[tuple], swing: str) -> None:
+    """Print when the lean happened and save every tick for Claude to read."""
+    fmt = lambda v: "n/a" if v is None else f"{v:+.1f} deg"  # noqa: E731
+    b = lean_breakdown(rows)
+    print(f"  Lean once the hips finished sliding (foot still down): {fmt(b['after_shift'])}")
+    print(f"  Lean as the foot left the floor:                        {fmt(b['foot_leaves'])}")
+    print(f"  Worst lean with the foot up:                            {fmt(b['worst_foot_up'])}")
+    if b["worst"] is not None:
+        print(f"  Worst lean overall {fmt(b['worst'])}, at hips {b['worst_shift']:.0%} slid, "
+              f"foot {b['worst_foot']:.0%} up")
+    out_dir = os.path.join(os.path.dirname(__file__), "..", "logs", "leg_lift_check")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{time.strftime('%Y%m%d_%H%M%S')}_lift_{swing}.csv")
+    with open(path, "w") as f:
+        f.write("t_s,lean_deg,hips_slid,foot_up,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n")
+        for r in rows:
+            f.write(",".join("" if v is None else str(v) for v in r) + "\n")
+    print(f"  Every tick saved to {os.path.relpath(path)}")
+
+
+def step_lift(robot: Robot, legs: str, height: float, slow: float, stance_comp_deg: float = 0.0) -> bool:
     ok = True
     for swing in (("l", "r") if legs == "both" else (legs,)):
         ready(f"LIFT the ROBOT'S {'LEFT' if swing == 'l' else 'RIGHT'} leg to {height:.0%} "
@@ -262,26 +298,38 @@ def step_lift(robot: Robot, legs: str, height: float, slow: float) -> bool:
             print("  No IMU reading -- the lift needs it to stop itself. Aborting.")
             return False
         worst, aborted = 0.0, False
-        tick = DT * slow
-
-        def stop() -> bool:
-            nonlocal worst, aborted
+        guard = LeanGuard(base)
+        # The robot's /move blocks until the motion ends, ~0.3-0.5 s per call.
+        # Short moves therefore came out as move-stop-move jolts (2026-10-02),
+        # which the IMU read as lean. So each command covers SEGMENT_S of
+        # motion: the controller is stepped SEGMENT_S / slow ahead and the
+        # servos glide to that pose over the whole segment.
+        per_segment = max(1, round(SEGMENT_S / (DT * slow)))
+        poses = lift_poses(swing, height, stop=lambda: aborted)
+        rows: list[tuple] = []
+        start = time.monotonic()
+        while True:
+            chunk = list(itertools.islice(poses, per_segment))
+            if not chunk:
+                break
+            pose = chunk[-1]
+            robot.move(with_stance_comp(pose, swing, math.radians(stance_comp_deg)), int(SEGMENT_S * 1000))
             roll = robot.roll_deg()
-            if roll is not None:
-                worst = max(worst, abs(roll - base))
-            if should_abort(roll, base) and not aborted:
+            lean = None if roll is None else roll - base
+            if lean is not None:
+                worst = max(worst, abs(lean))
+            rows.append((round(time.monotonic() - start, 3),
+                         None if lean is None else round(lean, 2),
+                         round(shift_fraction(pose, swing), 3), round(foot_fraction(pose, swing), 3),
+                         *[round(v, 4) for v in (robot.last_raw or [])[:6]]))
+            if not aborted and guard.update(roll):
                 aborted = True
-                print(f"  !! lean {'unknown' if roll is None else f'{roll - base:+.1f} deg'}"
-                      " -- bringing the foot down")
-            return aborted
-
-        for pose in lift_poses(swing, height, stop=stop):
-            t0 = time.monotonic()
-            robot.move(pose, max(100, int(tick * 1000)))
-            robot.wait(max(0.0, tick - (time.monotonic() - t0)))
+                print(f"  !! lean {'unknown' if lean is None else f'{lean:+.1f} deg'} held "
+                      "-- bringing the foot down")
         robot.stand()
         print(f"  Worst lean during the lift: {worst:.1f} deg (sim: about 2-3 deg)"
               + ("  -- ABORTED" if aborted else ""))
+        report_lean(rows, swing)
         ok = ask("Did it lift the foot cleanly, stay upright, and set it down "
                  "without tipping?", robot.unattended) and ok and not aborted
     return ok
@@ -296,12 +344,28 @@ def main() -> None:
                    help="lift step: raise as a fraction of hip travel (default 0.2, sim tested up to 0.8)")
     p.add_argument("--slow", type=float, default=3.0,
                    help="lift step: how many times slower than the sim (default 3)")
+    p.add_argument("--shift-scale", type=float, default=1.0,
+                   help="shift/lift: multiply the hip slide (ANKLE_SHIFT) for this run only, "
+                        "e.g. 1.25. Experiment knob -- does not change the controller file")
+    p.add_argument("--stance-comp", type=float, default=0.0,
+                   help="lift: degrees to ease the STANDING hip roll back while the foot is up (0-12). "
+                        "EXPERIMENTAL: on 2026-10-02 4 deg (left) and 8 deg (right) both nearly "
+                        "tipped the robot -- see docs/cbf-whole-body-progress.md Phase 2.17")
     p.add_argument("--dry-run", action="store_true", help="print the plan, move nothing")
     p.add_argument("--rehearse", action="store_true",
                    help="run on a simulator inside this script; never touches the robot")
     args = p.parse_args()
     if not 0.0 < args.height <= 0.8 or args.slow < 1.0:
         p.error("--height must be in (0, 0.8] and --slow >= 1")
+    if not 0.0 <= args.stance_comp <= 12.0:
+        p.error("--stance-comp must be between 0 and 12 degrees")
+    if not 0.5 <= args.shift_scale <= 1.6:
+        p.error("--shift-scale must be between 0.5 and 1.6")
+    if args.shift_scale != 1.0:
+        import app.vision.leg_lift_controller as llc
+        llc.ANKLE_SHIFT *= args.shift_scale
+        print(f"Hip slide scaled x{args.shift_scale:g} for this run "
+              f"(ANKLE_SHIFT {llc.ANKLE_SHIFT:.3f} rad)")
 
     robot = (SimRobot(open_window=not os.environ.get("CORAL_HEADLESS"))
              if args.rehearse else Robot(args.dry_run))
@@ -319,7 +383,7 @@ def main() -> None:
         elif args.step == "shift":
             ok = step_shift(robot)
         else:
-            ok = step_lift(robot, args.leg, args.height, args.slow)
+            ok = step_lift(robot, args.leg, args.height, args.slow, args.stance_comp)
     except KeyboardInterrupt:
         print("\nStopped -- legs back to stand.")
         robot.stand()

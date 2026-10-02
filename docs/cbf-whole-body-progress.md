@@ -475,7 +475,27 @@ Also found: `/imu` returned `null` until the Pi's `roslaunch` was restarted.
 Check script changed: ankles rock ±7° and ask which edge is higher; hips
 swing each leg outward. Pinned by `backend/tests/test_hw_roll_directions.py`.
 Fix entry: `.agents/fixes/2026-10-02-right-ankle-roll-direction.md`.
-Pending: shift with IMU numbers, then lifts.
+Then, same day, the lift (20% height, 3x slow). IMU-logged per segment
+(`logs/leg_lift_check/*.csv`):
+
+- **IMU false alarms first:** each `/move` blocks until the motion ends
+  (~0.3 s direct to the Pi, ~0.5 s via the app), so 0.15 s commands came out
+  as move-stop jolts that the accelerometer read as ±5–9° "lean". Fixed in
+  the check: 0.6 s segments, and the stop needs 2 readings in a row (or
+  >15° once). Same blocking would make **follow mode jerky on hardware**.
+- **Then a real, steady sag:** with the foot up the body leans ~10° toward
+  the lifted foot and holds there (gyro ~0, foot clear). The slide itself
+  leans <1°. Not in sim (stiff servos).
+- **Open-loop corrections did not work:** 1.2x slide: −10.9 → −8.8°
+  (1.3x falls in sim). Easing the standing hip roll back: left 4° made it
+  worse (−12.9°, near-tip); right 8° overshot (near-tip) and the server's
+  fall check blocked it. Run-to-run spread is large: lean before the foot
+  lifts read +0.9 / −3.1 / −6.4° for the same command.
+- **Conclusion:** the feed-forward plan has hit the sim-to-real gap on
+  one-foot stance. Next needs (1) non-blocking/streamed moves on the Pi,
+  (2) servo compliance in the sim model, fitted to the ~10° sag,
+  (3) IMU feedback on stance roll. **Leg lifts in follow mode are not
+  safe on the real robot yet.**
 
 ## Phase 2.16 — Hardware leg-lift check (tool) ✅ (2026-09-30)
 

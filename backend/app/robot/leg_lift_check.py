@@ -69,6 +69,91 @@ def should_abort(roll_deg: float | None, baseline_deg: float) -> bool:
     return roll_deg is None or abs(roll_deg - baseline_deg) > ABORT_ROLL_DEG
 
 
+# One reading past ABORT_ROLL_DEG is not enough on the real robot. The tilt
+# comes from the accelerometer, which also feels the body's jolts: on
+# 2026-10-02 a clean left lift read +0.2 / -5.0 / -5.2 / +0.7 / -3.5 / -9.2
+# deg tick to tick and stopped itself. A real tip keeps growing, so it must
+# persist for ABORT_READINGS readings in a row -- unless it is past
+# HARD_ABORT_DEG, which stops it at once.
+ABORT_READINGS = 2
+HARD_ABORT_DEG = 15.0
+
+
+class LeanGuard:
+    """Decides, one IMU reading at a time, when to stop a lift."""
+
+    def __init__(self, baseline_deg: float):
+        self.baseline = baseline_deg
+        self._over = 0
+
+    def update(self, roll_deg: float | None) -> bool:
+        """True once the lift should stop. A missing reading counts as over."""
+        if roll_deg is not None and abs(roll_deg - self.baseline) > HARD_ABORT_DEG:
+            return True
+        self._over = self._over + 1 if should_abort(roll_deg, self.baseline) else 0
+        return self._over >= ABORT_READINGS
+
+
+def shift_fraction(pose: dict[str, float], swing: str) -> float:
+    """How far the hips have slid over the standing foot, 0 (stand) .. 1 (full)."""
+    full = _shift(swing)["l_ank_roll"]
+    return (pose["l_ank_roll"] - _stand("l_ank_roll")) / full
+
+
+def foot_fraction(pose: dict[str, float], swing: str) -> float:
+    """How high the swing foot is, as a fraction of its hip-pitch travel."""
+    hip = f"{swing}_hip_pitch"
+    lim = JOINT_LIMITS[hip]
+    stand = _stand(hip)
+    travel = (stand - lim.min) if swing == "l" else (lim.max - stand)
+    return abs(pose[hip] - stand) / travel
+
+
+def lean_breakdown(rows: list[tuple[float, float | None, float, float]]) -> dict[str, float | None]:
+    """rows: (t, lean_deg, shift_fraction, foot_fraction) per tick.
+
+    Separates the lean the hip slide causes (foot still down) from the lean
+    once the foot is up -- they have different fixes."""
+    def lean_at(cond):
+        hit = next((r for r in rows if cond(r) and r[1] is not None), None)
+        return None if hit is None else hit[1]
+
+    leans = [r for r in rows if r[1] is not None]
+    worst = max(leans, key=lambda r: abs(r[1]), default=None)
+    up = [r for r in leans if r[3] >= 0.02]
+    return {
+        "after_shift": lean_at(lambda r: r[2] >= 0.98 and r[3] < 0.02),
+        "foot_leaves": lean_at(lambda r: r[3] >= 0.02),
+        "worst": None if worst is None else worst[1],
+        "worst_shift": None if worst is None else worst[2],
+        "worst_foot": None if worst is None else worst[3],
+        "worst_foot_up": None if not up else max(up, key=lambda r: abs(r[1]))[1],
+    }
+
+
+# Real robot, 2026-10-02: with the whole weight on one leg, the standing
+# leg's hip-roll servo gives a few degrees and the body sags ~10 deg toward
+# the lifted foot (stable, foot clear). The sim's servos don't give, so it
+# never shows this; a bigger hip slide barely helped (-10.9 -> -8.8 deg) and
+# 1.3x already falls in sim. Instead the standing hip roll is moved back
+# toward neutral while the foot is up (measured in sim: 0.1 rad of this
+# tilts the body ~5.7 deg toward the standing foot). Faded in over the first
+# STANCE_COMP_RAMP of foot travel so it arrives with the load, not before.
+STANCE_COMP_RAMP = 0.05
+
+
+def with_stance_comp(pose: dict[str, float], swing: str, comp_rad: float) -> dict[str, float]:
+    """`pose` with the standing hip's roll eased back toward neutral by up to
+    `comp_rad` while the `swing` foot is up."""
+    if comp_rad == 0.0:
+        return pose
+    k = min(1.0, foot_fraction(pose, swing) / STANCE_COMP_RAMP)
+    stance = "r" if swing == "l" else "l"
+    out = dict(pose)
+    out[f"{stance}_hip_roll"] += (comp_rad if swing == "l" else -comp_rad) * k
+    return out
+
+
 def _person(swing: str, fraction: float) -> dict[str, float]:
     """Retargeted legs with the robot's `swing` hip raised by `fraction` of
     its travel (the knee is derived by the controller, not read)."""
