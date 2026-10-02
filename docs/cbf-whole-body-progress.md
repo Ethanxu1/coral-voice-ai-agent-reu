@@ -460,6 +460,23 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.17 — First real-robot check: right ankle was reversed ✅ (2026-10-02)
+
+Results of `leg_lift_hardware_check.py` on the robot:
+
+| Joint | Result |
+|---|---|
+| `l_ank_roll` | matches sim |
+| `r_ank_roll` | **reversed** — pulse 560 lifts the inner edge; sim's tilt needs the outer. `HW_DIRECTION` −1 → +1 |
+| `l_hip_roll` | matches sim (outward) |
+| `r_hip_roll` | matches sim (outward). Its first "wrong" answer was the collision check cutting the inward test to 15% (feet ~1cm apart) |
+
+Also found: `/imu` returned `null` until the Pi's `roslaunch` was restarted.
+Check script changed: ankles rock ±7° and ask which edge is higher; hips
+swing each leg outward. Pinned by `backend/tests/test_hw_roll_directions.py`.
+Fix entry: `.agents/fixes/2026-10-02-right-ankle-roll-direction.md`.
+Pending: shift with IMU numbers, then lifts.
+
 ## Phase 2.16 — Hardware leg-lift check (tool) ✅ (2026-09-30)
 
 Before the first real-robot leg lift. Known gaps: **both ankle-roll

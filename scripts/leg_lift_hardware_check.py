@@ -61,11 +61,18 @@ DIRECTION_FILE = "backend/app/robot/hardware_angle_utils.py"
 
 # What each move does in the sim (measured there), so it can be compared.
 # Robot's left/right = the robot's own, as if you were standing inside it.
-EXPECT_ANKLE = ("that foot tilts sideways a little (~7 deg): the edge of its sole on the "
-                "ROBOT'S RIGHT side goes UP -- for the left foot that is its inner edge, "
-                "for the right foot its outer edge")
-EXPECT_HIP = ("that whole leg swings sideways, the foot moving about 3cm toward the "
-              "ROBOT'S LEFT")
+# Both ankles tilt the same way in space, and both legs swing the same way --
+# so for one leg that is "inner/inward" and for the other "outer/outward".
+EXPECT_DIRECTION = {
+    "l_ank_roll": "the LEFT foot tilts a little (~7 deg) so its INNER edge (the side "
+                  "facing the other foot) LIFTS and its outer edge goes down",
+    "r_ank_roll": "the RIGHT foot tilts a little (~7 deg) so its OUTER edge (the side "
+                  "away from the other foot) LIFTS and its inner edge goes down",
+    "l_hip_roll": "the LEFT leg swings OUTWARD, the foot moving about 3cm AWAY from the "
+                  "other leg",
+    "r_hip_roll": "the RIGHT leg swings OUTWARD, the foot moving about 3cm AWAY from the "
+                  "other leg",
+}
 EXPECT_SHIFT = {
     "l": "the hips slide about 3cm over the ROBOT'S RIGHT foot; both feet stay flat "
          "on the floor; the torso stays upright",
@@ -158,20 +165,67 @@ def ready(what: str, dry: bool) -> None:
         input("    Press Enter when ready (Ctrl-C to stop) ...")
 
 
-def check_directions(robot: Robot, joints: tuple[str, ...], delta: float, expect: str) -> bool:
+# Each hip is tested swinging OUTWARD. Inward, the feet are ~1cm apart, so the
+# server's collision check cut the right hip's inward test to 15% (2026-10-02):
+# it barely moved and looked wrong. The shift moves both legs together, so it
+# never closes that gap.
+HIP_TEST = {"l_hip_roll": -HIP_RATIO * ANKLE_SHIFT, "r_hip_roll": +HIP_RATIO * ANKLE_SHIFT}
+
+
+def check_directions(robot: Robot, deltas: dict[str, float]) -> bool:
     ok = True
-    for joint in joints:
+    for joint, delta in deltas.items():
         ready(f"{joint}: robot HELD IN THE AIR, feet free", robot.unattended)
         robot.move(single_joint_pose(joint, delta), SLOW_MOVE_MS)
         robot.wait(SLOW_MOVE_MS / 1000 + 1.0)
-        print(f"  Expected: {expect}.")
+        print(f"  Expected: {EXPECT_DIRECTION[joint]}.")
         good = ask("Did it move that way?", robot.unattended)
         robot.stand()
         if not good:
             ok = False
-            print(f"  -> {joint}'s direction is probably the wrong sign. Flip HW_DIRECTION"
+            print("  -> Did it move the OPPOSITE way, or not at all? Tell Claude which.")
+            print(f"     If clearly the opposite way, {joint}'s direction is probably the wrong sign. Flip HW_DIRECTION"
                   f"['{joint}'] in {DIRECTION_FILE}, restart the server, run this step again.")
+            break
     return ok
+
+
+# Ankle tilt is only ~3mm at the sole's edge -- too small to judge from
+# stand. So each ankle rocks between -A and +A (a 14 deg swing, easy to see)
+# and stops at -A; the question is which edge is higher THERE. Larger
+# angles are blocked by the server's fall check for the right ankle.
+EXPECT_HIGHER_EDGE = {"l_ank_roll": "inner", "r_ank_roll": "outer"}
+ROCK_MOVE_MS = 700
+
+
+def check_ankles(robot: Robot) -> bool:
+    for joint in ("l_ank_roll", "r_ank_roll"):
+        foot = "LEFT" if joint.startswith("l") else "RIGHT"
+        ready(f"{foot} ankle: robot HELD IN THE AIR, feet free. Watch the {foot} foot: it will "
+              "rock side to side 3 times, then stop tilted", robot.unattended)
+        for delta in (-ANKLE_SHIFT, ANKLE_SHIFT) * 3 + (-ANKLE_SHIFT,):
+            robot.move(single_joint_pose(joint, delta), ROCK_MOVE_MS)
+            robot.wait(ROCK_MOVE_MS / 1000 + 0.3)
+        robot.wait(0.5)
+        print(f"  It is stopped now. Look at the {foot} foot's sole: the INNER edge faces the "
+              "other foot, the OUTER edge faces away.")
+        if robot.unattended:
+            seen = EXPECT_HIGHER_EDGE[joint]
+            print(f"  [no questions] which edge is higher? -> assuming {seen}")
+        else:
+            seen = ""
+            while seen not in ("inner", "outer", "same"):
+                seen = input("  Which edge is HIGHER right now? [inner/outer/same] ").strip().lower()
+        robot.stand()
+        if seen == "same":
+            print(f"  -> {joint} did not visibly move. Tell Claude -- that is not a direction problem.")
+            return False
+        if seen != EXPECT_HIGHER_EDGE[joint]:
+            print(f"  -> {joint} turns the OPPOSITE way to the sim. Its HW_DIRECTION sign in "
+                  f"{DIRECTION_FILE} is probably wrong. Tell Claude before changing anything.")
+            return False
+        print(f"  -> {joint} matches the sim.")
+    return True
 
 
 def step_shift(robot: Robot) -> bool:
@@ -259,10 +313,9 @@ def main() -> None:
         ready("First: legs to stand", quiet)
         robot.stand()
         if args.step == "ankles":
-            ok = check_directions(robot, ("l_ank_roll", "r_ank_roll"), -ANKLE_SHIFT, EXPECT_ANKLE)
+            ok = check_ankles(robot)
         elif args.step == "hips":
-            ok = check_directions(robot, ("l_hip_roll", "r_hip_roll"),
-                                  -HIP_RATIO * ANKLE_SHIFT, EXPECT_HIP)
+            ok = check_directions(robot, HIP_TEST)
         elif args.step == "shift":
             ok = step_shift(robot)
         else:

@@ -72,13 +72,14 @@ HW_DIRECTION: dict[str, int] = {
     # systematically flipped. hip_roll/hip_yaw come from the user-tested pulse
     # sweep (servo 9: 400=outward, servo 10: 600=outward, servo 11:
     # 300=outward, servo 12: 700=outward). Verify on hardware before driving.
-    "l_ank_roll":  +1,   # no calibration data — unverified guess
+    "l_ank_roll":  +1,   # verified 2026-10-02 (leg_lift_hardware_check ankles)
     "l_ank_pitch": +1,   # crouch: dorsiflexion (−rad) → pulse up
     "l_knee":      +1,   # crouch: flexion (+rad) → pulse up
     "l_hip_pitch": +1,   # crouch: flexion (−rad) → pulse down
     "l_hip_roll":  +1,   # sweep: abduction (−rad) → 400 (down)
     "l_hip_yaw":   +1,   # sweep: external rotation (−rad) → 300 (down)
-    "r_ank_roll":  -1,   # no calibration data — unverified guess
+    "r_ank_roll":  +1,   # was -1 (guess); verified 2026-10-02: pulse 560 lifts the
+                         # INNER edge, so the sim's tilt needs +1. See test_hw_roll_directions.py
     "r_ank_pitch": +1,   # was +1; crouch: dorsiflexion (+rad) → pulse down
     "r_knee":      +1,   # was -1; crouch: flexion (−rad) → pulse down
     "r_hip_pitch": +1,   # was -1; crouch: flexion (+rad) → pulse up
