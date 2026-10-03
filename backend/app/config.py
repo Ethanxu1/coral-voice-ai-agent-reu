@@ -12,6 +12,9 @@ load_dotenv()
 # Robot / hardware
 # ---------------------------------------------------------------------------
 ROBOT_MODE = os.getenv("ROBOT_MODE", "sim")
+# Simulated servo stiffness: "stiff" (as authored) or "hardware" (leg servos
+# give under load like the real robot's -- see app/simulator/servo_model.py).
+SIM_SERVO_MODEL = os.getenv("CORAL_SIM_SERVO_MODEL", "stiff")
 ROBOT_IP = os.getenv("ROBOT_IP", "192.168.8.219")
 ROBOT_AGENT_PORT = int(os.getenv("ROBOT_AGENT_PORT", "9000"))
 

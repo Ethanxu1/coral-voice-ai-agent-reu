@@ -59,12 +59,21 @@ class AiNexSimulator:
     # robot drops and settles into a stable stand (re-stands after a fall).
     DROP_HEIGHT = 0.05
 
-    def __init__(self, model_path: str | None = None):
+    def __init__(self, model_path: str | None = None, servo_model: str | None = None):
+        """`servo_model`: "stiff" or "hardware" (see servo_model.py); defaults
+        to config.SIM_SERVO_MODEL."""
         if model_path is None:
             model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
 
         logger.info(f"Loading MuJoCo model from: {model_path}")
         self.model = mujoco.MjModel.from_xml_path(model_path)
+        from app import config
+        from app.simulator.servo_model import apply_servo_model
+
+        self.servo_model = servo_model or config.SIM_SERVO_MODEL
+        apply_servo_model(self.model, self.servo_model)
+        if self.servo_model != "stiff":
+            logger.info(f"Servo model: {self.servo_model} (leg servos soft, like the real robot)")
         self.data = mujoco.MjData(self.model)
 
         # Guards every mjData access (step, forward, sync, keyframe reset). The

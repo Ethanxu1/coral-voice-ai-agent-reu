@@ -460,6 +460,35 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.19 — Step 2: a sim that sags like the real robot ✅ (2026-10-03)
+
+The default sim's servos are stiff (kp 50), so on one foot it shows no sag
+and called lifts safe that sagged ~10° on the robot (Phase 2.17). New
+optional servo model `CORAL_SIM_SERVO_MODEL=hardware`
+(`app/simulator/servo_model.py`): every leg servo softened to kp 15. It is a
+**test environment for step 3**, not the intended behaviour — the goal stays
+no sag, in sim and on the robot.
+
+Fitted by replaying the exact hardware-check lift (20%, 3x slow, 0.6 s
+segments), lean toward the lifted foot with the foot up:
+
+| Servo model | Left lift | Right lift |
+|---|---|---|
+| Stiff (default) | 0.6° | 2.3° |
+| Roll servos soft (kp 4–10) | ~4° | ~12° (one-sided) |
+| Gear slack 2–12° on roll | ~1–4° | 3–20°, falls (one-sided) |
+| **All leg servos kp 15** | **7.2°** | **7.8°** |
+| All leg kp 13–18 | 3–8° | −1–9°, falls at 11–12 |
+| Real robot | **10.9°** (clean) | ~10° (toes touching) |
+
+Limits, stated plainly: it reproduces the SIZE and direction of the sag,
+not every response (1.2x slide: robot 10.9 → 8.8°, model 7.2 → 8.4°), and
+single runs vary a lot (rehearsal right lift: 2.2°) — near a balance edge,
+as the robot was (+0.9 / −3.1 / −6.4° for one command). **Step 3 must be
+judged over many runs and across kp 13–18.** Test:
+`backend/tests/test_servo_model.py` (held lift: stiff −0.1°, hardware 7.6°).
+`--rehearse` in the check script uses it via the env var.
+
 ## Phase 2.18 — Step 1 of the real-robot plan: streamed servo commands (2026-10-02)
 
 Plan after 2.17: (1) fast commands, (2) servo compliance in sim, (3) IMU
