@@ -158,6 +158,22 @@ RISE_MARGIN = 0.1
 HOLD_MISSING_SECONDS = 4.0
 _AT_GOAL = 0.005  # rad
 
+# Tilt feedback on the standing leg (step 3 of the real-robot plan,
+# docs/cbf-whole-body-progress.md Phase 2.20). On one foot the real robot
+# sagged ~10 deg toward the lifted foot (its standing-leg servos give), by
+# a different amount every run, so no fixed offset fixes it (one nearly
+# tipped it each way). While on one foot, the measured lean toward the
+# lifted foot drives a correction on the STANDING hip roll: proportional
+# plus integral, so it keeps pushing until the lean is gone. 0.1 rad there
+# tilts the body ~5.7 deg toward the standing foot (sim, stance foot fixed).
+# Only active when update() is given a tilt reading; otherwise nothing here
+# changes the controller's behaviour.
+STANCE_FB_KP = 0.5      # rad of correction per rad of lean
+STANCE_FB_KI = 2.0      # rad of correction per rad*s of lean
+STANCE_FB_MAX = 0.2     # rad, hard cap on the correction
+STANCE_FB_RATE = 0.5    # rad/s, how fast the correction may change
+STANCE_FB_FOOT_UP = 0.02  # fraction of hip travel: "the foot is off the floor"
+
 
 class Phase(str, Enum):
     IDLE = "idle"
@@ -265,6 +281,8 @@ class LegLiftController:
         self._unshift_t = 0.0
         self._cmd: dict[str, float] = {j: _stand(j) for j in LEG_JOINTS + ANKLES}
         self._reading = _new_reading()
+        self._stance_corr = 0.0   # rad on the standing hip roll, + = away from the lifted foot
+        self._stance_int = 0.0    # integral of lean, rad*s
 
     def take_reading(self) -> dict[str, float]:
         """What the camera reported for the legs since the last call: peak
@@ -291,10 +309,15 @@ class LegLiftController:
     def _at(self, goals: dict[str, float], joints) -> bool:
         return all(abs(self._cmd[j] - goals[j]) <= _AT_GOAL for j in joints)
 
-    def update(self, desired: dict[str, float], dt: float) -> dict[str, float]:
+    def update(self, desired: dict[str, float], dt: float,
+               roll_rad: float | None = None) -> dict[str, float]:
         """`desired` is one frame of UNLIMITED retargeted targets. Returns
         it with every leg and ankle joint replaced by the controlled,
-        rate-limited command. Other joints pass through untouched."""
+        rate-limited command. Other joints pass through untouched.
+
+        `roll_rad`: the body's measured roll (IMU / sim attitude; negative =
+        leaning toward the robot's left). When given, a lean while on one
+        foot is corrected through the standing hip (STANCE_FB_*)."""
         dt = min(dt, MAX_DT)
         self._reading["frames"] += 1
         for s_ in ("l", "r"):
@@ -322,6 +345,7 @@ class LegLiftController:
         self._advance(asym_f, side)
 
         goals = self._goals(desired)
+        self._apply_stance_feedback(goals, roll_rad, dt)
         self._slew(goals, dt)
 
         shift_joints = ANKLES + HIP_ROLLS
@@ -344,6 +368,38 @@ class LegLiftController:
         out = dict(desired)
         out.update(self._cmd)
         return out
+
+    def _apply_stance_feedback(self, goals: dict[str, float], roll_rad: float | None,
+                               dt: float) -> None:
+        """Add the standing-hip tilt correction to `goals` (see STANCE_FB_*)."""
+        on_one_foot = (
+            roll_rad is not None
+            and self.phase in (Phase.LIFTING, Phase.LOWERING)
+            and self._held_swing is not None
+            and self._held_swing.get(f"{self.swing}_hip_pitch", 0.0)
+            >= STANCE_FB_FOOT_UP * _reach(f"{self.swing}_hip_pitch")
+        )
+        if on_one_foot:
+            lean = -roll_rad if self.swing == "l" else roll_rad  # toward the lifted foot
+            self._stance_int = max(-STANCE_FB_MAX / STANCE_FB_KI,
+                                   min(STANCE_FB_MAX / STANCE_FB_KI, self._stance_int + lean * dt))
+            want = STANCE_FB_KP * lean + STANCE_FB_KI * self._stance_int
+            want = max(-STANCE_FB_MAX, min(STANCE_FB_MAX, want))
+        else:
+            # Both feet down (or no reading): bleed the correction out and
+            # forget the history. On entering UNSHIFTING the slide-back starts
+            # from the commanded hips, so whatever is left eases out with it.
+            self._stance_int = 0.0
+            want = 0.0
+            if self.phase in (Phase.IDLE, Phase.SHIFTING, Phase.UNSHIFTING):
+                self._stance_corr = 0.0
+                return
+        step = STANCE_FB_RATE * dt
+        self._stance_corr += max(-step, min(step, want - self._stance_corr))
+        if self._stance_corr:
+            stance = "r" if self.swing == "l" else "l"
+            sign = 1.0 if self.swing == "l" else -1.0
+            goals[f"{stance}_hip_roll"] += sign * self._stance_corr
 
     def _fill_unseen_legs(self, desired: dict[str, float], dt: float) -> dict[str, float]:
         """Substitute the last value actually seen for any leg joint missing

@@ -73,7 +73,7 @@ class AiNexSimulator:
         self.servo_model = servo_model or config.SIM_SERVO_MODEL
         apply_servo_model(self.model, self.servo_model)
         if self.servo_model != "stiff":
-            logger.info(f"Servo model: {self.servo_model} (leg servos soft, like the real robot)")
+            logger.info(f"Servo model: {self.servo_model} (ankle-roll servos soft, like the real robot)")
         self.data = mujoco.MjData(self.model)
 
         # Guards every mjData access (step, forward, sync, keyframe reset). The

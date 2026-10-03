@@ -34,6 +34,8 @@ from app.vision.leg_lift_controller import (
     ONSET_SECONDS,
     RELEASE_SECONDS,
     SHIFT_SECONDS,
+    STANCE_FB_MAX,
+    LEG_JOINTS,
     LegLiftController,
     Phase,
     _rate,
@@ -738,3 +740,70 @@ def test_high_knee_raise_toward_the_camera_lifts_and_holds(
             held_up += 1
     assert held_up == hold - 10, f"foot up for only {held_up}/{hold - 10} hold frames"
     assert ctl.phase is Phase.IDLE
+
+
+# ── Step 3: tilt feedback on the standing leg ─────────────────────────────
+
+
+class TestStanceTiltFeedback:
+    """Real robot, 2026-10-02: on one foot it sags ~10 deg toward the lifted
+    foot (the standing leg's servos give). A fixed correction can't fix a
+    sag that varies run to run (+0.9 / -3.1 / -6.4 deg for one command), so
+    while on one foot the measured tilt drives a correction on the standing
+    hip roll. Roll sign as the IMU / sim attitude: negative = leaning toward
+    the robot's left."""
+
+    @staticmethod
+    def _lifted_and_up(ctl, side="l", roll=None):
+        out = {}
+        for _ in range(int(2.0 / DT)):
+            out = ctl.update(_lifted(side), DT, roll_rad=roll)
+        return out
+
+    def test_without_a_tilt_reading_nothing_changes(self):
+        a, b = LegLiftController(), LegLiftController()
+        for _ in range(int(3.0 / DT)):
+            assert a.update(_lifted("l"), DT) == b.update(_lifted("l"), DT, roll_rad=None)
+
+    @pytest.mark.parametrize("side,stance,toward,away", [
+        ("l", "r", -0.15, +1.0),   # sagging left; push r_hip_roll +
+        ("r", "l", +0.15, -1.0),   # sagging right; push l_hip_roll -
+    ])
+    def test_a_held_sag_is_pushed_back_through_the_standing_hip(self, side, stance, toward, away):
+        plain = self._lifted_and_up(LegLiftController(), side)
+        fed = self._lifted_and_up(LegLiftController(), side, roll=toward)
+        delta = fed[f"{stance}_hip_roll"] - plain[f"{stance}_hip_roll"]
+        assert delta * away > 0.05, delta
+        # only the standing hip roll is corrected
+        for j in LEG_JOINTS + ANKLES:
+            if j != f"{stance}_hip_roll":
+                assert fed[j] == pytest.approx(plain[j], abs=1e-9), j
+
+    def test_correction_is_bounded(self):
+        fed = self._lifted_and_up(LegLiftController(), "l", roll=-0.6)
+        plain = self._lifted_and_up(LegLiftController(), "l")
+        assert abs(fed["r_hip_roll"] - plain["r_hip_roll"]) <= STANCE_FB_MAX + 1e-9
+
+    def test_no_correction_while_both_feet_are_down(self):
+        ctl = LegLiftController()
+        for _ in range(int(2.0 / DT)):
+            out = ctl.update(dict(STAND), DT, roll_rad=-0.2)
+        assert out["r_hip_roll"] == pytest.approx(_stand("r_hip_roll"))
+        assert out["l_hip_roll"] == pytest.approx(_stand("l_hip_roll"))
+
+    def test_correction_fades_out_after_landing(self):
+        ctl = LegLiftController()
+        self._lifted_and_up(ctl, "l", roll=-0.15)
+        for _ in range(int(4.0 / DT)):
+            out = ctl.update(dict(STAND), DT, roll_rad=-0.15)
+        assert ctl.phase is Phase.IDLE
+        assert out["r_hip_roll"] == pytest.approx(_stand("r_hip_roll"), abs=1e-6)
+
+    def test_correction_never_steps(self):
+        ctl = LegLiftController()
+        prev = None
+        for _ in range(int(2.0 / DT)):
+            out = ctl.update(_lifted("l"), DT, roll_rad=-0.6)
+            if prev is not None:
+                assert abs(out["r_hip_roll"] - prev) <= _rate("r_hip_roll") * DT + 1e-9
+            prev = out["r_hip_roll"]

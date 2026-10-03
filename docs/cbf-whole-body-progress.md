@@ -460,34 +460,66 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.20 — Step 3, first attempt: tilt feedback on the standing hip (2026-10-03, open)
+
+`LegLiftController.update(..., roll_rad=)`: while on one foot, PI on the
+lean toward the lifted foot drives the STANDING hip roll (`STANCE_FB_*`,
+capped 0.2 rad, 0.5 rad/s, fades after landing). Off unless a tilt reading
+is passed; nothing passes one yet. Tests: `TestStanceTiltFeedback`.
+
+Result in the soft-ankle sim (20 Hz, noisy delayed tilt, ankle kp 3/5/10):
+
+| | Off | On | Direction reversed |
+|---|---|---|---|
+| Left lift 20% | 16.8° | **8.7°** | 20° |
+| Right lift 20% | 16.8° | **falls** | 18°, falls at kp 10 |
+| 40% lifts | fall | fall | fall |
+| Stiff sim | ~0° | ~0° | **−11°** |
+
+**Why:** the parallelogram holds the weight over the standing foot by
+tilting the standing leg at the ANKLE. On one foot only that ankle holds
+it; if it gives, the leg tips back. A hip correction can't replace it:
+straightening the hip makes the torso upright but takes the weight off the
+foot (right lift fell, correction undid the slide: hip cmd −0.18 → +0.02);
+pushing further makes the torso lean more. Upright + weight-over-foot needs
+the ankle to hold.
+
+Options: (A) ankle must hold — servo/mechanical/ankle setting on the robot;
+(B) keep the standing leg vertical and lean the torso over it at the hip
+(works with weak ankles, visible lean ~10–15° toward the standing side);
+(C) first confirm WHICH real joint gives. **Next: C** — hold a 20% lift on
+the robot and look at the standing foot: flat with the leg leaning over it
+(ankle servo gives) vs rolled onto its edge.
+
 ## Phase 2.19 — Step 2: a sim that sags like the real robot ✅ (2026-10-03)
 
 The default sim's servos are stiff (kp 50), so on one foot it shows no sag
-and called lifts safe that sagged ~10° on the robot (Phase 2.17). New
-optional servo model `CORAL_SIM_SERVO_MODEL=hardware`
-(`app/simulator/servo_model.py`): every leg servo softened to kp 15. It is a
-**test environment for step 3**, not the intended behaviour — the goal stays
-no sag, in sim and on the robot.
+and called lifts safe that sagged ~10° on the robot (Phase 2.17). Optional
+`CORAL_SIM_SERVO_MODEL=hardware` (`app/simulator/servo_model.py`): the
+**ankle-roll servos softened to kp 5**. A test environment for step 3, not
+the intended behaviour — the goal stays no sag, sim and robot.
 
 Fitted by replaying the exact hardware-check lift (20%, 3x slow, 0.6 s
 segments), lean toward the lifted foot with the foot up:
 
-| Servo model | Left lift | Right lift |
-|---|---|---|
-| Stiff (default) | 0.6° | 2.3° |
-| Roll servos soft (kp 4–10) | ~4° | ~12° (one-sided) |
-| Gear slack 2–12° on roll | ~1–4° | 3–20°, falls (one-sided) |
-| **All leg servos kp 15** | **7.2°** | **7.8°** |
-| All leg kp 13–18 | 3–8° | −1–9°, falls at 11–12 |
-| Real robot | **10.9°** (clean) | ~10° (toes touching) |
+| Model | Slide | Left lift | Right lift |
+|---|---|---|---|
+| Stiff (default) | ~0° | 0.6° | 2.3° |
+| All leg servos kp 15 (first fit, **rejected**) | — | 7.2° | 7.8° |
+| Roll-only soft / gear slack | ~0° | 1–4° | 12–20° (one-sided) |
+| **Ankle roll kp ≤ 10** | +4.6° | **15.5°** | **15.9°** |
+| Ankle roll kp ≥ 25 | ~−2° | ~0° | ~0° |
+| Real robot | ~0° | 10.9° (clean) | ~10° (toes touching) |
 
-Limits, stated plainly: it reproduces the SIZE and direction of the sag,
-not every response (1.2x slide: robot 10.9 → 8.8°, model 7.2 → 8.4°), and
-single runs vary a lot (rehearsal right lift: 2.2°) — near a balance edge,
-as the robot was (+0.9 / −3.1 / −6.4° for one command). **Step 3 must be
-judged over many runs and across kp 13–18.** Test:
-`backend/tests/test_servo_model.py` (held lift: stiff −0.1°, hardware 7.6°).
-`--rehearse` in the check script uses it via the env var.
+The kp 15 fit was rejected because its hip rolls barely moved (−0.03 of
+−0.19 rad with both feet down): the slide never happened, so it sagged for
+the wrong reason. On one foot the stiff sim barely loads the standing hip
+roll (0.07–0.16 N·m) — a torque cap doesn't fit either. Soft ankles: hips
+still slide, then the standing ankle gives until the foot is on its edge —
+steady and symmetric like the robot, but ~15° (harder than the robot's 10°).
+Sharp threshold between ankle kp 15 and 25. A **hypothesis** that matches
+the symptoms; not yet seen directly on the robot. Test:
+`backend/tests/test_servo_model.py` (held lift: stiff −0.1°, hardware 16.8°).
 
 ## Phase 2.18 — Step 1 of the real-robot plan: streamed servo commands (2026-10-02)
 

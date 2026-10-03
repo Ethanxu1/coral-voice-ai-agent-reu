@@ -1,10 +1,11 @@
-"""The sim's optional "hardware" servo model: leg servos that give under load.
+"""The sim's optional "hardware" servo model: ankle-roll servos that give under load.
 
 Step 2 of the real-robot plan (docs/cbf-whole-body-progress.md Phase 2.19).
 On 2026-10-02 the real robot, on one foot, sagged ~10 deg toward the lifted
 foot and held there; the default sim's servos are stiff and show none, so
-it called lifts safe that were not. The "hardware" model softens the leg
-servos so the sim sags like the robot, for developing balance feedback.
+it called lifts safe that were not. The "hardware" model softens the
+ankle-roll servos so the sim sags like the robot, for developing balance
+feedback.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import math
 import mujoco
 import pytest
 
-from app.simulator.servo_model import HARDWARE_LEG_KP, LEG_SERVOS, apply_servo_model
+from app.simulator.servo_model import HARDWARE_ANKLE_ROLL_KP, LEG_SERVOS, SOFT_SERVOS, apply_servo_model
 
 
 def _kp(model, joint):
@@ -37,12 +38,32 @@ def test_stiff_leaves_the_model_as_authored(model):
     assert {j: _kp(model, j) for j in before} == before
 
 
-def test_hardware_softens_every_leg_servo_and_nothing_else(model):
-    arm_before = _kp(model, "l_sho_pitch")
+def test_hardware_softens_only_the_ankle_rolls(model):
+    before = {j: _kp(model, j) for j in LEG_SERVOS | {"l_sho_pitch"}}
     apply_servo_model(model, "hardware")
-    for j in LEG_SERVOS:
-        assert _kp(model, j) == (pytest.approx(HARDWARE_LEG_KP), pytest.approx(HARDWARE_LEG_KP)), j
-    assert _kp(model, "l_sho_pitch") == arm_before
+    for j in before:
+        if j in SOFT_SERVOS:
+            assert _kp(model, j) == (pytest.approx(HARDWARE_ANKLE_ROLL_KP),) * 2, j
+        else:
+            assert _kp(model, j) == before[j], j
+
+
+def test_hardware_model_still_slides_the_hips():
+    """The rejected first fit (all leg servos kp 15) barely moved the hip
+    rolls (-0.03 of -0.19 rad), so the weight never shifted. The robot's
+    hips DID slide; the model must too."""
+    from app.simulator.mujoco_sim import AiNexSimulator
+
+    sim = AiNexSimulator(servo_model="hardware")
+    m, d = sim.model, sim.data
+    for _ in range(1500):
+        mujoco.mj_step(m, d)
+    for j in ("l_hip_roll", "r_hip_roll"):
+        sim.set_joint_position(j, -0.18)
+    for _ in range(1000):
+        mujoco.mj_step(m, d)
+    qadr = m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "r_hip_roll")]
+    assert d.qpos[qadr] < -0.15
 
 
 def test_unknown_model_is_an_error(model):
@@ -55,7 +76,7 @@ def test_simulator_takes_the_model_from_config(monkeypatch):
     from app.simulator.mujoco_sim import AiNexSimulator
 
     monkeypatch.setattr(config, "SIM_SERVO_MODEL", "hardware")
-    assert _kp(AiNexSimulator().model, "l_hip_roll")[0] == pytest.approx(HARDWARE_LEG_KP)
+    assert _kp(AiNexSimulator().model, "l_ank_roll")[0] == pytest.approx(HARDWARE_ANKLE_ROLL_KP)
 
 
 def _held_lift_lean(servo_model: str) -> float:
@@ -87,7 +108,7 @@ def _held_lift_lean(servo_model: str) -> float:
 
 
 def test_hardware_model_sags_toward_the_lifted_foot_like_the_robot():
-    """Real robot: ~10 deg. Stiff sim: none. Hardware model: several deg."""
+    """Real robot: ~10 deg. Stiff sim: none. Hardware model: ~15 deg."""
     stiff, soft = _held_lift_lean("stiff"), _held_lift_lean("hardware")
     assert abs(stiff) < 2.0, stiff
-    assert soft > 4.0, soft
+    assert soft > 8.0, soft
