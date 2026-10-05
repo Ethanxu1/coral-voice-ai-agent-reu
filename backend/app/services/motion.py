@@ -198,6 +198,19 @@ async def stream_servo_commands(
     await dispatch_servo_commands(commands, sim_only, stream=True)
 
 
+async def set_robot_walking(walking: bool, turn: float = 0.0, forward: float = 0.0) -> None:
+    """Start/renew (True) or stop (False) the real robot's walking engine;
+    `turn` degrees per step (positive = the robot's own left), `forward` m
+    per step (negative = backward). Used by follow mode's marching and the
+    walking voice commands; the sim has no walking engine, so this does
+    nothing unless connected to the robot."""
+    if state.robot_mode not in ("robot", "hardware"):
+        return
+    if state.hardware_dispatcher is None:
+        state.hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
+    await asyncio.to_thread(state.hardware_dispatcher.walk, walking, forward, turn)
+
+
 async def _execute_on_hardware_if_connected(
     joints: dict[str, float], duration_ms: int = 1000
 ) -> None:

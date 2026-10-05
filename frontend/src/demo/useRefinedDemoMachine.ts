@@ -58,6 +58,8 @@ export interface RefinedState {
   messages: RefinedChatMsg[]
   countdown: number | null
   followActive: boolean
+  // True while the real robot marches with the person (follow mode).
+  marching: boolean
   capturedFrame: string | null
   micLevel: number
   orbState: 'listening' | 'thinking' | 'countdown' | 'muted'
@@ -96,6 +98,7 @@ const INIT: RefinedState = {
   messages: [],
   countdown: null,
   followActive: false,
+  marching: false,
   capturedFrame: null,
   micLevel: 0,
   orbState: 'listening',
@@ -478,7 +481,9 @@ export function useRefinedDemoMachine() {
     // Stable session ID shared by the intent classifier HTTP calls and the
     // persistent action websocket so Langfuse groups everything in one trace.
     const sessionId = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const session = openActionSession(sessionId)
+    const session = openActionSession(sessionId, (s) => {
+      dispatch({ marching: s.active && !!s.marching })
+    })
 
     const addMsg = (msg: RefinedChatMsg) => {
       msgs = [...msgs, msg]
@@ -884,7 +889,7 @@ export function useRefinedDemoMachine() {
             ['Follow my movement', 'Capture my pose'],
           ))
           followActive = false
-          dispatch({ followActive: false })
+          dispatch({ followActive: false, marching: false })
           continue
         }
 
@@ -896,6 +901,19 @@ export function useRefinedDemoMachine() {
           addMsg(agentMsg(
             result.content || 'Done!',
             ['My Poses', 'Follow my movement', 'Capture my pose'],
+          ))
+          dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
+          continue
+        }
+
+        // ── walk: march / turn / step on the real robot's walking engine —
+        // the backend parses the command, walks briefly, then stops ──
+        if (intent === 'walk') {
+          const result = await sendText(transcript, 'immediate')
+          active()
+          addMsg(agentMsg(
+            result.content || 'Okay!',
+            ['Stop walking', 'Follow my movement', 'Capture my pose'],
           ))
           dispatch({ orbState: mutedRef.current ? 'muted' : 'listening' })
           continue

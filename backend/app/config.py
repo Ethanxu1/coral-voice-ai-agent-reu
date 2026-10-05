@@ -122,6 +122,10 @@ HARDWARE_LEG_MIMICRY = os.getenv("CORAL_HARDWARE_LEG_MIMICRY", "false").lower() 
     "1",
     "yes",
 )
+# Follow mode on the real robot: when the person marches in place, the
+# robot's own walking engine marches too (app/follow_walking.py). Off by
+# default until tried in follow mode on the robot.
+FOLLOW_WALKING = os.getenv("CORAL_FOLLOW_WALKING", "false").lower() in ("true", "1", "yes")
 ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "true").lower() in (
     "true",
     "1",

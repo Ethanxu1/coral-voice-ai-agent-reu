@@ -22,6 +22,7 @@ from loguru import logger
 
 from app import config
 from app.robot.interface import ServoCommand
+from app.follow_walking import FollowWalking, WalkFn
 from app.services.clean_logger import CleanLogger
 from app.vision.leg_lift_controller import ANKLES, LEG_JOINTS, LegLiftController, _stand
 from app.vision.pose_to_robot import (
@@ -63,14 +64,26 @@ def legs_follow_person(sim_only: bool | None) -> bool:
     return config.HARDWARE_LEG_MIMICRY or not sends_to_hardware(sim_only)
 
 
+def robot_marches_with_person(sim_only: bool | None) -> bool:
+    """Whether a marching person starts the real robot's walking engine
+    (config.FOLLOW_WALKING; the sim has no walking engine)."""
+    from app.services.motion import sends_to_hardware
+
+    return config.FOLLOW_WALKING and sends_to_hardware(sim_only)
+
+
 def pin_legs_to_stand(targets: dict[str, float]) -> dict[str, float]:
     """`targets` with every leg and ankle joint held at the stand pose."""
     return {**targets, **{j: _stand(j) for j in LEG_JOINTS + ANKLES}}
 
 
 class FollowController:
-    def __init__(self, dispatch_fn: DispatchFn, stream_fn: Optional[DispatchFn] = None):
+    def __init__(self, dispatch_fn: DispatchFn, stream_fn: Optional[DispatchFn] = None,
+                 walk_fn: Optional[WalkFn] = None):
         self._dispatch = dispatch_fn
+        # Starts (True) / stops (False) the real robot's walking engine; see
+        # app/follow_walking.py. None: marching is never handed over.
+        self._walk_fn = walk_fn
         # Live ticks go through stream_fn when given: on the real robot the
         # blocking dispatch waits ~0.3 s per 45 ms move (2026-10-02), so a
         # 20 Hz stream must not wait. The seed move keeps the blocking path.
@@ -177,10 +190,16 @@ class FollowController:
                         "(CORAL_HARDWARE_LEG_MIMICRY=false)")
         lift_ctl = (LegLiftController()
                     if config.ENABLE_LEG_TRACKING and not legs_pinned else None)
-        # The controller applies its own phase-dependent leg limit, so it
-        # needs the unlimited retargeting; without it keep the static one.
-        leg_limit = 1.0 if lift_ctl is not None else None
         last_ctl_t = 0.0
+        walking = (FollowWalking(self._walk_fn)
+                   if self._walk_fn is not None and robot_marches_with_person(sim_only)
+                   else None)
+        # The controller applies its own phase-dependent leg limit, so it
+        # needs the unlimited retargeting; so does the march detector, which
+        # only reads the legs (they are pinned) -- under the static cap
+        # every knee raise reads the same 0.15. Otherwise keep the cap.
+        uncapped = lift_ctl is not None or (walking is not None and legs_pinned)
+        leg_limit = 1.0 if uncapped else None
 
         try:
             await status_fn({"type": "follow_status", "active": True})
@@ -294,6 +313,17 @@ class FollowController:
                             body, head, leg_travel_limit=leg_limit,
                             omit_untrusted_legs=lift_ctl is not None,
                         ) if body else {}
+                        if walking is not None:
+                            was_marching = walking.marching
+                            if walking.update(targets, asyncio.get_event_loop().time(), body):
+                                # The walking engine has the legs; arms still follow.
+                                if targets:
+                                    targets = pin_legs_to_stand(targets)
+                                if lift_ctl is not None:
+                                    lift_ctl.reset()
+                            if walking.marching != was_marching:
+                                await status_fn({"type": "follow_status", "active": True,
+                                                 "marching": walking.marching})
                         if not targets:
                             empty_target_count += 1
                         else:
@@ -352,6 +382,8 @@ class FollowController:
                             safety_hold_count = 0
                             last_heartbeat = now
                 finally:
+                    if walking is not None:
+                        await walking.close()
                     reader_task.cancel()
                     if in_flight is not None and not in_flight.done():
                         in_flight.cancel()

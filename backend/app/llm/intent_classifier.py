@@ -186,6 +186,15 @@ def _has_assistant_history(history: list[dict] | None) -> bool:
 
 
 def _match_immediate(text: str) -> ClassifiedIntent | None:
+    from app.services.walk_commands import parse_walk_command
+
+    if parse_walk_command(text) is not None:
+        return ClassifiedIntent(
+            type="immediate",
+            confidence=0.95,
+            data={"intent": "walk"},
+            reason="High-confidence immediate pattern matched: walk",
+        )
     for pattern, intent, confidence in _IMMEDIATE_PATTERNS:
         if pattern.search(text):
             return ClassifiedIntent(

@@ -160,6 +160,22 @@ class AiNexHardwareController(RobotController):
             return
         response.raise_for_status()
 
+    def walk(self, walking: bool, forward: float = 0.0, turn: float = 0.0) -> None:
+        """Start/renew (True) or stop (False) the robot's own walking engine.
+
+        A walk lasts only while this keeps being called with True; the robot
+        stops by itself when the calls stop (pi/nodes/walking.py). A 409
+        means the legs are still settling from the last walk -- the next
+        renewal retries, so it is not an error.
+        """
+        if not walking:
+            self._client.post(f"{self._base}/walk/stop", timeout=2.0).raise_for_status()
+            return
+        r = self._client.post(f"{self._base}/walk",
+                              json={"forward": forward, "turn": turn}, timeout=1.0)
+        if r.status_code != 409:
+            r.raise_for_status()
+
     def _payload(self, commands: list[ServoCommand]) -> list[dict]:
         payload = []
         for cmd in commands:

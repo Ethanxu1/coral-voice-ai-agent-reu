@@ -11,7 +11,13 @@ Endpoints
                      by the body node (it owns the servo bus)
     POST /stream  hand servo targets to the body and return at once -- for
                   continuous streams (follow mode). Latest wins; refused (429)
-                  while a blocking /move is playing.
+                  while a blocking /move is playing. Leg targets are dropped
+                  while the robot walks (the walking engine owns the legs).
+    POST /walk    start or keep alive Hiwonder's walking engine
+                  {forward m, turn deg, step_height m}; stops by itself if
+                  not renewed within walking.KEEPALIVE_TIMEOUT_S
+    POST /walk/stop  stop walking; legs ease back to stand
+    GET  /walk/status  {available, state}
     GET  /health  liveness probe
     GET  /imu     raw accel/gyro/(magnetometer) floats from the onboard board,
                   straight from ainex_sdk.Board().get_imu() — no
@@ -77,6 +83,8 @@ ID_TO_NAME: Dict[int, str] = {v: k for k, v in SERVO_ID.items()}
 
 # Head servos are driven by the head node — never command them from here.
 _SKIP_SERVO_IDS = {23, 24}
+# Leg servos (ankles, knees, hips) — the walking engine's while it walks.
+_LEG_SERVO_IDS = frozenset(range(1, 13))
 
 # Physical servo safety limits (override the 0-1000 default for constrained
 # servos). MUST match hardware_angle_utils.HW_SERVO_LIMITS on the Mac — the
@@ -127,6 +135,7 @@ _board = None  # ainex_sdk.Board — onboard IMU (and LED/button/buzzer, unused 
 _balance_loop = None  # balance_loop.BalanceLoop — None if it failed to load (see _init_ros)
 _stream_pub = None  # rospy.Publisher on STREAM_TOPIC — None until ROS is up
 _positions_srv = None  # rospy.ServiceProxy("/body_positions") — None if unavailable
+_walker = None  # walking.Walker — None if the walking engine is unavailable
 
 # One motion at a time: overlapping motor commands fight each other, so a
 # second /move while one is playing gets a 429 instead of a hardware lock.
@@ -137,6 +146,7 @@ _move_lock = threading.Lock()
 
 def _init_ros() -> None:
     global _body_srv, _BodyCommandReq, _board, _balance_loop, _stream_pub, _positions_srv
+    global _walker
 
     import rospy
 
@@ -161,6 +171,21 @@ def _init_ros() -> None:
     except Exception as e:  # older body.py: /move and /stream still work
         rospy.logwarn(f"[server] /body_positions unavailable, /positions will report so: {e}")
     rospy.loginfo("[server] ROS ready — body service and stream wired")
+
+    # Walking is optional: without the engine, /walk reports 503 and
+    # everything else works as before.
+    try:
+        from walking import LEG_STAND_PULSE, STAND_MS, RosWalkingEngine, Walker
+
+        def stand_legs() -> None:
+            with _move_lock:
+                _call_body_service([(dict(LEG_STAND_PULSE), STAND_MS)])
+
+        _walker = Walker(RosWalkingEngine(), stand_legs)
+        threading.Thread(target=_walker.watch, name="walk-watchdog", daemon=True).start()
+        rospy.loginfo("[server] walking engine ready (POST /walk)")
+    except Exception as e:
+        rospy.logwarn(f"[server] walking engine unavailable, /walk will report so: {e}")
 
     # IMU init failing shouldn't take down /move and /health, which have
     # nothing to do with it and already work fine on their own — log and
@@ -304,6 +329,11 @@ async def move(moves: List[ServoMove]):
     if not sequence:
         return {"status": "done", "count": 0}
 
+    if _walker is not None and _walker.legs_busy:
+        # A deliberate move (pose, stand) ends a walk rather than fighting it.
+        _walker.stop()
+        await asyncio.get_event_loop().run_in_executor(None, lambda: _walker.wait_idle(5.0))
+
     if not _move_lock.acquire(blocking=False):
         raise HTTPException(status_code=429, detail="robot busy: a move is already executing")
     try:
@@ -340,16 +370,57 @@ def stream(moves: List[ServoMove]):
         raise HTTPException(status_code=503, detail="body stream not initialized")
     if _move_lock.locked():
         raise HTTPException(status_code=429, detail="robot busy: a move is already executing")
+    legs_walking = _walker is not None and _walker.legs_busy
     by_duration: Dict[int, Dict[str, int]] = {}
     for m in moves:
         name = ID_TO_NAME.get(m.servo_id)
         if name is None or m.servo_id in _SKIP_SERVO_IDS:
+            continue
+        if legs_walking and m.servo_id in _LEG_SERVO_IDS:
             continue
         dur = max(MIN_STREAM_MS, m.duration_ms)
         by_duration.setdefault(dur, {})[name] = clamp_position(m.servo_id, m.position)
     if by_duration:
         _stream_pub.publish(json.dumps([[pulse, dur] for dur, pulse in by_duration.items()]))
     return {"status": "sent", "count": sum(len(p) for p in by_duration.values())}
+
+
+class WalkRequest(BaseModel):
+    forward: float = 0.0
+    turn: float = 0.0
+    step_height: float = 0.02
+
+
+@app.post("/walk")
+def walk(req: WalkRequest):
+    """Start walking, or renew/update a walk in progress. The laptop must
+    keep calling this (well inside walking.KEEPALIVE_TIMEOUT_S) or the walk
+    stops by itself."""
+    if _walker is None:
+        raise HTTPException(status_code=503, detail="walking engine not available")
+    if _move_lock.locked() and not _walker.legs_busy:
+        raise HTTPException(status_code=429, detail="robot busy: a move is already executing")
+    from walking import WalkerBusy
+
+    try:
+        settings = _walker.walk(req.forward, req.turn, req.step_height)
+    except WalkerBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"walking": True, **settings}
+
+
+@app.post("/walk/stop")
+def walk_stop():
+    if _walker is not None:
+        _walker.stop()
+    return {"walking": False}
+
+
+@app.get("/walk/status")
+def walk_status():
+    if _walker is None:
+        return {"available": False, "state": "idle"}
+    return {"available": True, "state": _walker.state}
 
 
 def main():

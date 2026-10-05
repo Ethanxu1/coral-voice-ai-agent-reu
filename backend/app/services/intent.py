@@ -14,6 +14,8 @@ from loguru import logger
 from app.data.pose_db import get_pose, list_pose_names, save_pose
 from app.services.motion import _execute_on_hardware_if_connected, _get_robot_state
 from app.services.tts import send_chat_response_with_audio
+from app.services.walk_commands import STOP as WALK_STOP
+from app.services.walk_commands import parse_walk_command, start_walk, stop_walk
 from app.state import state
 
 if TYPE_CHECKING:
@@ -221,6 +223,8 @@ def classify_system_intent(text: str) -> str | None:
     t = text.strip()
     if not t:
         return None
+    if parse_walk_command(t) is not None:
+        return "walk"
     if _SAVE_POSE_RE.search(t):
         return "save_current_pose"
     if _CAPTURE_RE.search(t):
@@ -239,6 +243,20 @@ async def _send_status(websocket: WebSocket, payload: dict) -> None:
         await websocket.send_json(payload)
     except Exception as e:
         logger.debug(f"Status send failed: {e}")
+
+
+async def _handle_walk(text: str) -> str:
+    """Run a walking voice command on the real robot; returns the reply."""
+    cmd = parse_walk_command(text)
+    if cmd is None:
+        return "I didn't catch how you want me to walk. Try \"march in place\" or \"turn left\"."
+    if cmd == WALK_STOP:
+        await stop_walk()
+        return "Okay, I stopped walking."
+    if state.robot_mode not in ("robot", "hardware"):
+        return "I can only march on the real robot. In the simulator my feet stay put."
+    await start_walk(cmd)
+    return f"Okay, {cmd.what}!"
 
 
 async def try_handle_system_intent(
@@ -358,6 +376,21 @@ async def try_handle_system_intent(
             )
         else:
             response = "You don't have any saved poses yet. Say 'save this pose' to make one."
+        await send_chat_response_with_audio(
+            websocket,
+            {
+                "type": "chat_response",
+                "role": "assistant",
+                "content": response,
+                "waypoints": [],
+                "joint_states": _get_robot_state() or None,
+            }
+        )
+        _remember(response)
+        return True
+
+    if intent == "walk":
+        response = await _handle_walk(text)
         await send_chat_response_with_audio(
             websocket,
             {
