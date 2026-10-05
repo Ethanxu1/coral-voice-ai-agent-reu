@@ -18,7 +18,7 @@ import type { RefinedChatMsg } from '../demo/useRefinedDemoMachine'
 import GestureFigure from '../rps/GestureFigure'
 import StandardPicture from '../rps/StandardPicture'
 import SkeletonView, { followReadiness } from '../rps/SkeletonView'
-import { classifyGesture } from '../rps/classify'
+import { classifyGesture, gestureScores } from '../rps/classify'
 import { poseRobot, resetRobot } from '../rps/robotPose'
 import { BEATS, GESTURES, GESTURE_BY_ID, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
@@ -72,6 +72,10 @@ export default function RockPaperScissors({ mode }: { mode: RpsMode }) {
   // mount effect below switches it back to plain single-person tracking.
   const detected = useMemo(
     () => (trackingLost ? null : classifyGesture(bodyLandmarks)),
+    [bodyLandmarks, trackingLost],
+  )
+  const scores = useMemo(
+    () => (trackingLost ? null : gestureScores(bodyLandmarks)),
     [bodyLandmarks, trackingLost],
   )
   // The game samples the camera outside React's render cycle.
@@ -304,6 +308,15 @@ export default function RockPaperScissors({ mode }: { mode: RpsMode }) {
             <div className="rps-cell rps-cell-dark">
               <div className="rps-cell-title">4 · What I think your pose is</div>
               <SkeletonView landmarks={trackingLost ? [] : bodyLandmarks} />
+              {scores && (
+                <div className="rps-scores">
+                  {GESTURES.map((g) => (
+                    <span key={g.id} className={detected === g.id ? 'hit' : ''}>
+                      {g.label} {Math.round(scores[g.id] * 100)}%
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className={`rps-note ${readiness.ok ? 'ok' : 'warn'}`}>{readiness.message}</div>
               {lessonDef && (
                 <div className={`rps-match ${lessonMatched ? 'ok' : ''}`}>

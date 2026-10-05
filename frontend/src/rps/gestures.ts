@@ -7,6 +7,13 @@
 // Gestures are arm poses rather than hand shapes because the AiNex robot has no
 // fingers. They only need the child's shoulders and arms in the camera frame
 // (hips are not required).
+//
+// How the camera decides which gesture the child is making: each gesture's
+// `figure` below doubles as its reference pose. The generic matcher in
+// pose/poseSimilarity.ts scores the live pose against all three and picks the
+// most similar one.
+
+import type { PoseTemplate, PoseVector } from '../pose/poseSimilarity'
 
 export type GestureId = 'rock' | 'paper' | 'scissors'
 
@@ -20,8 +27,10 @@ export interface GestureDef {
   steps: string[]
   /**
    * Stick-figure drawing for Learn, in a 100x100 box. The head is at (50, 18)
-   * and the shoulders at (36, 38) and (64, 38). Points are the child's
-   * elbows and hands as seen by the viewer.
+   * and the shoulders at (36, 38) and (64, 38) (28 wide). Points are the child's
+   * elbows and hands as seen by the viewer. Also the gesture's reference pose
+   * for camera detection, so keep the arm lengths realistic: about 22 for the
+   * upper arm and 21 for the forearm.
    */
   figure: {
     leftElbow: [number, number]
@@ -48,10 +57,10 @@ export const GESTURES: GestureDef[] = [
       'Cross your arms in an X so each hand is on the opposite side.',
     ],
     figure: {
-      leftElbow: [30, 56],
-      leftHand: [62, 44],
-      rightElbow: [70, 56],
-      rightHand: [38, 44],
+      leftElbow: [34, 57],
+      leftHand: [54, 52],
+      rightElbow: [66, 57],
+      rightHand: [46, 52],
     },
     robotPulses: {
       l_sho_pitch: 500,
@@ -76,9 +85,9 @@ export const GESTURES: GestureDef[] = [
     ],
     figure: {
       leftElbow: [14, 38],
-      leftHand: [-4, 38],
+      leftHand: [-7, 38],
       rightElbow: [86, 38],
-      rightHand: [104, 38],
+      rightHand: [107, 38],
     },
     // T pose (motions.py T_POSE_PULSE, arms only).
     robotPulses: {
@@ -103,10 +112,10 @@ export const GESTURES: GestureDef[] = [
       'Spread them apart so your arms make a big V.',
     ],
     figure: {
-      leftElbow: [24, 22],
-      leftHand: [16, 4],
-      rightElbow: [76, 22],
-      rightHand: [84, 4],
+      leftElbow: [27, 18],
+      leftHand: [18, -1],
+      rightElbow: [73, 18],
+      rightHand: [82, -1],
     },
     robotPulses: {
       l_sho_pitch: 185,
@@ -125,23 +134,46 @@ export const GESTURE_BY_ID: Record<GestureId, GestureDef> = Object.fromEntries(
   GESTURES.map((g) => [g.id, g]),
 ) as Record<GestureId, GestureDef>
 
+/** Shoulder centre and width inside the `figure` drawing, used to normalize it. */
+const FIGURE_SHOULDER_MID: [number, number] = [50, 38]
+const FIGURE_SHOULDER_WIDTH = 28
+
+/** A gesture's reference pose, in the form the pose matcher compares against. */
+function figureToPose(figure: GestureDef['figure']): PoseVector {
+  const norm = (p: [number, number]): [number, number] => [
+    (p[0] - FIGURE_SHOULDER_MID[0]) / FIGURE_SHOULDER_WIDTH,
+    (p[1] - FIGURE_SHOULDER_MID[1]) / FIGURE_SHOULDER_WIDTH,
+  ]
+  // The drawing is "as seen by the viewer", and the camera sees the child facing
+  // it, so the viewer's left is the child's right.
+  return {
+    rightElbow: norm(figure.leftElbow),
+    rightWrist: norm(figure.leftHand),
+    leftElbow: norm(figure.rightElbow),
+    leftWrist: norm(figure.rightHand),
+  }
+}
+
+export const GESTURE_TEMPLATES: PoseTemplate[] = GESTURES.map((g) => ({
+  id: g.id,
+  joints: figureToPose(g.figure),
+}))
+
 /**
- * Camera detection thresholds. Distances are in units of the child's shoulder
- * width, so they work at any distance from the camera.
+ * Camera detection settings, passed to the generic pose matcher. Distances are
+ * in shoulder widths, so they work at any distance from the camera.
  */
 export const DETECTION = {
-  /** Minimum landmark visibility to trust a shoulder or wrist. */
+  /** Minimum landmark visibility to trust a shoulder, elbow or wrist. */
   minVisibility: 0.5,
-  /** Rock: each wrist must be this far past the body's centre line, on the opposite side from its own shoulder. */
-  rockCrossMargin: 0.1,
-  /** Rock: wrists must be no more than this far above the shoulders. */
-  rockMaxAboveShoulder: 0.6,
-  /** Scissors: both wrists must be at least this far above the shoulders. */
-  scissorsMinAboveShoulder: 0.7,
-  /** Paper: each wrist must be at least this far out from the body's centre line. */
-  paperMinSpread: 1.4,
-  /** Paper: wrists must be within this far above or below the shoulders. */
-  paperMaxVerticalOffset: 0.7,
+  /** Average joint distance at which similarity falls to 0. Smaller = pickier. */
+  maxDistance: 1.2,
+  /** The best gesture must be at least this similar (0-1) to count. */
+  minSimilarity: 0.72,
+  /** The best gesture must beat the second best by this much, else it is a tie. */
+  margin: 0.05,
+  /** Don't depend on whether the camera image is mirrored. */
+  cameraMayBeMirrored: true,
 }
 
 /** Robot arms back to a relaxed stand. */

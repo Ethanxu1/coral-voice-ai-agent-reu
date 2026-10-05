@@ -290,3 +290,26 @@
   width: auto;
   max-width: 100%;
 }
+
+.rps-scores {
+  position: absolute;
+  top: 46px;
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.rps-scores span {
+  background: rgba(0, 0, 0, 0.45);
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.rps-scores .hit {
+  background: #2E7D32;
+  color: #fff;
+}
