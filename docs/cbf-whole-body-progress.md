@@ -460,6 +460,22 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.22 — Foot pressure sensing, simulated first (2026-10-05)
+
+Pressure pads are on order (4 per foot, 2× ADS1115 over Qwiic). Built the
+layer first against the sim: `backend/app/balance/foot_pressure.py`.
+`sim_foot_pressures(model, data)` turns MuJoCo foot-floor contact forces
+into 4 corner readings per foot (front-inner, front-outer, back-inner,
+back-outer; bilinear split by contact position). `center_of_pressure()`
+gives load plus inner/front CoP in -1..+1, the same for sim and real pads.
+Probe (left lift, held): stiff sim, standing-foot CoP ~+0.02 and foot flat.
+Soft-ankle model (kp 5): lean +16.8°, standing foot rolls ~6.8° onto its
+inner edge (CoP +1.00), lifted foot still grazes the floor (3–7 N). So in
+that model the sag shows up as the CoP pinned at the inner edge. Pads
+would see this directly on the real robot. Next: a CoP-centring correction
+on the standing hip/ankle roll, tested across ankle models.
+Tests: `backend/tests/test_foot_pressure.py`.
+
 ## Phase 2.21 — Measuring the real standing ankle (2026-10-03)
 
 Step 3 needs to know how the real standing ankle gives. Added servo
