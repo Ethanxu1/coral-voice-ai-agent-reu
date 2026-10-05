@@ -95,6 +95,8 @@ def body_module(monkeypatch):
             logwarn=lambda *a, **k: None, spin=lambda: None),
         "std_msgs": types.ModuleType("std_msgs"),
         "std_msgs.msg": types.SimpleNamespace(Bool=object, String=object),
+        "std_srvs": types.ModuleType("std_srvs"),
+        "std_srvs.srv": types.SimpleNamespace(Trigger=object, TriggerResponse=object),
         "ainex_kinematics": types.ModuleType("ainex_kinematics"),
         "ainex_kinematics.motion_manager": types.SimpleNamespace(MotionManager=FakeMotionManager),
         "ainex_demo": types.ModuleType("ainex_demo"),

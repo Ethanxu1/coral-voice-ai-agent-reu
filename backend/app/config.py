@@ -108,6 +108,9 @@ CORAL_NO_VIEWER = os.getenv("CORAL_NO_VIEWER", "0").lower() in ("true", "1", "ye
 # injected (docs/cbf-whole-body-progress.md Phase 2.7).
 #
 # Set to "false" to go back to upper-body-only mimicry.
+# Save the camera's body keypoints during follow mode to logs/pose_recordings/
+# (keypoints only, no images) so real movements can be replayed offline.
+RECORD_POSES = os.getenv("CORAL_RECORD_POSES", "false").lower() in ("true", "1", "yes")
 # Leg mimicry on the REAL robot in follow mode. Off: legs and ankles hold
 # stand whenever follow drives the hardware; arms still follow. 2026-10-02:
 # arms-only follow, the camera misread lost legs as raised, the leg-lift

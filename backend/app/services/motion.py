@@ -165,7 +165,10 @@ async def dispatch_servo_commands(
         return
     dispatches: list[Awaitable[Any]] = []
     if state.sim_dispatcher is not None:
-        dispatches.append(asyncio.to_thread(state.sim_dispatcher.send_commands, commands))
+        sim_send = state.sim_dispatcher.send_commands
+        if stream and hasattr(state.sim_dispatcher, "stream_commands"):
+            sim_send = state.sim_dispatcher.stream_commands
+        dispatches.append(asyncio.to_thread(sim_send, commands))
     send_to_hardware = sends_to_hardware(sim_only)
     if send_to_hardware:
         if state.hardware_dispatcher is None:

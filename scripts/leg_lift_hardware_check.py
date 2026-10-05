@@ -57,6 +57,8 @@ from app.robot.leg_lift_check import (  # noqa: E402
     to_moves,
     with_stance_comp,
 )
+from app.robot.hardware_angle_utils import hardware_units_to_rad, rad_to_hardware_units  # noqa: E402
+from app.robot.servo_config import SERVO_ID_MAP  # noqa: E402
 from app.vision.leg_lift_controller import ANKLE_SHIFT, HIP_RATIO  # noqa: E402
 
 MAIN_SERVER = os.environ.get("CORAL_SERVER", "http://localhost:8000")
@@ -126,6 +128,19 @@ class Robot:
         except Exception:
             return None
 
+    def positions(self) -> dict[int, int] | None:
+        """The servos' ACTUAL positions {servo_id: pulse}, or None if the
+        robot can't report them (older Pi code, or a failed read)."""
+        if self.dry:
+            return None
+        try:
+            r = self.http.get(f"http://{ROBOT_IP}:{ROBOT_AGENT_PORT}/positions", timeout=1.0)
+            if r.status_code != 200:
+                return None
+            return {int(k): int(v) for k, v in r.json()["positions"].items()}
+        except Exception:
+            return None
+
     def stand(self) -> None:
         self.move(stand_pose(), SLOW_MOVE_MS)
         self.wait(SLOW_MOVE_MS / 1000 + 0.3)
@@ -157,6 +172,18 @@ class SimRobot(Robot):
 
     def move(self, pose: dict[str, float], duration_ms: int) -> None:
         self.ctrl.send_commands([self._cmd(**m) for m in to_moves(pose, duration_ms)])
+
+    def positions(self) -> dict[int, int] | None:
+        import mujoco
+
+        m, d = self.sim.model, self.sim.data
+        out = {}
+        with self.sim._lock:
+            for joint, sid in SERVO_ID_MAP.items():
+                jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, joint)
+                if jid >= 0:
+                    out[sid] = rad_to_hardware_units(float(d.qpos[m.jnt_qposadr[jid]]), joint)
+        return out
 
     def roll_deg(self) -> float | None:
         from app.balance.sim_source import read_attitude
@@ -267,6 +294,43 @@ def step_shift(robot: Robot) -> bool:
     return ok
 
 
+STANCE_JOINTS = ("ank_roll", "hip_roll")
+
+
+def stance_drift(actual: dict[int, int] | None, sent: dict[str, float], swing: str) -> list:
+    """Standing ankle and hip roll: commanded and actual angle (deg), and
+    actual minus commanded. Step 3 needs to know if/how the standing ankle
+    gives on one foot. None where the robot can't report positions."""
+    stance = "r" if swing == "l" else "l"
+    out = []
+    for j in STANCE_JOINTS:
+        joint = f"{stance}_{j}"
+        cmd = math.degrees(sent[joint])
+        sid = SERVO_ID_MAP[joint]
+        if actual is None or sid not in actual:
+            out += [round(cmd, 2), None, None]
+            continue
+        act = math.degrees(hardware_units_to_rad(actual[sid], joint))
+        out += [round(cmd, 2), round(act, 2), round(act - cmd, 2)]
+    return out
+
+
+def report_drift(rows: list[tuple]) -> None:
+    """How far the standing ankle/hip sat from where they were told to be,
+    before the foot lifted vs with it up."""
+    for k, j in enumerate(STANCE_JOINTS):
+        col = 10 + 3 * k + 2
+        down = [r[col] for r in rows if r[col] is not None and r[2] >= 0.98 and r[3] < 0.02]
+        up = [r[col] for r in rows if r[col] is not None and r[3] >= 0.1]
+        if not down and not up:
+            print(f"  Standing {j.replace('_', ' ')}: robot did not report positions")
+            continue
+        avg = lambda xs: "n/a" if not xs else f"{sum(xs) / len(xs):+.1f}"  # noqa: E731
+        worst = "n/a" if not up else f"{max(up, key=abs):+.1f}"
+        print(f"  Standing {j.replace('_', ' ')}, actual minus commanded (deg): "
+              f"hips slid, foot down {avg(down)} | foot up {avg(up)} (worst {worst})")
+
+
 def report_lean(rows: list[tuple], swing: str) -> None:
     """Print when the lean happened and save every tick for Claude to read."""
     fmt = lambda v: "n/a" if v is None else f"{v:+.1f} deg"  # noqa: E731
@@ -281,7 +345,9 @@ def report_lean(rows: list[tuple], swing: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{time.strftime('%Y%m%d_%H%M%S')}_lift_{swing}.csv")
     with open(path, "w") as f:
-        f.write("t_s,lean_deg,hips_slid,foot_up,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n")
+        f.write("t_s,lean_deg,hips_slid,foot_up,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,"
+                "stance_ank_cmd_deg,stance_ank_act_deg,stance_ank_drift_deg,"
+                "stance_hip_cmd_deg,stance_hip_act_deg,stance_hip_drift_deg\n")
         for r in rows:
             f.write(",".join("" if v is None else str(v) for v in r) + "\n")
     print(f"  Every tick saved to {os.path.relpath(path)}")
@@ -313,15 +379,18 @@ def step_lift(robot: Robot, legs: str, height: float, slow: float, stance_comp_d
             if not chunk:
                 break
             pose = chunk[-1]
-            robot.move(with_stance_comp(pose, swing, math.radians(stance_comp_deg)), int(SEGMENT_S * 1000))
+            sent = with_stance_comp(pose, swing, math.radians(stance_comp_deg))
+            robot.move(sent, int(SEGMENT_S * 1000))
             roll = robot.roll_deg()
             lean = None if roll is None else roll - base
             if lean is not None:
                 worst = max(worst, abs(lean))
+            raw = [round(v, 4) for v in (robot.last_raw or [])[:6]]
             rows.append((round(time.monotonic() - start, 3),
                          None if lean is None else round(lean, 2),
                          round(shift_fraction(pose, swing), 3), round(foot_fraction(pose, swing), 3),
-                         *[round(v, 4) for v in (robot.last_raw or [])[:6]]))
+                         *(raw + [None] * (6 - len(raw))),
+                         *stance_drift(robot.positions(), sent, swing)))
             if not aborted and guard.update(roll):
                 aborted = True
                 print(f"  !! lean {'unknown' if lean is None else f'{lean:+.1f} deg'} held "
@@ -330,6 +399,7 @@ def step_lift(robot: Robot, legs: str, height: float, slow: float, stance_comp_d
         print(f"  Worst lean during the lift: {worst:.1f} deg (sim: about 2-3 deg)"
               + ("  -- ABORTED" if aborted else ""))
         report_lean(rows, swing)
+        report_drift(rows)
         ok = ask("Did it lift the foot cleanly, stay upright, and set it down "
                  "without tipping?", robot.unattended) and ok and not aborted
     return ok

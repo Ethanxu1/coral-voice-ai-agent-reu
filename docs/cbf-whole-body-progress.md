@@ -460,6 +460,17 @@ pose is, is not.
 lifts.** The noise bugs in Phase 2.6 are real, but fixing them would
 still leave a metric that reads −0.0009 for every lift from 10% to 100%.
 
+## Phase 2.21 — Measuring the real standing ankle (2026-10-03)
+
+Step 3 needs to know how the real standing ankle gives. Added servo
+position readback: Pi `body.py` service `/body_positions` (std_srvs/Trigger,
+reads `MotionManager.get_servos_position`, tolerant of its argument form —
+list of ids, else one id at a time; result shapes normalised), `server.py`
+`GET /positions`. The lift check now logs the standing ankle/hip roll
+commanded vs actual every segment and prints the drift. Rehearsal: stiff
+ankle drift ≤1°; soft-ankle model +13° (already with both feet down).
+Tests: `test_servo_positions.py`. Needs deploying `body.py` + `server.py`.
+
 ## Phase 2.20 — Step 3, first attempt: tilt feedback on the standing hip (2026-10-03, open)
 
 `LegLiftController.update(..., roll_rad=)`: while on one foot, PI on the
@@ -483,6 +494,28 @@ straightening the hip makes the torso upright but takes the weight off the
 foot (right lift fell, correction undid the slide: hip cmd −0.18 → +0.02);
 pushing further makes the torso lean more. Upright + weight-over-foot needs
 the ankle to hold.
+
+**Same day, correction applied elsewhere** (prototype, scratchpad
+`tune_modes.py`; 20 Hz, noisy delayed tilt; ankle models: stiff, limp kp 5,
+weak kp 15/20, gear slack 3/5°; both legs, 20% and 40%):
+
+- Standing ANKLE instead of hip: removes the sag where the ankle has any
+  strength (kp 15/20: 0.2°) but overshoots on the sagging side and falls —
+  the soft ankle follows slowly. Parallelogram (ankle + 1.5x hip): falls.
+- Adding damping (lean rate): unstable — even the stiff model fell (noisy,
+  delayed tilt).
+- Slow integral only (rate 0.15–0.3 rad/s, 1–1.5° deadband): left 20% lift
+  slack 3–5°: 5.9–7.8 → 1.3–3°; kp 20: 5.5 → −2.5°; **kp 15: stood at 14.7°
+  without, FELL with** — can turn a sagging-but-standing robot into a fall.
+- Baselines disagree with the robot: slack models drop right lifts with NO
+  correction (the robot didn't); 40% lifts fall in most soft models.
+
+**Conclusion:** no setting is safe across plausible ankle models, and none
+of the models matches the robot well enough to tune against. The
+controller hook stays (off; hip mode, not recommended). Needed first: a
+real measurement of how the standing ankle gives — servo position readback
+(`GET /positions` on the Pi, never built) during a held lift, plus a look
+at the standing foot.
 
 Options: (A) ankle must hold — servo/mechanical/ankle setting on the robot;
 (B) keep the standing leg vertical and lean the torso over it at the hip

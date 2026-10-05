@@ -184,6 +184,11 @@ class FollowController:
 
         try:
             await status_fn({"type": "follow_status", "active": True})
+            from app.services.pose_recording import recorder_if_enabled
+
+            recorder = recorder_if_enabled()
+            if recorder is not None:
+                logger.info("Follow: recording camera keypoints to {}", recorder.path)
             async with websockets.connect(VISION_WS_URL, max_queue=8) as ws:
 
                 async def reader() -> None:
@@ -200,6 +205,8 @@ class FollowController:
                                 continue
                             latest = data
                             latest_event.set()
+                            if recorder is not None:
+                                recorder.write(data)
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
@@ -348,6 +355,8 @@ class FollowController:
                     reader_task.cancel()
                     if in_flight is not None and not in_flight.done():
                         in_flight.cancel()
+                    if recorder is not None:
+                        recorder.close()
         except asyncio.CancelledError:
             logger.info("Follow loop cancelled")
             if clean_logger is not None:

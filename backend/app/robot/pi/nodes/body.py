@@ -12,6 +12,8 @@ An optional ``global_duration`` (ms) overrides every frame's duration, e.g. to
 run a multi-frame motion at a single uniform speed.
 
 Service:  /body_commands   (ainex_demo/BodyCommand)
+Service:  /body_positions  (std_srvs/Trigger) -- the servos' ACTUAL positions,
+          JSON {servo_id: pulse} in the reply message.
 Topic:    /body_stream     (std_msgs/String) -- the same JSON frames, played
           at once with NO waiting, for continuous streams (follow mode). The
           server only publishes here while no /body_commands sequence is
@@ -24,6 +26,7 @@ import time
 
 import rospy
 from std_msgs.msg import Bool, String
+from std_srvs.srv import Trigger, TriggerResponse
 
 from ainex_kinematics.motion_manager import MotionManager
 from ainex_demo.srv import BodyCommand, BodyCommandResponse  # type: ignore
@@ -55,6 +58,25 @@ MIN_STREAM_MS = 20  # floor for a /body_stream move (server.py MIN_STREAM_MS)
 STREAM_TOPIC = '/body_stream'
 
 
+# Servos read for /body_positions: legs and arms (head 23/24 is not fitted).
+POSITION_IDS = list(range(1, 23))
+
+
+def normalize_positions(raw, ids):
+    """{servo_id: pulse} from whatever MotionManager.get_servos_position
+    returns: a dict, [id, pos] pairs, or bare positions in `ids` order."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return {int(k): int(v) for k, v in raw.items()}
+    items = list(raw)
+    if all(isinstance(x, (list, tuple)) and len(x) == 2 for x in items):
+        return {int(i): int(p) for i, p in items}
+    if len(items) == len(ids):
+        return {int(i): int(p) for i, p in zip(ids, items)}
+    raise ValueError("unrecognised get_servos_position result: %r" % (raw,))
+
+
 def pulse_to_servos(pulse):
     """Convert {servo_name: pulse} into [[servo_id, pulse], ...].
 
@@ -81,6 +103,7 @@ class BodyNode:
         self.motion_manager = MotionManager()
 
         rospy.Service('/body_commands', BodyCommand, self._handle_command)
+        rospy.Service('/body_positions', Trigger, self._handle_positions)
         # queue_size=1: only the newest target matters in a stream.
         rospy.Subscriber(STREAM_TOPIC, String, self._handle_stream, queue_size=1)
         rospy.Subscriber(SHUTDOWN_TOPIC, Bool, self._shutdown_cb)
@@ -122,6 +145,30 @@ class BodyNode:
 
         rospy.loginfo('[BodyNode] played %d frames (%.0f ms)', len(sequence), total_ms)
         return BodyCommandResponse(success=True, duration_ms=total_ms)
+
+    def read_positions(self, ids):
+        """Actual servo positions. The argument form of get_servos_position
+        isn't documented here, so: a list of ids first, then one id at a
+        time."""
+        try:
+            return normalize_positions(self.motion_manager.get_servos_position(ids), ids)
+        except TypeError:
+            out = {}
+            for sid in ids:
+                r = self.motion_manager.get_servos_position(sid)
+                if isinstance(r, (list, tuple)):
+                    out.update(normalize_positions([r] if len(r) == 2 and not isinstance(r[0], (list, tuple)) else r, [sid]))
+                elif r is not None:
+                    out[sid] = int(r)
+            return out
+
+    def _handle_positions(self, req):
+        try:
+            positions = self.read_positions(POSITION_IDS)
+            return TriggerResponse(success=True, message=json.dumps(positions))
+        except Exception as e:
+            rospy.logwarn('[BodyNode] reading servo positions failed: %s', e)
+            return TriggerResponse(success=False, message=str(e))
 
     def _handle_stream(self, msg):
         """Play stream frames immediately, without waiting for the motion.

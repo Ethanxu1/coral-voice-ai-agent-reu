@@ -7,6 +7,8 @@ when the motion is done. No vision, no classifier, no named motions.
 
 Endpoints
     POST /move    execute raw servo commands (blocks until the body finishes)
+    GET  /positions  the servos' ACTUAL positions {servo_id: pulse}, read
+                     by the body node (it owns the servo bus)
     POST /stream  hand servo targets to the body and return at once -- for
                   continuous streams (follow mode). Latest wins; refused (429)
                   while a blocking /move is playing.
@@ -124,6 +126,7 @@ _BodyCommandReq = None
 _board = None  # ainex_sdk.Board — onboard IMU (and LED/button/buzzer, unused here)
 _balance_loop = None  # balance_loop.BalanceLoop — None if it failed to load (see _init_ros)
 _stream_pub = None  # rospy.Publisher on STREAM_TOPIC — None until ROS is up
+_positions_srv = None  # rospy.ServiceProxy("/body_positions") — None if unavailable
 
 # One motion at a time: overlapping motor commands fight each other, so a
 # second /move while one is playing gets a 429 instead of a hardware lock.
@@ -133,7 +136,7 @@ _move_lock = threading.Lock()
 
 
 def _init_ros() -> None:
-    global _body_srv, _BodyCommandReq, _board, _balance_loop, _stream_pub
+    global _body_srv, _BodyCommandReq, _board, _balance_loop, _stream_pub, _positions_srv
 
     import rospy
 
@@ -150,6 +153,13 @@ def _init_ros() -> None:
     # queue_size=1: if the body node falls behind, older targets are dropped
     # and only the newest is played -- right for a continuous stream.
     _stream_pub = rospy.Publisher(STREAM_TOPIC, String, queue_size=1)
+    try:
+        from std_srvs.srv import Trigger  # type: ignore
+
+        rospy.wait_for_service("/body_positions", timeout=5.0)
+        _positions_srv = rospy.ServiceProxy("/body_positions", Trigger)
+    except Exception as e:  # older body.py: /move and /stream still work
+        rospy.logwarn(f"[server] /body_positions unavailable, /positions will report so: {e}")
     rospy.loginfo("[server] ROS ready — body service and stream wired")
 
     # IMU init failing shouldn't take down /move and /health, which have
@@ -304,6 +314,17 @@ async def move(moves: List[ServoMove]):
         _move_lock.release()
 
     return {"status": "done", "count": sum(len(p) for p in by_duration.values())}
+
+
+@app.get("/positions")
+def positions():
+    """The servos' actual positions, as read by the body node."""
+    if _positions_srv is None:
+        raise HTTPException(status_code=503, detail="servo position reading not available")
+    resp = _positions_srv()
+    if not resp.success:
+        raise HTTPException(status_code=503, detail=f"servo position read failed: {resp.message}")
+    return {"positions": json.loads(resp.message)}
 
 
 @app.post("/stream")
