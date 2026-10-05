@@ -37,6 +37,25 @@ VISION_WS_URL = "ws://localhost:8001/ws/pose"
 # the blocking SimController.send_commands stacks up and adds latency.
 _FOLLOW_DISPATCH_HZ = 20.0
 _FOLLOW_DURATION_MS = 45
+# Gentle mode (Rock-Paper-Scissors): slower, smoother arm motion so the
+# simulated robot doesn't topple. Each command takes longer to complete, targets
+# are filtered harder, and no joint may move more than _GENTLE_MAX_STEP_RAD per
+# dispatch tick (~1.6 rad/s at 20 Hz).
+_GENTLE_DURATION_MS = 160
+_GENTLE_MAX_STEP_RAD = 0.08
+_GENTLE_SMOOTHER_MIN_CUTOFF = 0.7
+_GENTLE_SMOOTHER_BETA = 0.01
+
+_gentle_follow = False
+
+
+def set_gentle_follow(enabled: bool) -> None:
+    global _gentle_follow
+    _gentle_follow = bool(enabled)
+
+
+def gentle_follow_enabled() -> bool:
+    return _gentle_follow
 # One-shot easing from STAND to the human's first detected pose. Going at the
 # fast loop's 45 ms straight to a fully extended arm would slam the joints in
 # one tick; this slower opening move makes the start of follow mode smooth.
@@ -116,7 +135,14 @@ class FollowController:
           3. Tick at _FOLLOW_DISPATCH_HZ, fire-and-forget; skip a tick if the
              previous dispatch hasn't finished.
         """
-        smoother = JointAngleSmoother()
+        gentle = _gentle_follow
+        smoother = (
+            JointAngleSmoother(min_cutoff=_GENTLE_SMOOTHER_MIN_CUTOFF, beta=_GENTLE_SMOOTHER_BETA)
+            if gentle
+            else JointAngleSmoother()
+        )
+        live_duration_ms = _GENTLE_DURATION_MS if gentle else _FOLLOW_DURATION_MS
+        prev_targets: dict[str, float] | None = None
         latest: dict | None = None
         latest_event = asyncio.Event()
 
@@ -175,6 +201,7 @@ class FollowController:
                             latest_event.clear()
                             continue
                         targets = smoother.smooth(targets)
+                        prev_targets = dict(targets)
                         seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
                         logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
                         if clean_logger is not None:
@@ -199,10 +226,17 @@ class FollowController:
                             empty_target_count += 1
                         else:
                             targets = smoother.smooth(targets)
+                            if gentle and prev_targets is not None:
+                                for joint, value in targets.items():
+                                    last = prev_targets.get(joint)
+                                    if last is not None:
+                                        delta = max(-_GENTLE_MAX_STEP_RAD, min(_GENTLE_MAX_STEP_RAD, value - last))
+                                        targets[joint] = last + delta
+                            prev_targets = dict(targets)
                             if in_flight is not None and not in_flight.done():
                                 skip_count += 1
                             else:
-                                commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
+                                commands = targets_to_servo_commands(targets, live_duration_ms)
                                 in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
                                 in_flight.add_done_callback(_log_dispatch_error)
                                 dispatch_count += 1

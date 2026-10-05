@@ -1,0 +1,292 @@
+/* Rock-Paper-Scissors reuses the Refined Demo shell (rd-* classes in
+   RefinedDemo.css). Only the pieces that demo doesn't have live here. */
+
+.rps-score-badge {
+  top: 60px;
+}
+
+.rps-seen-badge {
+  top: 104px;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.rps-shoot-badge {
+  bottom: 28px;
+  font-size: 22px;
+  padding: 10px 28px;
+  background: #FF6B4A;
+}
+
+/* Lesson card at the top of the right panel: stick-figure picture + steps. */
+.rps-lesson-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+}
+
+.rps-figure {
+  width: 110px;
+  flex-shrink: 0;
+  color: #17BEBB;
+}
+
+.rps-figure-hand {
+  fill: #FF6B4A;
+}
+
+.rps-lesson-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 22px;
+  font-weight: 800;
+  color: #2D2926;
+}
+
+.rps-lesson-text ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #6B625D;
+}
+
+.rps-seen-first {
+  top: 60px;
+}
+
+/* ── Menu screen (pick Learn or Play) ───────────────────────────────────── */
+.rps-menu {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+}
+
+.rps-menu-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 44px;
+  font-weight: 800;
+  color: #2D2926;
+}
+
+.rps-menu-sub {
+  color: #6B625D;
+  font-size: 18px;
+  margin-bottom: 20px;
+}
+
+.rps-menu-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 340px));
+  gap: 24px;
+}
+
+.rps-menu-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 44px 24px;
+  background: #FFFDF8;
+  border: 3px solid transparent;
+  border-radius: 28px;
+  text-decoration: none;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(45, 41, 38, 0.1);
+  transition: transform 0.15s, border-color 0.15s;
+}
+
+.rps-menu-card:hover {
+  transform: translateY(-4px);
+}
+
+.rps-menu-card.learn:hover {
+  border-color: #17BEBB;
+}
+
+.rps-menu-card.play:hover {
+  border-color: #FF6B4A;
+}
+
+.rps-menu-emoji {
+  font-size: 56px;
+}
+
+.rps-menu-name {
+  font-family: 'Baloo 2', cursive;
+  font-size: 28px;
+  font-weight: 800;
+  color: #2D2926;
+}
+
+.rps-menu-desc {
+  color: #6B625D;
+  font-size: 15px;
+}
+
+@media (max-width: 720px) {
+  .rps-menu-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Learn: four views in a 2x2 grid ───────────────────────────────────── */
+.rps-quad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 3px;
+}
+
+.rps-cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #26232F;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rps-cell-dark {
+  background: #1C1A22;
+}
+
+.rps-cell .tui-stream {
+  width: 100%;
+  height: 100%;
+}
+
+.rps-cell-title {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+.rps-standard-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.rps-cell-empty {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  padding: 0 20px;
+}
+
+.rps-cell-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 26, 34, 0.8);
+}
+
+.rps-skeleton {
+  width: 100%;
+  height: 100%;
+}
+
+.rps-bone {
+  stroke: #17BEBB;
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.rps-bone.faded {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-dasharray: 4 10;
+}
+
+.rps-head {
+  fill: none;
+  stroke: #17BEBB;
+  stroke-width: 6;
+}
+
+.rps-joint {
+  fill: #FF6B4A;
+}
+
+.rps-joint.faded {
+  fill: rgba(255, 255, 255, 0.25);
+}
+
+.rps-note {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 46px;
+  z-index: 3;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: rgba(38, 35, 47, 0.85);
+  color: #fff;
+}
+
+.rps-note.warn {
+  background: rgba(176, 58, 46, 0.9);
+}
+
+.rps-match {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 3;
+  max-width: calc(100% - 16px);
+  background: rgba(38, 35, 47, 0.85);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 16px;
+  border-radius: 999px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.rps-match.ok {
+  background: #2E7D32;
+  border-color: #2E7D32;
+}
+
+.rps-standard-figure {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 44px 24px 16px;
+  box-sizing: border-box;
+}
+
+.rps-standard-figure .rps-figure {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+}
