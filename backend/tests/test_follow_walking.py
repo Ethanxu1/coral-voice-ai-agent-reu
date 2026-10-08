@@ -196,16 +196,17 @@ async def test_follow_on_the_robot_marches_with_the_person_and_stops(monkeypatch
 
 
 def shoulders(yaw_deg: float) -> list[dict]:
-    """Landmarks with the shoulder line turned `yaw_deg` toward the
-    landmarks' LEFT side (the left shoulder swings back, away from the
-    camera; larger z is farther)."""
+    """Landmarks with the shoulder line turned `yaw_deg` toward the side
+    that drives the ROBOT'S LEFT arm -- MediaPipe's RIGHT-labelled shoulder
+    (pose_to_robot maps right_* landmarks onto the robot's l_* joints) swings
+    back, away from the camera (larger z is farther)."""
     import math
 
     half = 0.2
     c, s_ = math.cos(math.radians(yaw_deg)), math.sin(math.radians(yaw_deg))
     body = [{"xw": 0.0, "yw": 0.0, "zw": 0.0, "visibility": 0.0} for _ in range(33)]
-    body[11] = {"xw": half * c, "yw": -0.5, "zw": half * s_, "visibility": 1.0}
-    body[12] = {"xw": -half * c, "yw": -0.5, "zw": -half * s_, "visibility": 1.0}
+    body[12] = {"xw": -half * c, "yw": -0.5, "zw": half * s_, "visibility": 1.0}
+    body[11] = {"xw": half * c, "yw": -0.5, "zw": -half * s_, "visibility": 1.0}
     return body
 
 
@@ -220,9 +221,11 @@ def test_torso_turn_reads_the_shoulder_line():
 
 @pytest.mark.anyio
 async def test_turning_while_marching_turns_the_robot_the_same_way_as_the_arms():
-    """Sides follow the landmarks' labels, which is what the arms copy: a
-    turn toward the LEFT shoulder turns the robot to its own left
-    (positive turn on the walking engine, confirmed on the robot)."""
+    """Sides follow the arm mapping: turning toward the side that drives the
+    robot's LEFT arm turns the robot to its own left (positive turn on the
+    walking engine, confirmed on the robot). With the camera flip that is a
+    shadow, not a mirror: the person turns to their left, so does the
+    robot."""
     sent: list[tuple[bool, float]] = []
 
     async def walk_fn(walking: bool, turn: float = 0.0) -> None:

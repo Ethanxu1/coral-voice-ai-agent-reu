@@ -11,10 +11,11 @@ stop or follow mode ends.
 
 Turning: while marching, a torso turned past TURN_START_DEG turns the robot
 TURN_STEP_DEG per step until the turn eases back under TURN_STOP_DEG. Sides
-follow the landmarks' left/right labels -- the ones the arms copy -- so the
-robot turns the way it would if it mirrored the arms. The camera image is
-mirrored before pose detection, so for a person facing the robot that is a
-reflection: they turn to their right, the robot turns to its left.
+follow the arm mapping: pose_to_robot drives the robot's LEFT arm from
+MediaPipe's RIGHT-labelled landmarks (the camera image is flipped before
+detection, which swaps the labels; the mapping swaps them back). Net effect
+is a shadow, as for the arms: the person turns to their left, the robot
+turns to its own left.
 """
 
 from __future__ import annotations
@@ -41,18 +42,21 @@ TURN_STEP_DEG = 8.0
 # Low-pass on the torso reading, s: a turn is held, jitter is not.
 TURN_TAU = 0.3
 _MIN_VISIBILITY = 0.5
-_L_SHOULDER, _R_SHOULDER = 11, 12
+# MediaPipe shoulder indices. The RIGHT-labelled one drives the robot's
+# left arm (pose_to_robot), so it is the robot-left side here.
+_ROBOT_LEFT_SHOULDER, _ROBOT_RIGHT_SHOULDER = 12, 11
 
 WalkFn = Callable[[bool, float], Awaitable[None]]
 
 
 def torso_turn_deg(body: list[dict]) -> Optional[float]:
-    """How far the shoulder line is turned toward the landmarks' LEFT side,
-    degrees (the left shoulder swung back, away from the camera; MediaPipe
-    world z grows away from it). None if either shoulder isn't seen."""
-    if len(body) <= _R_SHOULDER:
+    """How far the shoulder line is turned toward the ROBOT'S LEFT side,
+    degrees: the shoulder that drives the robot's left arm swung back, away
+    from the camera (MediaPipe world z grows away from it). Positive = the
+    robot should turn left. None if either shoulder isn't seen."""
+    if len(body) <= max(_ROBOT_LEFT_SHOULDER, _ROBOT_RIGHT_SHOULDER):
         return None
-    l, r = body[_L_SHOULDER], body[_R_SHOULDER]
+    l, r = body[_ROBOT_LEFT_SHOULDER], body[_ROBOT_RIGHT_SHOULDER]
     if min(l.get("visibility", 0.0), r.get("visibility", 0.0)) < _MIN_VISIBILITY:
         return None
     dx = abs(l["xw"] - r["xw"])
