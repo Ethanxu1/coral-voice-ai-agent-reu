@@ -88,6 +88,10 @@ body {
   transform: translateY(-2px);
 }
 
+.launcher-btn.wide {
+  grid-column: 1 / -1;
+}
+
 .launcher-btn.primary {
   background: linear-gradient(135deg, #7b4bb9, #0077ff);
   border-color: #9b59b6;

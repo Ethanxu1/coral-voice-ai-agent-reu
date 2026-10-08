@@ -187,21 +187,52 @@ def knees_confidently_visible(body_landmarks: list[dict]) -> bool:
     ) and _visible(body_landmarks[_LM_R_KNEE], _KNEE_VISIBILITY_THRESHOLD)
 
 
+# When True, arm retargeting no longer needs the hips in view: the torso frame is
+# built from the shoulders alone, assuming an upright torso. Off by default — the
+# main demo asks the user to reframe instead. Rock-Paper-Scissors only follows
+# the head and arms, so its pages switch this on while they're open.
+_allow_hipless_arms = False
+
+
+def set_hipless_arms(enabled: bool) -> None:
+    global _allow_hipless_arms
+    _allow_hipless_arms = bool(enabled)
+
+
+def hipless_arms_enabled() -> bool:
+    return _allow_hipless_arms
+
+
 def _torso_frame_from(body: list[dict]):
-    """Build torso frame from world landmarks; returns None if any required
-    landmark is missing world coords or visibility.
+    """Build torso frame from world landmarks; returns None if the shoulders (or,
+    unless hip-less arms are allowed, the hips) are missing world coords or
+    visibility.
     """
-    required = (_LM_L_SHOULDER, _LM_R_SHOULDER, _LM_L_HIP, _LM_R_HIP)
-    for idx in required:
+    for idx in (_LM_L_SHOULDER, _LM_R_SHOULDER):
         lm = body[idx]
         if not _has_world(lm) or not _visible(lm):
             return None
-    return geometry.torso_frame(
-        geometry.world_xyz(body[_LM_L_SHOULDER]),
-        geometry.world_xyz(body[_LM_R_SHOULDER]),
-        geometry.world_xyz(body[_LM_L_HIP]),
-        geometry.world_xyz(body[_LM_R_HIP]),
+
+    l_sho = geometry.world_xyz(body[_LM_L_SHOULDER])
+    r_sho = geometry.world_xyz(body[_LM_R_SHOULDER])
+
+    hips_ok = all(
+        _has_world(body[idx]) and _visible(body[idx]) for idx in (_LM_L_HIP, _LM_R_HIP)
     )
+    if hips_ok:
+        return geometry.torso_frame(
+            l_sho,
+            r_sho,
+            geometry.world_xyz(body[_LM_L_HIP]),
+            geometry.world_xyz(body[_LM_R_HIP]),
+        )
+    if not _allow_hipless_arms:
+        return None
+
+    # Hips out of frame: stand in a pair of hips straight below the shoulders
+    # (MediaPipe world Y points down), so the torso's up axis is true vertical.
+    drop = np.array([0.0, 0.5, 0.0])
+    return geometry.torso_frame(l_sho, r_sho, l_sho + drop, r_sho + drop)
 
 
 def _pelvis_frame_from(body: list[dict]):

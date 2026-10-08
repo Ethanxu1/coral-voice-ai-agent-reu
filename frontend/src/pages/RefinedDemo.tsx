@@ -621,7 +621,7 @@ function stageBadge(
 }
 
 /* ── Chat area ───────────────────────────────────────────────────────────────── */
-function ChatArea({
+export function ChatArea({
   messages,
   onChip,
   agentTyping,
@@ -668,7 +668,7 @@ function AgentLiveRegion({ messages }: { messages: RefinedChatMsg[] }) {
   )
 }
 
-function ConnectionHealthDot({ services }: { services: ReturnType<typeof useConnectionStatus> }) {
+export function ConnectionHealthDot({ services }: { services: ReturnType<typeof useConnectionStatus> }) {
   const allOk = services.every((s) => s.ok === true)
   const anyDown = services.some((s) => s.ok === false)
   const statusClass = allOk ? 'ok' : anyDown ? 'down' : 'pending'

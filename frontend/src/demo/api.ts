@@ -202,6 +202,21 @@ export async function movePulses(
   return { count: data?.count ?? commands.length }
 }
 
+// Rock-Paper-Scissors only follows the head and arms, so while it is open the
+// main server's follow mode doesn't need the hips in view. Best-effort.
+export async function setHiplessFollow(enabled: boolean): Promise<void> {
+  try {
+    await fetch(`${getRobotBase()}/follow/hipless-arms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      keepalive: true,
+    })
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function setRobotState(mode: string): Promise<void> {
   // Best-effort lock/unlock — never let a state toggle abort the demo.
   try {
