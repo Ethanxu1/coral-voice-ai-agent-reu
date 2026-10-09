@@ -121,7 +121,7 @@ def test_transaction_rolls_back_all_rows(repo):
 
 - [ ] **Step 2: Run the repository tests and confirm they fail**
 
-Run: `uv run pytest backend/tests/studio/test_repository.py -v`  
+Run: `uv run pytest backend/tests/studio/test_repository.py -v`
 Expected: FAIL because `app.studio.repository` does not exist.
 
 - [ ] **Step 3: Add typed domain models and migration-driven repository**
@@ -165,7 +165,7 @@ Remove `clear_all_poses()` from the FastAPI lifespan so legacy saved poses also 
 
 - [ ] **Step 4: Run persistence tests and legacy route tests**
 
-Run: `uv run pytest backend/tests/studio/test_repository.py backend/tests/test_extract_name.py backend/tests/test_chat_motion_plan.py -v`  
+Run: `uv run pytest backend/tests/studio/test_repository.py backend/tests/test_extract_name.py backend/tests/test_chat_motion_plan.py -v`
 Expected: PASS, including reopen, rollback, and protected-delete tests.
 
 - [ ] **Step 5: Commit the data foundation**
@@ -220,7 +220,7 @@ def test_missing_ankle_rejects_training_sample(full_body_pose):
 
 - [ ] **Step 2: Run feature tests and confirm they fail**
 
-Run: `uv run pytest backend/tests/studio/test_features.py -v`  
+Run: `uv run pytest backend/tests/studio/test_features.py -v`
 Expected: FAIL because the extractor is missing.
 
 - [ ] **Step 3: Implement normalized full-body features and SVG generation**
@@ -272,7 +272,7 @@ def test_low_visibility_joint_has_less_influence(samples):
     assert WeightedKnnRecognizer(samples).classify("p", query).label == samples[0].label
 ```
 
-Implement inverse-distance voting with `weight = visibility / max(distance, 1e-6)`, class-normalized confidence, minimum threshold, runner-up margin, and deterministic label ordering. Run: `uv run pytest backend/tests/studio/test_features.py backend/tests/studio/test_recognizer.py -v`  
+Implement inverse-distance voting with `weight = visibility / max(distance, 1e-6)`, class-normalized confidence, minimum threshold, runner-up margin, and deterministic label ordering. Run: `uv run pytest backend/tests/studio/test_features.py backend/tests/studio/test_recognizer.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit the recognizer**
@@ -318,7 +318,7 @@ def test_payloads_are_independent(fake_multi_frame):
 
 - [ ] **Step 2: Run the payload tests and confirm they fail**
 
-Run: `uv run pytest backend/tests/vision/test_multi_person_payload.py -v`  
+Run: `uv run pytest backend/tests/vision/test_multi_person_payload.py -v`
 Expected: FAIL because `subjects_json` omits landmarks.
 
 - [ ] **Step 3: Serialize each subject's landmarks and type them on the frontend**
@@ -342,9 +342,9 @@ Add `body_landmarks: Landmark[]` to `DetectedSubject`. Keep `CORAL_ENABLE_LEG_TR
 
 - [ ] **Step 4: Run vision and TypeScript verification**
 
-Run: `uv run pytest backend/tests/vision/test_multi_person_payload.py backend/tests/vision/test_pose_to_robot.py backend/tests/vision/test_leg_modes.py -v`  
-Expected: PASS.  
-Run: `cd frontend && npm run build`  
+Run: `uv run pytest backend/tests/vision/test_multi_person_payload.py backend/tests/vision/test_pose_to_robot.py backend/tests/vision/test_leg_modes.py -v`
+Expected: PASS.
+Run: `cd frontend && npm run build`
 Expected: PASS with the extended subject type.
 
 - [ ] **Step 5: Commit the vision contract**
@@ -393,7 +393,7 @@ def test_same_pose_requires_exit_before_rearm(engine):
 
 - [ ] **Step 2: Run trigger tests and confirm they fail**
 
-Run: `uv run pytest backend/tests/studio/test_trigger_engine.py -v`  
+Run: `uv run pytest backend/tests/studio/test_trigger_engine.py -v`
 Expected: FAIL because `TriggerEngine` does not exist.
 
 - [ ] **Step 3: Implement a clock-injected deterministic engine**
@@ -416,7 +416,7 @@ Reset a subject's hold immediately on missing/unknown/changed pose. Make cooldow
 
 - [ ] **Step 4: Run the complete trigger suite**
 
-Run: `uv run pytest backend/tests/studio/test_trigger_engine.py -v`  
+Run: `uv run pytest backend/tests/studio/test_trigger_engine.py -v`
 Expected: PASS for hold, interruption, arbitration, busy, cooldown, and re-arm.
 
 - [ ] **Step 5: Commit the trigger engine**
@@ -466,7 +466,7 @@ async def test_hardware_disconnect_forces_simulator(player, hardware):
 
 - [ ] **Step 2: Run sequence tests and confirm they fail**
 
-Run: `uv run pytest backend/tests/studio/test_sequence_player.py -v`  
+Run: `uv run pytest backend/tests/studio/test_sequence_player.py -v`
 Expected: FAIL because no sequence player exists.
 
 - [ ] **Step 3: Implement immutable snapshots, preflight, and guarded playback**
@@ -492,7 +492,7 @@ Preflight every interpolated transition before the first dispatch. Extract a reu
 
 - [ ] **Step 4: Run player and existing safety suites**
 
-Run: `uv run pytest backend/tests/studio/test_sequence_player.py backend/tests/test_motion_safety.py backend/tests/test_collision_check.py backend/tests/test_stability_checker.py -v`  
+Run: `uv run pytest backend/tests/studio/test_sequence_player.py backend/tests/test_motion_safety.py backend/tests/test_collision_check.py backend/tests/test_stability_checker.py -v`
 Expected: PASS and zero dispatches for a blocked sequence.
 
 - [ ] **Step 5: Commit safe playback**
@@ -551,7 +551,7 @@ def test_live_output_defaults_to_simulator(client):
 
 - [ ] **Step 2: Run API tests and confirm they fail**
 
-Run: `uv run pytest backend/tests/studio/test_import_export.py backend/tests/studio/test_studio_api.py -v`  
+Run: `uv run pytest backend/tests/studio/test_import_export.py backend/tests/studio/test_studio_api.py -v`
 Expected: FAIL with 404 or missing modules.
 
 - [ ] **Step 3: Implement typed schemas and versioned package validation**
@@ -588,13 +588,13 @@ StudioEvent(type="hold_progress", subject_id="person-2", progress=0.86)
 StudioEvent(type="execution_blocked", sequence_id="seq-1", failed_step=1, message="Fall risk detected")
 ```
 
-Run: `uv run pytest backend/tests/studio/test_import_export.py backend/tests/studio/test_studio_api.py backend/tests/studio/test_runtime.py -v`  
+Run: `uv run pytest backend/tests/studio/test_import_export.py backend/tests/studio/test_studio_api.py backend/tests/studio/test_runtime.py -v`
 Expected: PASS for CRUD, size limits, rollback, event flow, and simulator default.
 
 - [ ] **Step 5: Run backend regression tests and commit**
 
-Run: `uv run pytest backend/tests -q`  
-Expected: PASS.  
+Run: `uv run pytest backend/tests -q`
+Expected: PASS.
 
 ```bash
 git add backend/app/studio backend/app/api/routes/studio.py backend/app/api/router.py backend/app/main.py backend/app/state.py backend/tests/studio
@@ -649,9 +649,9 @@ it('renders torso and both legs', () => {
 
 - [ ] **Step 2: Install dependencies and confirm tests fail**
 
-Run: `cd frontend && npm install`  
-Expected: lockfile updates.  
-Run: `cd frontend && npm test -- FullBodySkeleton.test.tsx`  
+Run: `cd frontend && npm install`
+Expected: lockfile updates.
+Run: `cd frontend && npm test -- FullBodySkeleton.test.tsx`
 Expected: FAIL because the component is missing.
 
 - [ ] **Step 3: Implement the typed client, reducer, and safe SVG skeleton**
@@ -677,10 +677,10 @@ Render only finite coordinates; fade low-visibility joints; expose accessible la
 
 - [ ] **Step 4: Test reconnect and build behavior**
 
-Test exponential reconnect capped at five seconds, ping handling, and reducer updates without duplicating listeners.  
-Run: `cd frontend && npm test -- FullBodySkeleton.test.tsx useStudioSocket.test.ts`  
-Expected: PASS.  
-Run: `cd frontend && npm run build`  
+Test exponential reconnect capped at five seconds, ping handling, and reducer updates without duplicating listeners.
+Run: `cd frontend && npm test -- FullBodySkeleton.test.tsx useStudioSocket.test.ts`
+Expected: PASS.
+Run: `cd frontend && npm run build`
 Expected: PASS.
 
 - [ ] **Step 5: Commit the frontend foundation**
@@ -733,7 +733,7 @@ it('reorders sequence steps and keeps timings with their blocks', async () => {
 
 - [ ] **Step 2: Run component tests and confirm they fail**
 
-Run: `cd frontend && npm test -- BlockLibrary PoseTrainingDialog SequenceEditor RuleCanvas`  
+Run: `cd frontend && npm test -- BlockLibrary PoseTrainingDialog SequenceEditor RuleCanvas`
 Expected: FAIL because components do not exist.
 
 - [ ] **Step 3: Implement controlled English-only components**
@@ -759,9 +759,9 @@ Every user-facing string in these files must be English.
 
 - [ ] **Step 4: Run components and build verification**
 
-Run: `cd frontend && npm test -- BlockLibrary PoseTrainingDialog SequenceEditor RuleCanvas`  
-Expected: PASS.  
-Run: `cd frontend && npm run build`  
+Run: `cd frontend && npm test -- BlockLibrary PoseTrainingDialog SequenceEditor RuleCanvas`
+Expected: PASS.
+Run: `cd frontend && npm run build`
 Expected: PASS.
 
 - [ ] **Step 5: Commit the editors**
@@ -825,9 +825,9 @@ async def test_any_person_can_trigger_one_safe_simulator_sequence(studio_harness
 
 - [ ] **Step 2: Run page and end-to-end tests and confirm they fail**
 
-Run: `cd frontend && npm test -- MotionStudio LivePreview`  
-Expected: FAIL because the page is missing.  
-Run: `uv run pytest backend/tests/studio/test_end_to_end.py -v`  
+Run: `cd frontend && npm test -- MotionStudio LivePreview`
+Expected: FAIL because the page is missing.
+Run: `uv run pytest backend/tests/studio/test_end_to_end.py -v`
 Expected: FAIL until the full harness is wired.
 
 - [ ] **Step 3: Implement the three-column page and live states**
@@ -856,15 +856,15 @@ Show recognition confidence, subject ID, 0.7-second progress, busy/cooldown, fai
 
 Add `/motion-studio` to `App.tsx` and a `Motion Studio` launcher button. Document training, composing, previewing, JSON backup, and the explicit live-hardware gate in `README.md`.
 
-Run: `uv run pytest backend/tests -q`  
-Expected: PASS.  
-Run: `cd frontend && npm test`  
-Expected: PASS.  
-Run: `cd frontend && npm run build`  
-Expected: PASS.  
-Run: `uv run ruff check backend/app backend/tests`  
-Expected: PASS.  
-Run: `git diff --check`  
+Run: `uv run pytest backend/tests -q`
+Expected: PASS.
+Run: `cd frontend && npm test`
+Expected: PASS.
+Run: `cd frontend && npm run build`
+Expected: PASS.
+Run: `uv run ruff check backend/app backend/tests`
+Expected: PASS.
+Run: `git diff --check`
 Expected: no output.
 
 - [ ] **Step 5: Perform a local smoke test and commit**

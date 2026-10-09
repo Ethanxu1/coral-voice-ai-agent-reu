@@ -1,8 +1,8 @@
 # Motion Block Studio Design
 
-**Date:** 2026-10-09  
-**Status:** Approved design, pending implementation plan  
-**Base:** Pull request #10 (`origin/pr/10`)  
+**Date:** 2026-10-09
+**Status:** Approved design, pending implementation plan
+**Base:** Pull request #10 (`origin/pr/10`)
 **Product language:** English only
 
 ## 1. Purpose
