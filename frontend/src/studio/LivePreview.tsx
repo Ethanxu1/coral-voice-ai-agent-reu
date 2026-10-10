@@ -1,4 +1,5 @@
 import RobotViewer from '../components/RobotViewer'
+import { visionVideoFeedUrl } from './api'
 import { FullBodySkeleton } from './FullBodySkeleton'
 import type { Landmark } from './types'
 
@@ -35,6 +36,13 @@ export function LivePreview({
 
       <section className="preview-stage preview-human-stage">
         <div className="preview-stage-label">Human input</div>
+        {cameraEnabled ? (
+          <img
+            className="preview-camera-feed"
+            src={visionVideoFeedUrl}
+            alt="Computer camera preview"
+          />
+        ) : null}
         {!cameraEnabled ? (
           <div className="preview-empty camera-is-off">
             <span className="camera-off-icon" aria-hidden="true">×</span>
@@ -51,7 +59,7 @@ export function LivePreview({
             </div>
           </>
         ) : (
-          <div className="preview-empty">
+          <div className="preview-empty preview-camera-guidance">
             <span className="preview-reticle" aria-hidden="true" />
             <strong>Step into frame</strong>
             <small>Your full body, including ankles, must be visible.</small>

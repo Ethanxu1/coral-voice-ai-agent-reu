@@ -12,6 +12,8 @@ import type {
 const STUDIO_BASE = import.meta.env.VITE_STUDIO_BASE ?? 'http://localhost:8000/studio'
 const VISION_BASE = import.meta.env.VITE_VISION_BASE ?? 'http://localhost:8001'
 
+export const visionVideoFeedUrl = `${VISION_BASE}/video_feed`
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${STUDIO_BASE}${path}`, {
     ...init,

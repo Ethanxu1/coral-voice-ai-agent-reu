@@ -14,6 +14,24 @@ const landmarks: Landmark[] = Array.from({ length: 33 }, (_, index) => ({
 }))
 
 describe('LivePreview', () => {
+  it('shows the computer camera stream while the camera is on', () => {
+    render(
+      <LivePreview
+        subjects={[]}
+        recognition={{}}
+        holds={{}}
+        executingSequenceId={null}
+        statusMessage={null}
+        cameraEnabled
+      />,
+    )
+
+    expect(screen.getByRole('img', { name: 'Computer camera preview' })).toHaveAttribute(
+      'src',
+      'http://localhost:8001/video_feed',
+    )
+  })
+
   it('shows the winning person, confidence, hold progress, and full skeleton', () => {
     render(
       <LivePreview
@@ -46,5 +64,6 @@ describe('LivePreview', () => {
 
     expect(screen.getByText('Computer camera is off')).toBeVisible()
     expect(screen.queryByText('Person person-2')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Computer camera preview' })).not.toBeInTheDocument()
   })
 })

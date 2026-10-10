@@ -260,16 +260,19 @@
 .preview-live-dot.is-live { color: #22634e; background: #d8f2e8; }
 .preview-stage { position: relative; overflow: hidden; background: #111a2a; }
 .preview-human-stage { height: 260px; color: #a9c1ff; }
-.preview-human-stage svg { width: 100%; height: 100%; padding: 22px 32px 38px; }
+.preview-camera-feed { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.preview-human-stage svg { position: relative; z-index: 1; width: 100%; height: 100%; padding: 22px 32px 38px; }
 .preview-human-stage line { stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .preview-human-stage circle { fill: var(--coral); }
 .preview-robot-stage { height: 290px; }
 .preview-stage-label { position: absolute; z-index: 3; top: 10px; left: 11px; padding: 4px 6px; color: #c9d2e3; background: rgba(8, 14, 25, 0.7); font: 700 9px Bahnschrift, 'Arial Narrow', sans-serif; letter-spacing: 0.12em; text-transform: uppercase; }
-.recognition-readout { position: absolute; left: 12px; right: 12px; bottom: 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; color: #fff; }
+.recognition-readout { position: absolute; z-index: 2; left: 12px; right: 12px; bottom: 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; color: #fff; background: rgba(8, 14, 25, 0.7); }
 .recognition-readout span { font-size: 9px; color: #aab5c8; }
 .recognition-readout strong { font-size: 12px; }
 .recognition-readout b { color: #71e0b3; font: 700 17px Bahnschrift, 'Arial Narrow', sans-serif; }
-.preview-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 6px; color: #cbd4e5; text-align: center; }
+.preview-empty { position: relative; z-index: 1; height: 100%; display: grid; place-content: center; justify-items: center; gap: 6px; color: #cbd4e5; text-align: center; }
+.preview-camera-guidance { background: rgba(8, 14, 25, 0.18); text-shadow: 0 1px 4px #080e19; }
+.preview-camera-guidance small { color: #d6deec; }
 .preview-empty small { max-width: 210px; color: #7e8da6; }
 .preview-reticle { width: 76px; height: 106px; border: 1px dashed #5f7598; border-radius: 48% 48% 38% 38%; }
 .hold-meter { padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fffef9; }
