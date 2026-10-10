@@ -97,6 +97,17 @@ body {
   border-color: #9b59b6;
 }
 
+.launcher-btn.studio-launcher-btn {
+  border-color: #f26345;
+  background: #172b4d;
+  letter-spacing: 0.04em;
+}
+
+.launcher-btn.studio-launcher-btn:hover {
+  border-color: #ff8b71;
+  background: #203a65;
+}
+
 .launcher-footer {
   margin-top: 0.5rem;
 }

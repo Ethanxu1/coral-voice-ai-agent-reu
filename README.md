@@ -67,22 +67,41 @@ su - ubuntu
 
 ## Running
 
-### Laptop (four terminals)
+### Laptop
 
-All four are required — the demo pages wait on the vision and speaker
-servers, so a missing one looks like the demo hanging rather than a clean
-error.
+The launcher starts the backend, vision service, and frontend together.
 
 ```bash
-```
 # run code without physical robot
 ./run.sh
 # run with robot
 ./run.sh -live -ip {robot ip}
 # if you want to start the speaker
 ./run.sh -speaker
+```
 
 Open <http://localhost:5173> and click **✨ Start Demo Here**.
+
+### Motion Studio
+
+Open <http://localhost:5173/motion-studio> or choose **Motion Studio** on the
+home screen. The studio starts in **Simulator** mode and provides:
+
+- full-body human pose capture with 3–5 training samples;
+- reusable robot poses and ordered motion sequences;
+- `IF human pose → THEN robot sequence` rule blocks;
+- a 0.7-second hold-to-trigger gate with cooldown;
+- multi-person recognition, where the highest-confidence match triggers;
+- safety validation for every pose and interpolated sequence transition;
+- SQLite persistence plus JSON project import/export.
+
+The **Live Robot** switch is opt-in. Simulator safety checks still run before
+any hardware command is eligible for dispatch. For native execution, start the
+stack from a local terminal so the vision service can access the webcam:
+
+```bash
+./run.sh
+```
 
 On macOS, `uv run vision` opens the webcam from Python, so the camera permission prompt comes from your terminal app. Grant it under System Settings → Privacy & Security → Camera, then restart the vision server.
 

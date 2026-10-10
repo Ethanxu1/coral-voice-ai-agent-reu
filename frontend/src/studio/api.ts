@@ -10,6 +10,7 @@ import type {
 } from './types'
 
 const STUDIO_BASE = import.meta.env.VITE_STUDIO_BASE ?? 'http://localhost:8000/studio'
+const VISION_BASE = import.meta.env.VITE_VISION_BASE ?? 'http://localhost:8001'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${STUDIO_BASE}${path}`, {
@@ -52,6 +53,14 @@ export const studioApi = {
       method: 'POST',
       body: JSON.stringify({ landmarks }),
     }),
+  captureRetargetedPose: async () => {
+    const response = await fetch(`${VISION_BASE}/map-features?leg_mode=retarget`, { method: 'POST' })
+    const body = await response.json()
+    if (!response.ok || !body.pose_detected) {
+      throw new Error(body.detail ?? 'Full body not visible')
+    }
+    return body as { targets: Record<string, number>; body_landmarks: unknown[] }
+  },
   listRobotPoses: (projectId: string) =>
     request<RobotPose[]>(`/robot-poses?project_id=${encodeURIComponent(projectId)}`),
   createRobotPose: (payload: Omit<RobotPose, 'id' | 'safety'> & { safety?: Record<string, unknown> }) =>

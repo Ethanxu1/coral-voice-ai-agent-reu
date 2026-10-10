@@ -7,6 +7,7 @@ import SubjectSelect from './pages/SubjectSelect'
 import TestFunctionality from './pages/TestFunctionality'
 import RockPaperScissors from './pages/RockPaperScissors'
 import RockPaperScissorsMenu from './pages/RockPaperScissorsMenu'
+import MotionStudio from './pages/MotionStudio'
 import ConnectionStatus from './components/ConnectionStatus'
 import './App.css'
 
@@ -33,6 +34,9 @@ function App() {
           <Link to="/rock-paper-scissors" className="launcher-btn wide">
             ✊✋✌️ Rock Paper Scissors
           </Link>
+          <Link to="/motion-studio" className="launcher-btn wide studio-launcher-btn">
+            Motion Block Studio
+          </Link>
         </div>
         <ConnectionStatus />
         <div className="launcher-footer">
@@ -56,6 +60,7 @@ function App() {
       <Route path="/rock-paper-scissors" element={<RockPaperScissorsMenu />} />
       <Route path="/rock-paper-scissors/learn" element={<RockPaperScissors key="learn" mode="learn" />} />
       <Route path="/rock-paper-scissors/play" element={<RockPaperScissors key="play" mode="play" />} />
+      <Route path="/motion-studio" element={<MotionStudio />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

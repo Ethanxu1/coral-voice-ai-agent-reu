@@ -42,6 +42,7 @@ class WeightedKnnRecognizer:
         k: int = 3,
         min_confidence: float = 0.78,
         margin: float = 0.08,
+        distance_scale: float = 2.0,
     ) -> None:
         if k <= 0:
             raise ValueError("k must be positive")
@@ -49,10 +50,13 @@ class WeightedKnnRecognizer:
             raise ValueError("min_confidence must be between 0 and 1")
         if not 0 <= margin <= 1:
             raise ValueError("margin must be between 0 and 1")
+        if distance_scale <= 0:
+            raise ValueError("distance_scale must be positive")
         self._samples = tuple(samples)
         self._k = k
         self._min_confidence = min_confidence
         self._required_margin = margin
+        self._distance_scale = distance_scale
 
     def classify(
         self, subject_id: str, features: PoseFeatures
@@ -78,15 +82,23 @@ class WeightedKnnRecognizer:
             return RecognitionResult(subject_id, None, 0.0, 0.0, "low_visibility")
 
         best_label, best_score = ranked[0]
-        confidence = best_score / total
+        class_confidence = best_score / total
         runner_up = ranked[1][1] / total if len(ranked) > 1 else 0.0
-        score_margin = confidence - runner_up
-        if confidence < self._min_confidence:
+        score_margin = class_confidence - runner_up
+        if class_confidence < self._min_confidence:
             return RecognitionResult(
-                subject_id, None, confidence, score_margin, "low_confidence"
+                subject_id, None, class_confidence, score_margin, "low_confidence"
             )
         if score_margin < self._required_margin:
-            return RecognitionResult(subject_id, None, confidence, score_margin, "ambiguous")
+            return RecognitionResult(
+                subject_id, None, class_confidence, score_margin, "ambiguous"
+            )
+        proximity = 1.0 / (1.0 + self._distance_scale * neighbors[0][0])
+        confidence = class_confidence * proximity
+        if confidence < self._min_confidence:
+            return RecognitionResult(
+                subject_id, None, confidence, score_margin, "out_of_distribution"
+            )
         return RecognitionResult(
             subject_id, best_label, confidence, score_margin, "recognized"
         )
