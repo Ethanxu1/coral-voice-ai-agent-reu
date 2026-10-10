@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import math
+from dataclasses import dataclass
 from typing import Any, Awaitable
 
 from loguru import logger
 
-from app.robot.angle_utils import rad_to_servo_units, servo_units_to_rad, speed_to_duration_ms
+from app.robot.angle_utils import rad_to_servo_units, speed_to_duration_ms
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import SERVO_ID_MAP
-from app.robot.sim_controller import SimController
 from app.simulator import AiNexSimulator
-from app.validation import ValidationResult, validate_waypoint
+from app.validation import ValidationResult
 from app.state import state
 
 
@@ -30,6 +30,14 @@ def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
 
 class RobotServerUnavailable(RuntimeError):
     """The requested physical-robot dispatch could not be completed."""
+
+
+@dataclass(frozen=True, slots=True)
+class MotionPathValidation:
+    safe: bool
+    failed_step: int | None
+    reason: str | None
+    reports: tuple[dict[str, Any], ...]
 
 
 class Waypoint:
@@ -154,6 +162,51 @@ def collision_checked_targets(
             return dict(current), report
 
     return safe_joints, report
+
+
+def validate_motion_path(
+    sim: AiNexSimulator | None,
+    target_frames: list[dict[str, float]],
+    context: str,
+    *,
+    initial: dict[str, float] | None = None,
+    samples_per_transition: int = 10,
+) -> MotionPathValidation:
+    """Preflight every interpolated frame without mutating the live simulator."""
+    if samples_per_transition <= 0:
+        raise ValueError("samples_per_transition must be positive")
+    current = dict(initial or (sim.get_all_joint_states() if sim is not None else {}))
+    reports: list[dict[str, Any]] = []
+    for step_index, target in enumerate(target_frames):
+        start = dict(current)
+        joints = set(start) | set(target)
+        for sample_index in range(1, samples_per_transition + 1):
+            fraction = sample_index / samples_per_transition
+            interpolated = {
+                joint: start.get(joint, target.get(joint, 0.0))
+                + fraction
+                * (target.get(joint, start.get(joint, 0.0)) - start.get(joint, target.get(joint, 0.0)))
+                for joint in joints
+            }
+            safe_targets, report = collision_checked_targets(
+                sim,
+                interpolated,
+                f"{context} step {step_index} sample {sample_index}",
+                current=current,
+            )
+            annotated = dict(report, step_index=step_index, sample_index=sample_index)
+            reports.append(annotated)
+            if report["fall_blocked"]:
+                return MotionPathValidation(
+                    False, step_index, "fall_risk", tuple(reports)
+                )
+            if report["collision_clamped"]:
+                return MotionPathValidation(
+                    False, step_index, "collision_risk", tuple(reports)
+                )
+            current = dict(safe_targets)
+        current.update(target)
+    return MotionPathValidation(True, None, None, tuple(reports))
 
 
 def apply_safety_clamp_to_sim(
