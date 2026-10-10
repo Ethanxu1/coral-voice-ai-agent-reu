@@ -166,14 +166,19 @@ export function useStudioController() {
   const captureRobotPose = async (name: string) => {
     if (!cameraEnabled) throw new Error('Turn on the computer camera before capturing a pose')
     const captured = await studioApi.captureRetargetedPose()
-    await studioApi.createRobotPose({
+    const pose = await studioApi.createRobotPose({
       project_id: activeProjectId,
       name,
       joints: captured.targets,
       thumbnail_svg: '',
       source: 'human',
     })
+    const preview = await studioApi.previewRobotPose(pose.id)
+    if (preview.status !== 'completed') {
+      throw new Error(preview.reason ?? 'Pose was saved but could not be shown in the simulator')
+    }
     await refresh()
+    return pose
   }
 
   const importProject = async (file: File) => {

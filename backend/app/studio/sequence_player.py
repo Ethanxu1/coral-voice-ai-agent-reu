@@ -122,6 +122,25 @@ class SequencePlayer:
             await self._sleeper(step.hold_ms / 1000)
         return PlaybackResult("completed", len(snapshot.steps))
 
+    async def preview_pose(self, pose_id: str) -> PlaybackResult:
+        """Safety-check and display one saved pose in the simulator only."""
+        pose = self._repository.get_robot_pose(pose_id)
+        step = SequenceStepSnapshot(
+            robot_pose_id=pose.id,
+            joints=tuple(sorted(pose.joints.items())),
+            hold_ms=0,
+            transition_ms=300,
+        )
+        snapshot = SequenceSnapshot(f"pose-preview:{pose.id}", pose.name, (step,))
+        safety = self._safety_validator(snapshot)
+        if not safety.safe:
+            return PlaybackResult.blocked(safety.failed_step, safety.reason)
+
+        await self._dispatcher(self._commands_for(step), True)
+        self.output_mode = OutputMode.SIMULATOR
+        self.dispatch_count += 1
+        return PlaybackResult("completed", 1)
+
     def _snapshot(self, sequence_id: str) -> SequenceSnapshot:
         sequence = self._repository.get_sequence(sequence_id)
         steps = []

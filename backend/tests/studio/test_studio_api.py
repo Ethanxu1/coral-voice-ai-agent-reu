@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.api.routes.studio import configure_studio, router
 from app.studio.repository import StudioRepository
 from app.studio.runtime import StudioRuntime
+from app.studio.sequence_player import PlaybackResult
 
 
 @pytest.fixture
@@ -83,3 +84,54 @@ def test_oversized_import_is_rejected(client: TestClient) -> None:
     )
 
     assert response.status_code == 413
+
+
+def test_robot_pose_preview_uses_the_simulator(repo: StudioRepository) -> None:
+    project = repo.create_project("Classroom")
+    pose = repo.create_robot_pose(
+        project.id,
+        "Reach high",
+        {"l_sho_pitch": 0.4},
+        safety={"safe": True},
+    )
+
+    class PreviewRuntime:
+        def __init__(self) -> None:
+            self.pose_id: str | None = None
+
+        async def preview_pose(self, pose_id: str) -> PlaybackResult:
+            self.pose_id = pose_id
+            return PlaybackResult("completed", 1)
+
+    runtime = PreviewRuntime()
+    configure_studio(repo, runtime)  # type: ignore[arg-type]
+    app = FastAPI()
+    app.include_router(router)
+
+    with TestClient(app) as test_client:
+        response = test_client.post(f"/studio/robot-poses/{pose.id}/preview")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "completed",
+        "completed_steps": 1,
+        "failed_step": None,
+        "reason": None,
+    }
+    assert runtime.pose_id == pose.id
+
+
+def test_missing_robot_pose_preview_returns_404(repo: StudioRepository) -> None:
+    class MissingPoseRuntime:
+        async def preview_pose(self, pose_id: str) -> PlaybackResult:
+            raise KeyError(pose_id)
+
+    configure_studio(repo, MissingPoseRuntime())  # type: ignore[arg-type]
+    app = FastAPI()
+    app.include_router(router)
+
+    with TestClient(app) as test_client:
+        response = test_client.post('/studio/robot-poses/missing/preview')
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': 'Robot pose not found'}

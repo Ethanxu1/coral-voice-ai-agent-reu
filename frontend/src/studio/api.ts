@@ -79,6 +79,10 @@ export const studioApi = {
     request<RobotPose[]>(`/robot-poses?project_id=${encodeURIComponent(projectId)}`),
   createRobotPose: (payload: Omit<RobotPose, 'id' | 'safety'> & { safety?: Record<string, unknown> }) =>
     request<RobotPose>('/robot-poses', { method: 'POST', body: JSON.stringify(payload) }),
+  previewRobotPose: (poseId: string) =>
+    request<{ status: string; reason?: string | null }>(`/robot-poses/${poseId}/preview`, {
+      method: 'POST',
+    }),
   deleteRobotPose: (poseId: string) =>
     request<{ deleted: boolean }>(`/robot-poses/${poseId}`, { method: 'DELETE' }),
   listSequences: (projectId: string) =>

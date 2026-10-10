@@ -160,6 +160,15 @@ def create_robot_pose(request: CreateRobotPoseRequest):
     return jsonable_encoder(pose)
 
 
+@router.post("/robot-poses/{pose_id}/preview")
+async def preview_robot_pose(pose_id: str):
+    try:
+        result = await _studio_runtime().preview_pose(pose_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Robot pose not found") from exc
+    return jsonable_encoder(result)
+
+
 @router.get("/sequences")
 def list_sequences(project_id: str):
     return jsonable_encoder(_repo().list_sequences(project_id))

@@ -79,6 +79,7 @@ class FakeDispatch:
     def __init__(self) -> None:
         self.command_batches = 0
         self.disconnect_after_first_command = False
+        self.sim_only_values: list[bool | None] = []
 
     async def __call__(self, commands, sim_only=None) -> None:
         if (
@@ -88,6 +89,7 @@ class FakeDispatch:
         ):
             raise RobotServerUnavailable("offline")
         self.command_batches += 1
+        self.sim_only_values.append(sim_only)
 
 
 async def _no_sleep(_seconds: float) -> None:
@@ -146,3 +148,16 @@ def test_simulator_is_the_default_output_mode() -> None:
     player = _player(FakeSafetyValidator(), FakeDispatch())
 
     assert player.output_mode is OutputMode.SIMULATOR
+
+
+def test_pose_preview_dispatches_one_safe_pose_to_the_simulator_only() -> None:
+    checker = FakeSafetyValidator()
+    dispatcher = FakeDispatch()
+    player = _player(checker, dispatcher)
+
+    result = _run_immediate(player.preview_pose("pose-1"))
+
+    assert result.status == "completed"
+    assert checker.checked_steps == 1
+    assert dispatcher.command_batches == 1
+    assert dispatcher.sim_only_values == [True]

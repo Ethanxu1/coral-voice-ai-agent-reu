@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react'
+
 import RobotViewer from '../components/RobotViewer'
 import { visionVideoFeedUrl } from './api'
 import { FullBodySkeleton } from './FullBodySkeleton'
@@ -18,21 +20,57 @@ export function LivePreview({
   statusMessage: string | null
   cameraEnabled: boolean
 }) {
+  const previewRef = useRef<HTMLElement>(null)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null)
   const winner = [...subjects].sort(
     (left, right) => (recognition[right.id]?.confidence ?? 0) - (recognition[left.id]?.confidence ?? 0),
   )[0]
   const winnerRecognition = winner ? recognition[winner.id] : undefined
   const progress = winner ? holds[winner.id] ?? 0 : 0
 
+  useEffect(() => {
+    const syncFullscreen = () => setFullscreen(document.fullscreenElement === previewRef.current)
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    setFullscreenError(null)
+    try {
+      if (document.fullscreenElement === previewRef.current) {
+        if (!document.exitFullscreen) throw new Error('Fullscreen exit is unavailable')
+        await document.exitFullscreen()
+      } else {
+        if (!previewRef.current?.requestFullscreen) throw new Error('Fullscreen is unavailable')
+        await previewRef.current.requestFullscreen()
+      }
+    } catch {
+      setFullscreenError('Fullscreen is not available in this browser')
+    }
+  }
+
   return (
-    <aside className="live-preview" aria-labelledby="live-preview-title">
+    <aside ref={previewRef} className="live-preview" aria-labelledby="live-preview-title">
       <header className="studio-panel-heading">
         <div>
           <span className="studio-kicker">Camera → decision → motion</span>
           <h2 id="live-preview-title">Live Preview</h2>
         </div>
-        <span className={`preview-live-dot${winner ? ' is-live' : ''}`}>{winner ? 'Tracking' : 'Waiting'}</span>
+        <div className="preview-heading-actions">
+          <span className={`preview-live-dot${winner ? ' is-live' : ''}`}>{winner ? 'Tracking' : 'Waiting'}</span>
+          <button
+            type="button"
+            className="preview-fullscreen-button"
+            onClick={() => void toggleFullscreen()}
+            aria-label={fullscreen ? 'Exit Live Preview fullscreen' : 'Expand Live Preview'}
+          >
+            <span aria-hidden="true">{fullscreen ? '↙' : '↗'}</span>
+            {fullscreen ? 'Exit Fullscreen' : 'Expand'}
+          </button>
+        </div>
       </header>
+      {fullscreenError ? <p className="preview-fullscreen-error" role="alert">{fullscreenError}</p> : null}
 
       <section className="preview-stage preview-human-stage">
         <div className="preview-stage-label">Human input</div>

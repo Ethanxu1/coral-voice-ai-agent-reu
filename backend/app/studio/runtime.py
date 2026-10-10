@@ -43,6 +43,9 @@ class _DisabledPlayer:
     async def play(self, _sequence_id: str, _mode: OutputMode) -> PlaybackResult:
         return PlaybackResult("blocked", 0, reason="Runtime disabled")
 
+    async def preview_pose(self, _pose_id: str) -> PlaybackResult:
+        return PlaybackResult("blocked", 0, reason="Runtime disabled")
+
 
 class StudioRuntime:
     """Connect vision subjects to few-shot recognition and safe sequences."""
@@ -99,6 +102,9 @@ class StudioRuntime:
 
     async def preview(self, sequence_id: str) -> PlaybackResult:
         return await self._player.play(sequence_id, OutputMode.SIMULATOR)
+
+    async def preview_pose(self, pose_id: str) -> PlaybackResult:
+        return await self._player.preview_pose(pose_id)
 
     def unsubscribe(self, queue: asyncio.Queue[StudioEvent]) -> None:
         self._subscribers.discard(queue)

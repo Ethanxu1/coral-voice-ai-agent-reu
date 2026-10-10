@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { LivePreview } from './LivePreview'
@@ -65,5 +66,52 @@ describe('LivePreview', () => {
     expect(screen.getByText('Computer camera is off')).toBeVisible()
     expect(screen.queryByText('Person person-2')).not.toBeInTheDocument()
     expect(screen.queryByRole('img', { name: 'Computer camera preview' })).not.toBeInTheDocument()
+  })
+
+  it('lets the user expand the complete live preview to fullscreen', async () => {
+    const user = userEvent.setup()
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    })
+
+    render(
+      <LivePreview
+        subjects={[]}
+        recognition={{}}
+        holds={{}}
+        executingSequenceId={null}
+        statusMessage={null}
+        cameraEnabled
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Expand Live Preview' }))
+
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+  })
+
+  it('reports when the browser rejects fullscreen mode', async () => {
+    const user = userEvent.setup()
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: vi.fn().mockRejectedValue(new Error('Fullscreen denied')),
+    })
+
+    render(
+      <LivePreview
+        subjects={[]}
+        recognition={{}}
+        holds={{}}
+        executingSequenceId={null}
+        statusMessage={null}
+        cameraEnabled
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Expand Live Preview' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Fullscreen is not available')
   })
 })

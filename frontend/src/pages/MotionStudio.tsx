@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { BlockLibrary } from '../studio/BlockLibrary'
 import { LivePreview } from '../studio/LivePreview'
 import { PoseTrainingDialog } from '../studio/PoseTrainingDialog'
+import { RobotPoseCaptureWorkspace } from '../studio/RobotPoseCaptureWorkspace'
 import { RuleCanvas } from '../studio/RuleCanvas'
 import { SequenceEditor, type EditableSequenceStep } from '../studio/SequenceEditor'
 import { useStudioController } from '../studio/useStudioController'
@@ -52,14 +53,9 @@ export default function MotionStudio() {
 
   const saveRobotPose = async () => {
     if (!captureName.trim()) return
-    try {
-      await studio.captureRobotPose(captureName.trim())
-      setCaptureName('')
-      setCaptureOpen(false)
-      setActionMessage('Robot pose passed safety checks and was saved')
-    } catch (error) {
-      setActionMessage(error instanceof Error ? error.message : 'Could not capture robot pose')
-    }
+    const pose = await studio.captureRobotPose(captureName.trim())
+    setActionMessage('Robot pose passed safety checks, was saved, and is shown in the simulator')
+    return pose
   }
 
   return (
@@ -172,14 +168,16 @@ export default function MotionStudio() {
           </section>
         </div>
 
-        <LivePreview
-          subjects={studio.subjects}
-          recognition={studio.socket.recognition}
-          holds={studio.socket.holds}
-          executingSequenceId={studio.socket.executingSequenceId}
-          statusMessage={studio.socket.statusMessage}
-          cameraEnabled={studio.cameraEnabled}
-        />
+        {!captureOpen && (
+          <LivePreview
+            subjects={studio.subjects}
+            recognition={studio.socket.recognition}
+            holds={studio.socket.holds}
+            executingSequenceId={studio.socket.executingSequenceId}
+            statusMessage={studio.socket.statusMessage}
+            cameraEnabled={studio.cameraEnabled}
+          />
+        )}
       </div>
 
       <PoseTrainingDialog
@@ -196,20 +194,17 @@ export default function MotionStudio() {
       />
 
       {captureOpen && (
-        <div className="studio-dialog-backdrop" role="presentation">
-          <section className="studio-dialog studio-dialog-small" role="dialog" aria-modal="true" aria-labelledby="capture-title">
-            <header><div><span className="studio-kicker">Full-body retargeting</span><h2 id="capture-title">Capture a robot pose</h2></div></header>
-            <p>Stand fully in frame. The simulator checks every joint for collision and fall risk before saving.</p>
-            <label>
-              Robot pose name
-              <input value={captureName} onChange={(event) => setCaptureName(event.target.value)} autoFocus />
-            </label>
-            <footer>
-              <button type="button" className="studio-ghost-button" onClick={() => setCaptureOpen(false)}>Cancel</button>
-              <button type="button" className="studio-primary-button" disabled={!captureName.trim()} onClick={() => void saveRobotPose()}>Capture and check</button>
-            </footer>
-          </section>
-        </div>
+        <RobotPoseCaptureWorkspace
+          open
+          name={captureName}
+          cameraEnabled={studio.cameraEnabled}
+          onNameChange={setCaptureName}
+          onCapture={saveRobotPose}
+          onClose={() => {
+            setCaptureOpen(false)
+            setCaptureName('')
+          }}
+        />
       )}
     </main>
   )

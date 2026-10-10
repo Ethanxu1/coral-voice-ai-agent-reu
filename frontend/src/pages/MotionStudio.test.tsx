@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -82,5 +82,59 @@ describe('MotionStudio', () => {
     await user.click(camera)
 
     expect(controller.setCameraEnabled).toHaveBeenCalledWith(false)
+  })
+
+  it('opens a focused human and robot pose capture workspace', async () => {
+    const user = userEvent.setup()
+    renderStudio()
+
+    await user.click(screen.getByRole('button', { name: '+ Capture pose' }))
+
+    const workspace = screen.getByRole('dialog', { name: 'Pose Capture' })
+    expect(workspace).toBeVisible()
+    expect(within(workspace).getByRole('img', { name: 'Live human pose' })).toBeVisible()
+    expect(within(workspace).getByText('Simulator viewport')).toBeVisible()
+  })
+
+  it('keeps the capture workspace open after saving so the result can be reviewed', async () => {
+    const user = userEvent.setup()
+    controller.captureRobotPose.mockResolvedValueOnce({ id: 'captured-pose' })
+    renderStudio()
+
+    await user.click(screen.getByRole('button', { name: '+ Capture pose' }))
+    await user.type(screen.getByRole('textbox', { name: 'Robot pose name' }), 'Reach high')
+    await user.click(screen.getByRole('button', { name: 'Capture & Safety Check' }))
+
+    expect(await screen.findByText('Pose saved and shown in the simulator')).toBeVisible()
+    expect(screen.getByRole('dialog', { name: 'Pose Capture' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Done' })).toBeVisible()
+  })
+
+  it('starts a fresh capture after finishing a saved pose', async () => {
+    const user = userEvent.setup()
+    controller.captureRobotPose.mockResolvedValueOnce({ id: 'captured-pose' })
+    renderStudio()
+
+    await user.click(screen.getByRole('button', { name: '+ Capture pose' }))
+    await user.type(screen.getByRole('textbox', { name: 'Robot pose name' }), 'Reach high')
+    await user.click(screen.getByRole('button', { name: 'Capture & Safety Check' }))
+    await user.click(await screen.findByRole('button', { name: 'Done' }))
+    await user.click(screen.getByRole('button', { name: '+ Capture pose' }))
+
+    expect(screen.getByRole('button', { name: 'Capture & Safety Check' })).toBeVisible()
+    expect(screen.queryByText('Pose saved and shown in the simulator')).not.toBeInTheDocument()
+  })
+
+  it('prevents closing the workspace while a capture is being saved', async () => {
+    const user = userEvent.setup()
+    controller.captureRobotPose.mockReturnValueOnce(new Promise(() => undefined))
+    renderStudio()
+
+    await user.click(screen.getByRole('button', { name: '+ Capture pose' }))
+    await user.type(screen.getByRole('textbox', { name: 'Robot pose name' }), 'Reach high')
+    await user.click(screen.getByRole('button', { name: 'Capture & Safety Check' }))
+
+    expect(screen.getByRole('button', { name: 'Close pose capture' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   })
 })
