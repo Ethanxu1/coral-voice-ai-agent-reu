@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import RobotViewer from '../components/RobotViewer'
 import { visionVideoFeedUrl } from './api'
@@ -21,6 +21,13 @@ export function RobotPoseCaptureWorkspace({
   const [capturing, setCapturing] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  const wasSaved = useRef(false)
+
+  useEffect(() => {
+    if (wasSaved.current && !saved) nameInputRef.current?.focus()
+    wasSaved.current = saved
+  }, [saved])
 
   if (!open) return null
 
@@ -36,6 +43,12 @@ export function RobotPoseCaptureWorkspace({
     } finally {
       setCapturing(false)
     }
+  }
+
+  const addNew = () => {
+    onNameChange('')
+    setError(null)
+    setSaved(false)
   }
 
   return (
@@ -89,6 +102,7 @@ export function RobotPoseCaptureWorkspace({
           <label>
             Robot pose name
             <input
+              ref={nameInputRef}
               value={name}
               onChange={(event) => onNameChange(event.target.value)}
               disabled={capturing || saved}
@@ -96,7 +110,10 @@ export function RobotPoseCaptureWorkspace({
             />
           </label>
           {saved ? (
-            <button type="button" className="studio-primary-button" onClick={onClose}>Done</button>
+            <>
+              <button type="button" className="studio-secondary-button" onClick={addNew}>Add New</button>
+              <button type="button" className="studio-primary-button" onClick={onClose}>Done</button>
+            </>
           ) : (
             <>
               <button

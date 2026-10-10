@@ -125,6 +125,23 @@ describe('MotionStudio', () => {
     expect(screen.queryByText('Pose saved and shown in the simulator')).not.toBeInTheDocument()
   })
 
+  it('lets the user add another pose directly after saving', async () => {
+    const user = userEvent.setup()
+    controller.captureRobotPose.mockResolvedValueOnce({ id: 'captured-pose' })
+    renderStudio()
+
+    await user.click(screen.getByRole('button', { name: '+ Capture pose' }))
+    await user.type(screen.getByRole('textbox', { name: 'Robot pose name' }), 'Reach high')
+    await user.click(screen.getByRole('button', { name: 'Capture & Safety Check' }))
+    await user.click(await screen.findByRole('button', { name: 'Add New' }))
+
+    const nameInput = screen.getByRole('textbox', { name: 'Robot pose name' })
+    expect(nameInput).toHaveValue('')
+    expect(nameInput).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Capture & Safety Check' })).toBeVisible()
+    expect(screen.queryByText('Pose saved and shown in the simulator')).not.toBeInTheDocument()
+  })
+
   it('prevents closing the workspace while a capture is being saved', async () => {
     const user = userEvent.setup()
     controller.captureRobotPose.mockReturnValueOnce(new Promise(() => undefined))
