@@ -536,6 +536,7 @@ class PoseEstimator:
         self._pnp_fail_count = 0
         self._frame_width = 640
         self._frame_height = 480
+        self._camera_lock = threading.Lock()
         self._running = False
         self.stability = StabilityCapture(fit_hook=_default_smpl_fit_hook)
 
@@ -603,21 +604,13 @@ class PoseEstimator:
         self._face_detector = self._face_detector_single
         log.info("Face landmarkers loaded")
 
-        log.info("Opening camera %d...", self._camera_index)
-        self._cap = cv2.VideoCapture(self._camera_index)
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self._cap.set(cv2.CAP_PROP_FPS, self._target_fps)
-        self._frame_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self._frame_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.enable_camera()
         log.info("Camera ready at %dx%d", self._frame_width, self._frame_height)
         self._running = True
 
     def close(self):
         self._running = False
-        if self._cap:
-            self._cap.release()
-            self._cap = None
+        self.disable_camera()
         for det in (
             self._pose_detector_single,
             self._pose_detector_multi,
@@ -632,6 +625,35 @@ class PoseEstimator:
         self._face_detector_multi = None
         self._pose_detector = None
         self._face_detector = None
+
+    @property
+    def camera_enabled(self) -> bool:
+        with self._camera_lock:
+            return self._cap is not None and self._cap.isOpened()
+
+    def enable_camera(self) -> None:
+        """Open the native camera without recreating the landmark models."""
+        with self._camera_lock:
+            if self._cap is not None and self._cap.isOpened():
+                return
+            capture = cv2.VideoCapture(self._camera_index)
+            if not capture.isOpened():
+                capture.release()
+                raise RuntimeError(f"Camera {self._camera_index} is unavailable")
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            capture.set(cv2.CAP_PROP_FPS, self._target_fps)
+            self._frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self._frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self._cap = capture
+
+    def disable_camera(self) -> None:
+        """Release the native camera while leaving the vision models ready."""
+        with self._camera_lock:
+            capture = self._cap
+            self._cap = None
+            if capture is not None:
+                capture.release()
 
     @property
     def is_running(self) -> bool:
@@ -734,10 +756,13 @@ class PoseEstimator:
         return yaw, pitch, roll, rvec, tvec
 
     def process_frame(self) -> Optional[FrameResult]:
-        if not self._cap or not self._pose_detector or not self._face_detector:
+        if not self._pose_detector or not self._face_detector:
             return None
 
-        ret, frame = self._cap.read()
+        with self._camera_lock:
+            if self._cap is None:
+                return None
+            ret, frame = self._cap.read()
         if not ret:
             return None
 

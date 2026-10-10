@@ -71,6 +71,9 @@ export default function MotionStudio() {
         connections={studio.connections}
         outputMode={studio.outputMode}
         onOutputModeChange={studio.setOutputMode}
+        cameraEnabled={studio.cameraEnabled}
+        cameraBusy={studio.cameraBusy}
+        onCameraChange={studio.setCameraEnabled}
         onExport={() => void studio.exportProject()}
         onImport={() => fileInput.current?.click()}
       />
@@ -175,6 +178,7 @@ export default function MotionStudio() {
           holds={studio.socket.holds}
           executingSequenceId={studio.socket.executingSequenceId}
           statusMessage={studio.socket.statusMessage}
+          cameraEnabled={studio.cameraEnabled}
         />
       </div>
 
@@ -218,6 +222,9 @@ function StudioHeader({
   connections,
   outputMode,
   onOutputModeChange,
+  cameraEnabled,
+  cameraBusy,
+  onCameraChange,
   onExport,
   onImport,
 }: {
@@ -227,6 +234,9 @@ function StudioHeader({
   connections: { backend: boolean; vision: boolean; events: boolean }
   outputMode: 'simulator' | 'live_robot'
   onOutputModeChange: (mode: 'simulator' | 'live_robot') => void | Promise<void>
+  cameraEnabled: boolean
+  cameraBusy: boolean
+  onCameraChange: (enabled: boolean) => void | Promise<void>
   onExport: () => void
   onImport: () => void
 }) {
@@ -251,6 +261,18 @@ function StudioHeader({
         <button type="button" onClick={onImport}>Import</button>
         <button type="button" onClick={onExport}>Export</button>
       </div>
+      <label className="camera-gate">
+        <input
+          type="checkbox"
+          role="switch"
+          aria-label="Computer Camera"
+          checked={cameraEnabled}
+          disabled={cameraBusy}
+          onChange={(event) => void onCameraChange(event.target.checked)}
+        />
+        <i aria-hidden="true" />
+        Camera {cameraBusy ? '…' : cameraEnabled ? 'On' : 'Off'}
+      </label>
       <div className="output-gate">
         <span className={outputMode === 'simulator' ? 'is-active' : ''}>Simulator</span>
         <label>

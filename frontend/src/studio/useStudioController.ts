@@ -23,6 +23,8 @@ export function useStudioController() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [trainingOpen, setTrainingOpen] = useState(false)
   const [outputMode, setOutputModeState] = useState<OutputMode>('simulator')
+  const [cameraEnabled, setCameraEnabledState] = useState(true)
+  const [cameraBusy, setCameraBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const pose = usePoseWebSocket()
@@ -75,6 +77,18 @@ export function useStudioController() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    void studioApi.getCameraState()
+      .then((state) => {
+        if (active) setCameraEnabledState(state.enabled)
+      })
+      .catch(() => {
+        if (active) setCameraEnabledState(false)
+      })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
     if (!activeProjectId) return
     void loadProject(activeProjectId).catch((cause) =>
       setError(cause instanceof Error ? cause.message : 'Could not load project'),
@@ -92,9 +106,25 @@ export function useStudioController() {
   }, [socket.latestEvent])
 
   const subjects = useMemo(
-    () => pose.subjects.map((subject) => ({ id: subject.id, landmarks: subject.body_landmarks })),
-    [pose.subjects],
+    () => cameraEnabled
+      ? pose.subjects.map((subject) => ({ id: subject.id, landmarks: subject.body_landmarks }))
+      : [],
+    [cameraEnabled, pose.subjects],
   )
+
+  const setCameraEnabled = async (enabled: boolean) => {
+    setCameraBusy(true)
+    try {
+      const state = await studioApi.setCameraEnabled(enabled)
+      setCameraEnabledState(state.enabled)
+      setError(null)
+    } catch (cause) {
+      if (enabled) setCameraEnabledState(false)
+      setError(cause instanceof Error ? cause.message : 'Camera unavailable')
+    } finally {
+      setCameraBusy(false)
+    }
+  }
 
   const setOutputMode = async (mode: OutputMode) => {
     const result = await studioApi.setOutputMode(mode)
@@ -134,6 +164,7 @@ export function useStudioController() {
   }
 
   const captureRobotPose = async (name: string) => {
+    if (!cameraEnabled) throw new Error('Turn on the computer camera before capturing a pose')
     const captured = await studioApi.captureRetargetedPose()
     await studioApi.createRobotPose({
       project_id: activeProjectId,
@@ -189,6 +220,9 @@ export function useStudioController() {
     exportProject,
     outputMode,
     setOutputMode,
+    cameraEnabled,
+    cameraBusy,
+    setCameraEnabled,
     connections: { backend: !error && !loading, vision: pose.isConnected, events: socket.connected },
     socket,
     loading,

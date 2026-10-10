@@ -22,6 +22,7 @@ describe('LivePreview', () => {
         holds={{ 'person-2': 0.86 }}
         executingSequenceId={null}
         statusMessage="Safety check passed"
+        cameraEnabled
       />,
     )
 
@@ -29,5 +30,21 @@ describe('LivePreview', () => {
     expect(screen.getByText('82%')).toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '86')
     expect(screen.getByTestId('bone-left-knee-left-ankle')).toBeInTheDocument()
+  })
+
+  it('hides stale recognition when the computer camera is off', () => {
+    render(
+      <LivePreview
+        subjects={[{ id: 'person-2', landmarks }]}
+        recognition={{ 'person-2': { label: 'Hands up', confidence: 0.82 } }}
+        holds={{ 'person-2': 0.86 }}
+        executingSequenceId={null}
+        statusMessage={null}
+        cameraEnabled={false}
+      />,
+    )
+
+    expect(screen.getByText('Computer camera is off')).toBeVisible()
+    expect(screen.queryByText('Person person-2')).not.toBeInTheDocument()
   })
 })

@@ -122,11 +122,59 @@ app = FastAPI(title="Coral Vision Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000","http://localhost:5174"],
+    allow_origins=[],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/camera")
+async def camera_status():
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    return {"enabled": _estimator.camera_enabled}
+
+
+@app.post("/camera/on")
+async def camera_on():
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    try:
+        await asyncio.to_thread(_estimator.enable_camera)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"enabled": True}
+
+
+@app.post("/camera/off")
+async def camera_off():
+    global _latest_jpeg, _latest_clean_frame, _latest_landmarks, _latest_head_pose
+    global _latest_selection_state, _latest_selected_subject_id, _latest_subjects
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    await asyncio.to_thread(_estimator.disable_camera)
+    _latest_jpeg = None
+    _latest_clean_frame = None
+    _latest_landmarks = []
+    _latest_head_pose = None
+    _latest_selection_state = "idle"
+    _latest_selected_subject_id = None
+    _latest_subjects = []
+    if _broadcaster is not None:
+        _broadcaster.publish_pose(
+            {
+                "type": "pose_update",
+                "body_landmarks": [],
+                "face_landmarks": [],
+                "head_pose": None,
+                "selection_state": "idle",
+                "selected_subject_id": None,
+                "subjects": [],
+            }
+        )
+    return {"enabled": False}
 
 
 async def _mjpeg_generator(q: asyncio.Queue):

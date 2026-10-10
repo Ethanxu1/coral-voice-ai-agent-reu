@@ -28,7 +28,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function visionRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${VISION_BASE}${path}`, init)
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(String(body.detail ?? `Vision request failed (${response.status})`))
+  }
+  return response.json() as Promise<T>
+}
+
 export const studioApi = {
+  getCameraState: () => visionRequest<{ enabled: boolean }>('/camera'),
+  setCameraEnabled: (enabled: boolean) =>
+    visionRequest<{ enabled: boolean }>(enabled ? '/camera/on' : '/camera/off', { method: 'POST' }),
   listProjects: () => request<Project[]>('/projects'),
   createProject: (name: string) =>
     request<Project>('/projects', { method: 'POST', body: JSON.stringify({ name }) }),

@@ -8,12 +8,14 @@ export function LivePreview({
   holds,
   executingSequenceId,
   statusMessage,
+  cameraEnabled,
 }: {
   subjects: { id: string; landmarks: Landmark[] }[]
   recognition: Record<string, { label: string | null; confidence: number }>
   holds: Record<string, number>
   executingSequenceId: string | null
   statusMessage: string | null
+  cameraEnabled: boolean
 }) {
   const winner = [...subjects].sort(
     (left, right) => (recognition[right.id]?.confidence ?? 0) - (recognition[left.id]?.confidence ?? 0),
@@ -33,7 +35,13 @@ export function LivePreview({
 
       <section className="preview-stage preview-human-stage">
         <div className="preview-stage-label">Human input</div>
-        {winner ? (
+        {!cameraEnabled ? (
+          <div className="preview-empty camera-is-off">
+            <span className="camera-off-icon" aria-hidden="true">×</span>
+            <strong>Computer camera is off</strong>
+            <small>Turn it on above to train or recognize a pose.</small>
+          </div>
+        ) : winner ? (
           <>
             <FullBodySkeleton landmarks={winner.landmarks} label={`Skeleton for ${winner.id}`} />
             <div className="recognition-readout">

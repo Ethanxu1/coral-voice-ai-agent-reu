@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -27,6 +28,9 @@ const controller = {
   exportProject: vi.fn(),
   outputMode: 'simulator' as const,
   setOutputMode: vi.fn(),
+  cameraEnabled: true,
+  cameraBusy: false,
+  setCameraEnabled: vi.fn(),
   connections: { backend: true, vision: true, events: true },
   socket: {
     connected: true,
@@ -66,5 +70,17 @@ describe('MotionStudio', () => {
   it('contains no CJK production copy', () => {
     const { container } = renderStudio()
     expect(container.textContent).not.toMatch(/[\u3400-\u9fff]/)
+  })
+
+  it('starts with the computer camera on and lets the user turn it off', async () => {
+    const user = userEvent.setup()
+    renderStudio()
+
+    const camera = screen.getByRole('switch', { name: 'Computer Camera' })
+    expect(camera).toBeChecked()
+
+    await user.click(camera)
+
+    expect(controller.setCameraEnabled).toHaveBeenCalledWith(false)
   })
 })

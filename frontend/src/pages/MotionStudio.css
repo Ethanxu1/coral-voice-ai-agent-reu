@@ -35,7 +35,7 @@
   min-height: 78px;
   padding: 12px 22px;
   display: grid;
-  grid-template-columns: minmax(260px, 1.25fr) minmax(170px, 0.7fr) auto auto auto;
+  grid-template-columns: minmax(260px, 1.25fr) minmax(150px, 0.7fr) auto auto auto auto;
   gap: 18px;
   align-items: center;
   color: #f8f4ea;
@@ -101,6 +101,29 @@
 .output-gate i::after { content: ''; display: block; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 160ms ease; }
 .output-gate input:checked + i { background: var(--coral); }
 .output-gate input:checked + i::after { transform: translateX(16px); }
+
+.camera-gate {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  gap: 7px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.camera-gate input { position: absolute; opacity: 0; pointer-events: none; }
+.camera-gate i { width: 8px; height: 8px; border-radius: 50%; background: #78839a; box-shadow: 0 0 0 3px rgba(120, 131, 154, 0.16); }
+.camera-gate:has(input:checked) i { background: var(--mint); box-shadow: 0 0 0 3px rgba(69, 182, 138, 0.18); }
+.camera-gate:has(input:focus-visible) { outline: 2px solid #fff; outline-offset: 2px; }
+.camera-gate:has(input:disabled) { cursor: wait; opacity: 0.62; }
+
+.camera-is-off { background: repeating-linear-gradient(135deg, rgba(23, 33, 58, 0.03) 0 8px, transparent 8px 16px); }
+.camera-off-icon { border: 2px solid var(--coral); border-radius: 50%; color: var(--coral); display: grid; font-size: 1.3rem; height: 38px; place-items: center; width: 38px; }
 
 .studio-banner {
   margin: 12px 18px 0;
