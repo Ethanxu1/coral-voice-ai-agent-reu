@@ -30,7 +30,6 @@ from app.config import (
     ROBOT_IP,
     ROBOT_MODE,
 )
-from app.data.pose_db import clear_all_poses
 from app.follow_controller import FollowController
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.sim_controller import SimController
@@ -101,9 +100,6 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
 
     state.robot_mode = os.environ.get("ROBOT_MODE", ROBOT_MODE)
-
-    clear_all_poses()
-    logger.info("Pose database cleared for new session.")
 
     # Startup sanity checks — log clearly so deployment issues are obvious.
     _run_startup_validation()
