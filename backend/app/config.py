@@ -78,8 +78,9 @@ CORAL_NO_VIEWER = os.getenv("CORAL_NO_VIEWER", "0").lower() in ("true", "1", "ye
 # Vision / pose retargeting
 # ---------------------------------------------------------------------------
 # Leg tracking is experimental and can be unstable in live demos. Default to
-# disabled so the robot only mirrors the upper body, head, and hips; set to
-# "true" to re-enable continuous leg retargeting.
+# disabled so legacy follow mode only mirrors the upper body, head, and hips;
+# Studio capture opts in explicitly with ``leg_mode=retarget`` after requiring
+# both hips, knees, and ankles to be visible.
 ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in (
     "true",
     "1",

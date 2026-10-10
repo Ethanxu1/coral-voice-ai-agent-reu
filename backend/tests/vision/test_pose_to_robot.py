@@ -24,11 +24,12 @@ import pytest
 from app import config
 from app.robot.hardware_angle_utils import HW_STAND_RAD
 from app.validation import JOINT_LIMITS
-from app.vision import leg_modes
+from app.vision import geometry, leg_modes
 from app.vision.pose_to_robot import (
     _STAND_L_SHO_ROLL,
     _STAND_R_SHO_ROLL,
     compute_joint_targets,
+    full_legs_detected,
 )
 
 
@@ -111,6 +112,22 @@ def _build_body(
     set_pt(7, (+0.08, -0.65, 0.0), (0.56, 0.32))
     set_pt(8, (-0.08, -0.65, 0.0), (0.44, 0.32))
     return body
+
+
+def test_explicit_retarget_overrides_legacy_leg_tracking_default(monkeypatch):
+    monkeypatch.setattr(config, "ENABLE_LEG_TRACKING", False)
+
+    targets = compute_joint_targets(_build_body(), None, enable_legs=True)
+
+    assert "l_hip_pitch" in targets
+    assert "r_hip_pitch" in targets
+
+
+def test_full_legs_detected_requires_visible_ankles():
+    body = _build_body()
+    body[geometry.LEFT_ANKLE]["visibility"] = 0.1
+
+    assert full_legs_detected(body) is False
 
 
 def test_t_pose_targets():

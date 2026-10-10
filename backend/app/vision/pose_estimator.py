@@ -21,7 +21,7 @@ from .calibration import CalibrationManager, CalibrationState
 from .face_embedder import FaceEmbedder
 
 from .smpl_fit import UserShape
-from .subject_selector import SubjectSelector
+from .subject_selector import SelectionResult, SubjectSelector
 
 # Model asset paths (downloaded on first run)
 _MODELS_DIR = Path(__file__).parent / "models"
@@ -152,6 +152,22 @@ class FrameResult:
             "selection_state": self.selection_state,
             "selected_subject_id": self.selected_subject_id,
         }
+
+
+def serialize_subjects(selection: SelectionResult) -> list[dict]:
+    """Build independent JSON-ready records for every detected person."""
+    return [
+        {
+            "id": info.id,
+            "bbox": dict(info.bbox),
+            "body_landmarks": [dict(landmark) for landmark in info.body_landmarks],
+            "is_candidate": info.is_candidate,
+            "hold_progress": round(info.hold_progress, 2),
+            "depth": round(info.depth, 4),
+            "metrics": info.metrics.to_dict() if info.metrics is not None else None,
+        }
+        for info in selection.subjects
+    ]
 
 
 # ── Stable-position capture ──────────────────────────────────────────────────
@@ -938,17 +954,7 @@ class PoseEstimator:
         _, jpeg = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 70])
 
         # Convert SubjectInfo dataclasses to plain dicts for JSON serialization.
-        subjects_json = [
-            {
-                "id": info.id,
-                "bbox": info.bbox,
-                "is_candidate": info.is_candidate,
-                "hold_progress": round(info.hold_progress, 2),
-                "depth": round(info.depth, 4),
-                "metrics": info.metrics.to_dict() if info.metrics is not None else None,
-            }
-            for info in selection.subjects
-        ]
+        subjects_json = serialize_subjects(selection)
 
         return FrameResult(
             body_landmarks=selection.primary_body_landmarks,

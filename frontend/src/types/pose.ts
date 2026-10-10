@@ -46,6 +46,7 @@ export interface SubjectMetrics {
 export interface DetectedSubject {
   id: string
   bbox: { x: number; y: number; width: number; height: number }
+  body_landmarks: Landmark[]
   is_candidate: boolean
   hold_progress: number
   depth?: number

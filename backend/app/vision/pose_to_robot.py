@@ -187,6 +187,25 @@ def knees_confidently_visible(body_landmarks: list[dict]) -> bool:
     ) and _visible(body_landmarks[_LM_R_KNEE], _KNEE_VISIBILITY_THRESHOLD)
 
 
+def full_legs_detected(body_landmarks: list[dict]) -> bool:
+    """Return whether both hips, knees, and ankles are safe for pose capture."""
+    required = (
+        _LM_L_HIP,
+        _LM_R_HIP,
+        _LM_L_KNEE,
+        _LM_R_KNEE,
+        _LM_L_ANKLE,
+        _LM_R_ANKLE,
+    )
+    if len(body_landmarks) <= max(required):
+        return False
+    return all(
+        _has_world(body_landmarks[index])
+        and _visible(body_landmarks[index], _KNEE_VISIBILITY_THRESHOLD)
+        for index in required
+    )
+
+
 # When True, arm retargeting no longer needs the hips in view: the torso frame is
 # built from the shoulders alone, assuming an upright torso. Off by default — the
 # main demo asks the user to reframe instead. Rock-Paper-Scissors only follows
@@ -262,6 +281,8 @@ def _limb_depth_gated(proximal: dict, distal: dict) -> bool:
 def compute_joint_targets(
     body_landmarks: list[dict],
     head_pose: Optional[dict],
+    *,
+    enable_legs: Optional[bool] = None,
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
@@ -377,7 +398,10 @@ def compute_joint_targets(
     # so leaning at the waist doesn't read as the legs swinging. Hip yaw is
     # unobservable from hip→knee (rotation about the segment's own axis) and
     # is deliberately not emitted.
-    if config.ENABLE_LEG_TRACKING and len(body_landmarks) > _LM_R_ANKLE:
+    leg_tracking_enabled = (
+        config.ENABLE_LEG_TRACKING if enable_legs is None else enable_legs
+    )
+    if leg_tracking_enabled and len(body_landmarks) > _LM_R_ANKLE:
         R_pelvis = _pelvis_frame_from(body_landmarks)
 
         # Only retarget the legs when BOTH knees clear the stricter knee gate.

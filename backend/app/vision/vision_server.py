@@ -23,6 +23,7 @@ from .frame_broadcaster import FrameBroadcaster
 from .pose_estimator import PoseEstimator
 from .pose_to_robot import (
     compute_joint_targets,
+    full_legs_detected,
     hips_detected,
     knees_confidently_visible,
     targets_to_servo_commands,
@@ -283,16 +284,33 @@ async def map_features(leg_mode: str = "buckets"):
             "image_format": "jpeg",
         }
 
+    if leg_mode == "retarget" and not full_legs_detected(body):
+        return {
+            "pose_detected": False,
+            "detail": "Make sure both hips, knees, and ankles are visible",
+            "commands": [],
+            "targets": {},
+            "leg_mode": leg_mode,
+            "body_landmarks": body,
+            "image_b64": image_b64,
+            "image_format": "jpeg",
+        }
+
     head = _latest_head_pose
-    targets = compute_joint_targets(body, head)
+    targets = compute_joint_targets(body, head, enable_legs=leg_mode == "retarget")
     pose_class = None
 
-    if not config.ENABLE_LEG_TRACKING:
+    if leg_mode == "retarget":
+        # Studio capture explicitly opts into continuous full-leg retargeting.
+        # The visibility gate above rejects incomplete legs instead of silently
+        # storing the legacy stand targets.
+        pass
+    elif not config.ENABLE_LEG_TRACKING:
         # Leg tracking is disabled by default for live-demo stability. Keep the
         # arms/head live retargeting and snap all leg joints back to stand.
         targets = leg_modes.strip_legs(targets)
         targets.update(leg_modes.stand_leg_targets())
-    elif leg_mode != "retarget":
+    else:
         # Arms keep the live retargeting; replace the pelvis-frame legs with the
         # selected mode's legs.
         targets = leg_modes.strip_legs(targets)
