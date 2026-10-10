@@ -24,6 +24,7 @@ class RecognitionResult:
     confidence: float
     margin: float
     reason: str
+    timestamp: float = 0.0
 
 
 class PoseRecognizer(Protocol):
