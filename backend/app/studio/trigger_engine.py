@@ -97,9 +97,12 @@ class TriggerEngine:
     def mark_execution_started(self) -> None:
         self._busy = True
 
-    def mark_execution_finished(self, now: float) -> None:
+    def mark_execution_finished(
+        self, now: float, cooldown_seconds: float | None = None
+    ) -> None:
         self._busy = False
-        self._cooldown_until = now + self.cooldown_seconds
+        cooldown = self.cooldown_seconds if cooldown_seconds is None else cooldown_seconds
+        self._cooldown_until = now + max(0.0, cooldown)
 
     def snapshot(self, now: float) -> TriggerSnapshot:
         holds = tuple(

@@ -17,6 +17,7 @@ from loguru import logger
 
 from app import resource_path
 from app.api.router import router as api_router
+from app.api.routes.studio import configure_studio
 from app.collision.collision_checker import CollisionChecker
 from app.collision.stability_checker import StabilityChecker
 from app.config import (
@@ -37,6 +38,9 @@ from app.services.motion import _sync_sim_to_hardware, dispatch_servo_commands
 from app.services.transcription import _get_whisper_model
 from app.simulator import AiNexSimulator
 from app.state import state
+from app.studio.repository import StudioRepository
+from app.studio.runtime import StudioRuntime
+from app.studio.sequence_player import SequencePlayer
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +104,9 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop simulator and Langfuse."""
 
     state.robot_mode = os.environ.get("ROBOT_MODE", ROBOT_MODE)
+    state.studio_repository = StudioRepository(
+        Path(resource_path.user_data_dir()) / "data" / "motion_studio.db"
+    )
 
     # Startup sanity checks — log clearly so deployment issues are obvious.
     _run_startup_validation()
@@ -136,6 +143,10 @@ async def lifespan(app: FastAPI):
         logger.info("Fall check disabled via ENABLE_FALL_CHECK=false")
 
     state.follow_controller = FollowController(dispatch_servo_commands)
+    sequence_player = SequencePlayer(state.studio_repository, state.simulator)
+    state.studio_runtime = StudioRuntime(state.studio_repository, sequence_player)
+    configure_studio(state.studio_repository, state.studio_runtime)
+    await state.studio_runtime.start()
 
     langfuse_keys_present = bool(LANGFUSE_PUBLIC_KEY) and bool(LANGFUSE_SECRET_KEY)
     langfuse_client = Langfuse(tracing_enabled=langfuse_keys_present)
@@ -151,6 +162,11 @@ async def lifespan(app: FastAPI):
     logger.info("Whisper model ready.")
 
     yield
+
+    if state.studio_runtime is not None:
+        await state.studio_runtime.stop()
+    if state.studio_repository is not None:
+        state.studio_repository.close()
 
     if state.simulator is not None:
         logger.info("Stopping AiNex simulator...")

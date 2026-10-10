@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 from app.robot.sim_controller import SimController
 from app.robot.hardware_controller import AiNexHardwareController
@@ -18,6 +19,8 @@ class AppState:
     collision_checker: CollisionChecker | None = None
     stability_checker: StabilityChecker | None = None
     hardware_in_sync: bool = False
+    studio_repository: Any = None
+    studio_runtime: Any = None
 
 
 state = AppState()
