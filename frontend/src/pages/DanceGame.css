@@ -1,0 +1,292 @@
+/* Dance Game reuses the Refined Demo shell (rd-* classes in RefinedDemo.css)
+   for the topbar and sim panel chrome. The 3-column body below is new. */
+
+.dance-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 1.4fr 320px;
+  gap: 18px;
+  min-height: 0;
+}
+
+.dance-panel-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 16px;
+  font-weight: 800;
+  color: #2D2926;
+  padding: 18px 20px 8px;
+  flex-shrink: 0;
+}
+
+/* ── Left: pose library ────────────────────────────────────────────────── */
+.dance-library {
+  background: #FFFDF8;
+  border-radius: 28px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.dance-library-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 4px 16px 20px;
+}
+
+.dance-library-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 6px;
+  background: rgba(45, 41, 38, 0.05);
+  border: 2px solid transparent;
+  border-radius: 18px;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.dance-library-card:hover {
+  transform: translateY(-2px);
+  border-color: #17BEBB;
+  background: rgba(23, 190, 187, 0.1);
+}
+
+.dance-library-emoji {
+  font-size: 28px;
+}
+
+.dance-library-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2D2926;
+  text-align: center;
+}
+
+.dance-palette-section-label {
+  padding: 2px 16px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9E9591;
+}
+
+.dance-palette-section-label:first-of-type {
+  padding-top: 0;
+}
+
+.dance-repeat-card {
+  grid-column: span 2;
+  flex-direction: row;
+  justify-content: center;
+  background: rgba(255, 159, 28, 0.12);
+}
+
+.dance-repeat-card:hover {
+  border-color: #FF9F1C;
+  background: rgba(255, 159, 28, 0.2);
+}
+
+/* ── Middle: robot viewer ──────────────────────────────────────────────── */
+.dance-viewer-col {
+  position: relative;
+  border-radius: 28px;
+  background: #26232F;
+  overflow: hidden;
+  min-height: 460px;
+}
+
+/* ── Right: sequence builder ───────────────────────────────────────────── */
+.dance-builder {
+  background: #FFFDF8;
+  border-radius: 28px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dance-canvas {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 16px;
+}
+
+.dance-block-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Always-present slack below the last row, so "drop at the end of this
+     list" is a real, reachable area even when the list is full-looking —
+     not just a sliver you have to hit exactly. */
+  min-height: 28px;
+  padding-bottom: 8px;
+}
+
+.dance-block-wrap {
+  /* Pure structural wrapper (drag source + drop target) around a repeat
+     block's visible card — see dance-repeat-block for the actual styling. */
+}
+
+/* The live "it will land here" preview. Being an ordinary flex child, it
+   naturally pushes the surrounding rows apart — that's the "shifting"
+   effect, for free, with no manual position math. */
+.dance-drop-indicator {
+  height: 10px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, #17BEBB 0 8px, #0fa8ab 8px 16px);
+  box-shadow: 0 0 0 2px rgba(23, 190, 187, 0.25);
+}
+
+.dance-block-dropzone-empty {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6B625D;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  padding: 10px;
+  border: 2px dashed rgba(45, 41, 38, 0.15);
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.dance-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(45, 41, 38, 0.05);
+  border: 2px solid transparent;
+  border-radius: 14px;
+}
+
+.dance-chip.active {
+  border-color: #FF6B4A;
+  background: rgba(255, 107, 74, 0.1);
+}
+
+.dance-chip-drag-handle {
+  color: rgba(45, 41, 38, 0.35);
+  cursor: grab;
+  font-size: 14px;
+}
+
+.dance-chip-emoji {
+  font-size: 18px;
+}
+
+.dance-chip-label {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2D2926;
+}
+
+.dance-chip-speed {
+  border: none;
+  background: rgba(23, 190, 187, 0.15);
+  color: #0f7f7d;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dance-chip-speed:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.dance-chip-remove {
+  border: none;
+  background: transparent;
+  color: #9E9591;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.dance-chip-remove:hover {
+  color: #FF6B4A;
+}
+
+.dance-controls {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 20px 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* ── Repeat block: a C-shaped container, Scratch-style ─────────────────── */
+.dance-repeat-block {
+  border: 2px solid #FF9F1C;
+  border-radius: 14px;
+  background: rgba(255, 159, 28, 0.08);
+  overflow: hidden;
+}
+
+.dance-repeat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 159, 28, 0.18);
+}
+
+.dance-repeat-label {
+  font-size: 13px;
+  font-weight: 800;
+  color: #a85a00;
+}
+
+.dance-repeat-header input {
+  width: 46px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 90, 0, 0.3);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.dance-repeat-body {
+  padding: 10px 10px 10px 22px;
+}
+
+.dance-play-btn {
+  padding: 10px 22px;
+  border: none;
+  border-radius: 999px;
+  background: #2E7D32;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dance-play-btn:disabled {
+  background: #9E9591;
+  cursor: default;
+}
+
+.dance-play-btn.stop {
+  background: #FF6B4A;
+}
+
+@media (max-width: 980px) {
+  .dance-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+  }
+}
