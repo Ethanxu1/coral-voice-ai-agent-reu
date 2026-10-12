@@ -44,11 +44,13 @@ Custom moves are kept in memory for the browser session only; a page refresh cle
 
 ### How CORAL moves in the game
 
-`poseRobot()` in `rps/robotPose.ts` sends one `POST /set-pose` with `duration_ms`, so the simulator interpolates the arms there smoothly, the same servo path follow mode uses. The duration comes from the gentle-follow speed (0.08 rad per 50 ms, about 380 pulses a second), with a 0.4 s minimum: a full arm swing takes about 1.7 s. An instant `/set-pose` snap (no `duration_ms`) can topple the simulated robot. The verdict is shown only once CORAL has finished its move.
+`poseRobot()` in `rps/robotPose.ts` sends one `POST /set-pose` with `duration_ms`, so the simulator interpolates the arms there smoothly, the same servo path follow mode uses. The duration comes from the gentle-follow speed (0.08 rad per 50 ms, about 380 pulses a second) and the robot's actual current pose (read from `GET /joint_states/pulses` first), with a 0.4 s minimum: a full arm swing takes about 1.7 s. An instant `/set-pose` snap (no `duration_ms`) can topple the simulated robot. The verdict is shown only once CORAL has finished its move.
 
 ### Gesture Studio (`/gestures`)
 
-A separate tool on the home page, built alongside this game, for recording any gesture into a library (localStorage, exportable as JSON) and fine-tuning how CORAL performs it. Its recorder (`pages/GestureRecord.tsx`) uses the same rule as custom moves: hold the pose (`gestures/useHoldStill.ts`, similarity based with a short glitch allowance) and wait for the robot to catch up (`useRobotSettle`).
+A separate tool on the home page, built alongside this game, for recording any gesture into a library (localStorage, exportable as JSON) and fine-tuning how CORAL performs it.
+
+The library file format (`coral-gestures`, version 1, `gestures/library.ts`) is meant to be shared, e.g. for the dance game's pose library. Only arms are recorded and tuned today, but the format already allows legs: `pose` may hold any joint `poseSimilarity` knows (hips, knees, ankles, nose) and `robotPulses` any servo in `SERVO_ID` (legs, head, grippers). The 4 arm points and 8 arm servos are required; any other known joint is kept through import, export and fine-tuning, and unknown keys are dropped. Its recorder (`pages/GestureRecord.tsx`) uses the same rule as custom moves: hold the pose (`gestures/useHoldStill.ts`, similarity based with a short glitch allowance) and wait for the robot to catch up (`useRobotSettle`).
 
 ### Learn: four views
 

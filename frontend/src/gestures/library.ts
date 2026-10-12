@@ -1,12 +1,18 @@
 // The gesture library: every gesture recorded in Gesture Studio.
 //
 // Each gesture is stored two ways:
-//   - `pose`: the person's arms as the camera saw them (normalized, see
+//   - `pose`: the person's body as the camera saw it (normalized, see
 //     pose/poseSimilarity.ts). Drawn as the stick figure, and usable as a
 //     reference pose for camera detection.
-//   - `robotPulses`: how CORAL performs it, as hardware servo pulses for the 8
-//     arm joints. Starts as the pose the robot reached while copying the person
-//     (`recordedPulses`) and can be fine-tuned in the library.
+//   - `robotPulses`: how CORAL performs it, as hardware servo pulses. Starts as
+//     the pose the robot reached while copying the person (`recordedPulses`)
+//     and can be fine-tuned in the library.
+//
+// Today only arms are recorded and tuned, but the format already has room for
+// more: `pose` may hold any joint poseSimilarity knows (hips, knees, ankles,
+// nose) and `robotPulses` any servo in SERVO_ID (legs, head, grippers). The 4
+// arm points and 8 arm servos are required; anything else is kept as is on
+// import, export and fine-tuning, so a file with legs isn't silently stripped.
 //
 // Fine-tuning only changes `robotPulses`, never `pose`: the robot has different
 // proportions than a person, so its version of a move is allowed to differ.
@@ -15,7 +21,8 @@
 // (exportJson / importJson).
 
 import { useSyncExternalStore } from 'react'
-import type { JointName, PoseVector } from '../pose/poseSimilarity'
+import { JOINT_INDEX, type JointName, type PoseVector } from '../pose/poseSimilarity'
+import { SERVO_ID } from '../demo/api'
 import { ARM_JOINT_IDS } from './armJoints'
 
 export interface Gesture {
@@ -166,7 +173,11 @@ export function downloadJson(list: Gesture[] = gestures, filename = 'coral-gestu
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-const POSE_JOINTS: JointName[] = ['leftElbow', 'rightElbow', 'leftWrist', 'rightWrist']
+/** Pose points every gesture must have. Other known joints are optional. */
+const REQUIRED_POSE_JOINTS: JointName[] = ['leftElbow', 'rightElbow', 'leftWrist', 'rightWrist']
+const ALL_POSE_JOINTS = Object.keys(JOINT_INDEX) as JointName[]
+/** Servos every gesture must have (the arms). Other known servos are optional. */
+const ALL_SERVOS = Object.keys(SERVO_ID)
 
 const isPoint = (p: unknown): p is [number, number] =>
   Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === 'number' && Number.isFinite(v))
@@ -174,9 +185,12 @@ const isPoint = (p: unknown): p is [number, number] =>
 function parsePulses(raw: unknown): Record<string, number> | null {
   if (!raw || typeof raw !== 'object') return null
   const out: Record<string, number> = {}
-  for (const joint of ARM_JOINT_IDS) {
+  for (const joint of ALL_SERVOS) {
     const v = (raw as Record<string, unknown>)[joint]
-    if (typeof v !== 'number' || !Number.isFinite(v)) return null
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      if (ARM_JOINT_IDS.includes(joint)) return null
+      continue
+    }
     out[joint] = Math.round(Math.min(1000, Math.max(0, v)))
   }
   return out
@@ -188,9 +202,12 @@ function parseGesture(raw: unknown): Gesture | null {
   const r = raw as Record<string, unknown>
   if (typeof r.name !== 'string' || !r.pose || typeof r.pose !== 'object') return null
   const pose: PoseVector = {}
-  for (const j of POSE_JOINTS) {
+  for (const j of ALL_POSE_JOINTS) {
     const p = (r.pose as Record<string, unknown>)[j]
-    if (!isPoint(p)) return null
+    if (!isPoint(p)) {
+      if (REQUIRED_POSE_JOINTS.includes(j)) return null
+      continue
+    }
     pose[j] = [p[0], p[1]]
   }
   const robotPulses = parsePulses(r.robotPulses)

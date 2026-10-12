@@ -1,4 +1,4 @@
-import { resetPose, setPose } from '../demo/api'
+import { getJointPulses, resetPose, setPose } from '../demo/api'
 import { ROBOT_REST_PULSES } from './gestures'
 
 /**
@@ -8,6 +8,7 @@ import { ROBOT_REST_PULSES } from './gestures'
  */
 const GENTLE_PULSES_PER_S = 380
 
+/** Last pose sent, used as the starting point only if the robot can't be read. */
 let current: Record<string, number> = { ...ROBOT_REST_PULSES }
 
 /**
@@ -17,9 +18,13 @@ let current: Record<string, number> = { ...ROBOT_REST_PULSES }
  * The move is one timed servo command that the simulator interpolates smoothly,
  * the same way follow mode drives the robot (an instant /set-pose snap can
  * topple the physics model). It takes at least `minDurationMs`.
+ *
+ * The duration is worked out from where the robot actually is (read from the
+ * server), since follow mode or other code may have moved it since the last call.
  */
 export async function poseRobot(target: Record<string, number>, minDurationMs = 400): Promise<void> {
-  const biggest = Math.max(0, ...Object.keys(target).map((j) => Math.abs(target[j] - (current[j] ?? target[j]))))
+  const from = await getJointPulses().catch(() => current)
+  const biggest = Math.max(0, ...Object.keys(target).map((j) => Math.abs(target[j] - (from[j] ?? target[j]))))
   const durationMs = Math.max(minDurationMs, Math.round((biggest / GENTLE_PULSES_PER_S) * 1000))
   current = { ...current, ...target }
   await setPose(target, false, durationMs)
