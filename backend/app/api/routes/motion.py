@@ -116,6 +116,9 @@ async def demo_move(request: MoveRequest) -> dict[str, Any]:
 async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
     """Apply a raw {joint: hardware_pulse} pose to the sim (testing tool).
 
+    With ``duration_ms`` the joints ease there over that time through the
+    servo dispatcher (as follow mode does) instead of snapping.
+
     Accepts the exact pulse dicts authored in motions.py. Each pulse is a
     *hardware* servo unit, so it's converted to sim radians with
     hardware_units_to_rad. The combined target is then shadow-rolled through the
@@ -143,6 +146,19 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
         target_joints, _safety = collision_checked_targets(
             state.simulator, target_joints, "/set-pose"
         )
+
+    if req.duration_ms is not None:
+        commands = [
+            ServoCommand(
+                servo_id=SERVO_ID_MAP[joint],
+                position=rad_to_servo_units(rad),
+                duration_ms=max(1, req.duration_ms),
+            )
+            for joint, rad in target_joints.items()
+        ]
+        # Returns once the interpolation has finished.
+        await dispatch_servo_commands(commands, sim_only=True)
+        return {"status": "done", "applied": list(target_joints), "skipped": skipped}
 
     for joint, rad in target_joints.items():
         try:

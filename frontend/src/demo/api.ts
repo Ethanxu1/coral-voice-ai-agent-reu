@@ -141,14 +141,17 @@ export async function move(commands: ServoCommand[]): Promise<MoveResult> {
 // ignores the sim/hardware toggle; the Pi has no /set-pose).
 // `skipCollisionCheck` applies the pose exactly as authored, bypassing the
 // server's collision shadow-roll (joint limits still clamp).
+// `durationMs` eases there over that time (servo interpolation) instead of snapping,
+// and the call resolves once the move has finished.
 export async function setPose(
   pulses: Record<string, number>,
   skipCollisionCheck = false,
+  durationMs?: number,
 ): Promise<{ applied: string[]; skipped: string[] }> {
   const res = await fetch(`${getSimBase()}/set-pose`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pulses, skip_collision_check: skipCollisionCheck }),
+    body: JSON.stringify({ pulses, skip_collision_check: skipCollisionCheck, duration_ms: durationMs }),
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
@@ -215,6 +218,14 @@ export async function setHiplessFollow(enabled: boolean): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+// The robot's current pose as {joint: hardware_pulse}, the units setPose takes.
+export async function getJointPulses(): Promise<Record<string, number>> {
+  const res = await fetch(`${getRobotBase()}/joint_states/pulses`)
+  if (!res.ok) throw new Error(`joint_states failed: ${res.status}`)
+  const data = await res.json()
+  return data.pulses ?? {}
 }
 
 export async function setRobotState(mode: string): Promise<void> {

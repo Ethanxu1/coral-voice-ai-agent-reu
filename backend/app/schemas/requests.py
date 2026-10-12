@@ -28,6 +28,9 @@ class SetPoseRequest(BaseModel):
     # Pose Tester's "collision check off" mode: apply the pose exactly as
     # authored, skipping the collision shadow-roll (JOINT_LIMITS still clamp).
     skip_collision_check: bool = False
+    # When set, move there smoothly over this many ms (servo interpolation, the
+    # same path follow mode uses) instead of snapping the joints instantly.
+    duration_ms: int | None = None
 
 
 class StateRequest(BaseModel):

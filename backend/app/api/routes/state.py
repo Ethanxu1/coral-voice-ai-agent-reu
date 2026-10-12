@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.schemas.requests import StateRequest
 from app.services.motion import _get_robot_state
 from app.follow_controller import gentle_follow_enabled, set_gentle_follow
+from app.robot.hardware_angle_utils import rad_to_hardware_units
 from app.vision.pose_to_robot import hipless_arms_enabled, set_hipless_arms
 
 router = APIRouter()
@@ -26,6 +27,19 @@ async def demo_set_state(req: StateRequest) -> dict[str, str]:
 async def get_joint_states() -> dict[str, dict[str, float]]:
     """Return the current robot joint states in radians."""
     return {"joint_states": _get_robot_state()}
+
+
+@router.get("/joint_states/pulses")
+async def get_joint_pulses() -> dict[str, dict[str, int]]:
+    """Return the current robot joint states as hardware servo pulses (0-1000),
+    the same units /set-pose takes. Rock-Paper-Scissors uses this to save the
+    pose the robot reached while following a child as one of its moves."""
+    return {
+        "pulses": {
+            joint: rad_to_hardware_units(rad, joint)
+            for joint, rad in _get_robot_state().items()
+        }
+    }
 
 
 class HiplessArmsRequest(BaseModel):

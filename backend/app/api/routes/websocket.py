@@ -427,7 +427,11 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
     finally:
         connected_clients.discard(websocket)
-        if state.follow_controller is not None and state.follow_controller.is_following:
+        if (
+            state.follow_controller is not None
+            and state.follow_controller.is_following
+            and state.follow_controller.owner is websocket
+        ):
             await state.follow_controller.stop_follow(
                 reason="websocket closing", clean_logger=clean_logger
             )

@@ -5,8 +5,13 @@ import Tutorial from './pages/Tutorial'
 import PoseTester from './pages/PoseTester'
 import SubjectSelect from './pages/SubjectSelect'
 import TestFunctionality from './pages/TestFunctionality'
-import RockPaperScissors from './pages/RockPaperScissors'
+import RockPaperScissorsLearn from './pages/RockPaperScissors'
+import RpsPlay from './pages/RpsPlay'
+import RpsCustom from './pages/RpsCustom'
 import RockPaperScissorsMenu from './pages/RockPaperScissorsMenu'
+import GestureStudio from './pages/GestureStudio'
+import GestureRecord from './pages/GestureRecord'
+import GestureLibrary from './pages/GestureLibrary'
 import ConnectionStatus from './components/ConnectionStatus'
 import './App.css'
 
@@ -33,6 +38,9 @@ function App() {
           <Link to="/rock-paper-scissors" className="launcher-btn wide">
             ✊✋✌️ Rock Paper Scissors
           </Link>
+          <Link to="/gestures" className="launcher-btn wide">
+            🧍 Gesture Studio
+          </Link>
         </div>
         <ConnectionStatus />
         <div className="launcher-footer">
@@ -54,8 +62,12 @@ function App() {
       <Route path="/subject-select" element={<SubjectSelect />} />
       <Route path="/test" element={<TestFunctionality />} />
       <Route path="/rock-paper-scissors" element={<RockPaperScissorsMenu />} />
-      <Route path="/rock-paper-scissors/learn" element={<RockPaperScissors key="learn" mode="learn" />} />
-      <Route path="/rock-paper-scissors/play" element={<RockPaperScissors key="play" mode="play" />} />
+      <Route path="/rock-paper-scissors/learn" element={<RockPaperScissorsLearn />} />
+      <Route path="/rock-paper-scissors/play" element={<RpsPlay />} />
+      <Route path="/rock-paper-scissors/custom" element={<RpsCustom />} />
+      <Route path="/gestures" element={<GestureStudio />} />
+      <Route path="/gestures/record" element={<GestureRecord />} />
+      <Route path="/gestures/library" element={<GestureLibrary />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

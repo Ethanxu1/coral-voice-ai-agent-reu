@@ -154,6 +154,20 @@ function figureToPose(figure: GestureDef['figure']): PoseVector {
   }
 }
 
+/** The other way round: a stick-figure drawing of a pose recorded from the camera. */
+export function figureFromPose(pose: PoseVector): GestureDef['figure'] {
+  const denorm = (p: [number, number] | undefined): [number, number] => {
+    const [x, y] = p ?? [0, 0]
+    return [FIGURE_SHOULDER_MID[0] + x * FIGURE_SHOULDER_WIDTH, FIGURE_SHOULDER_MID[1] + y * FIGURE_SHOULDER_WIDTH]
+  }
+  return {
+    leftElbow: denorm(pose.rightElbow),
+    leftHand: denorm(pose.rightWrist),
+    rightElbow: denorm(pose.leftElbow),
+    rightHand: denorm(pose.leftWrist),
+  }
+}
+
 export const GESTURE_TEMPLATES: PoseTemplate[] = GESTURES.map((g) => ({
   id: g.id,
   joints: figureToPose(g.figure),

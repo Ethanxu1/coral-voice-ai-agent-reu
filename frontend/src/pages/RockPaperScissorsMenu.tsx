@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { RPS_PATH } from './RockPaperScissors'
+import { RPS_PATH } from '../rps/RpsTopbar'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
 
@@ -33,7 +33,12 @@ export default function RockPaperScissorsMenu() {
           <Link to={`${RPS_PATH}/play`} className="rps-menu-card play">
             <span className="rps-menu-emoji">🎮</span>
             <span className="rps-menu-name">Let's play</span>
-            <span className="rps-menu-desc">Count to three, strike a pose, and see who wins.</span>
+            <span className="rps-menu-desc">Three rounds against CORAL. Strike a pose and see who wins.</span>
+          </Link>
+          <Link to={`${RPS_PATH}/custom`} className="rps-menu-card custom">
+            <span className="rps-menu-emoji">🎨</span>
+            <span className="rps-menu-name">Make your own moves</span>
+            <span className="rps-menu-desc">Invent your own rock, paper and scissors, then play with them.</span>
           </Link>
         </div>
       </main>
