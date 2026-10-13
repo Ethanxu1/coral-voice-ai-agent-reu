@@ -557,7 +557,20 @@ export interface ActionSession {
   close(): void
 }
 
-export function openActionSession(sessionId?: string): ActionSession {
+// Follow-mode status pushed by the backend on the session socket. `marching`
+// is set while the person marches in place (backend follow_marching.py);
+// `robotOnly` when only the real robot can march (simulator: detected and
+// shown, not performed).
+export interface FollowStatus {
+  active: boolean
+  marching: boolean
+  robotOnly: boolean
+}
+
+export function openActionSession(
+  sessionId?: string,
+  onFollowStatus?: (status: FollowStatus) => void,
+): ActionSession {
   const wsUrl = sessionId ? `${ACTION_WS}?session_id=${encodeURIComponent(sessionId)}` : ACTION_WS
   const ws = new WebSocket(wsUrl)
 
@@ -604,6 +617,14 @@ export function openActionSession(sessionId?: string): ActionSession {
       } catch {
         /* malformed audio frame — ignore */
       }
+      return
+    }
+    if (data.type === 'follow_status') {
+      onFollowStatus?.({
+        active: !!data.active,
+        marching: !!data.marching,
+        robotOnly: !!data.robot_only,
+      })
       return
     }
     if (!pending) return

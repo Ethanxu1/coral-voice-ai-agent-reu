@@ -426,14 +426,29 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        connected_clients.discard(websocket)
-        if state.follow_controller is not None and state.follow_controller.is_following:
-            await state.follow_controller.stop_follow(
-                reason="websocket closing", clean_logger=clean_logger
-            )
+        await _client_closed(websocket, clean_logger)
         close_logger(session_id)
         logger.info(
             f"WebSocket client removed. Total clients: {len(connected_clients)}"
+        )
+
+
+async def _client_closed(websocket: WebSocket, clean_logger) -> None:
+    """Forget a closed /ws connection; stop following once none are left.
+
+    Only the LAST connection closing stops follow mode. While following, the
+    browser keeps listening and opens a throwaway /ws per utterance just to
+    get its transcript, closing it ~0.1 s later. Stopping on every close
+    ended follow mode within seconds (reported 2026-10-02 on feat/balancing;
+    again 2026-10-12 here, where it made marching work only once). When the
+    page itself goes away, every connection closes, so the robot still stops.
+    """
+    connected_clients.discard(websocket)
+    if connected_clients:
+        return
+    if state.follow_controller is not None and state.follow_controller.is_following:
+        await state.follow_controller.stop_follow(
+            reason="websocket closing", clean_logger=clean_logger
         )
 
 

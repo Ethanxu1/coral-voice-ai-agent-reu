@@ -19,6 +19,9 @@ from typing import Awaitable, Callable, Optional
 import httpx
 import websockets
 
+from app import config
+from app.follow_marching import FollowMarching, WalkFn
+from app.resource_path import user_data_dir
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
 from app.vision.pose_to_robot import (
@@ -67,9 +70,21 @@ DispatchFn = Callable[[list[ServoCommand], bool | None], Awaitable[None]]
 StatusFn = Callable[[dict], Awaitable[None]]
 
 
+def robot_marches(sim_only: bool | None) -> bool:
+    """Whether follow mode reaches the real robot's walking engine (else it
+    only detects marching, for the website). Same rule as
+    dispatch_servo_commands' hardware send."""
+    from app.state import state
+
+    return sim_only is False or (sim_only is None and state.robot_mode in ("robot", "hardware"))
+
+
 class FollowController:
-    def __init__(self, dispatch_fn: DispatchFn):
+    def __init__(self, dispatch_fn: DispatchFn, walk_fn: Optional[WalkFn] = None):
         self._dispatch = dispatch_fn
+        # Starts (True) / stops (False) the real robot's march; see
+        # app/follow_marching.py. None: marching is never handed over.
+        self._walk_fn = walk_fn
         self._task: Optional[asyncio.Task] = None
         self._capture_task: Optional[asyncio.Task] = None
 
@@ -143,6 +158,13 @@ class FollowController:
         )
         live_duration_ms = _GENTLE_DURATION_MS if gentle else _FOLLOW_DURATION_MS
         prev_targets: dict[str, float] | None = None
+        marching = (
+            FollowMarching(self._walk_fn, send=robot_marches(sim_only),
+                           record_dir=(user_data_dir() / "logs" / "march_frames"
+                                       if config.RECORD_MARCH_FRAMES else None))
+            if config.FOLLOW_MARCHING and self._walk_fn is not None
+            else None
+        )
         latest: dict | None = None
         latest_event = asyncio.Event()
 
@@ -206,7 +228,13 @@ class FollowController:
                         logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
                         if clean_logger is not None:
                             clean_logger.follow_event("seeding initial pose", {"joints": len(seed_cmds)})
-                        await self._dispatch(seed_cmds, sim_only)
+                        try:
+                            await self._dispatch(seed_cmds, sim_only)
+                        except Exception as e:
+                            # The robot refused or missed the opening move (e.g. still
+                            # busy with a reset). Live ticks re-send the pose anyway, so
+                            # carry on rather than ending follow mode (2026-10-12).
+                            logger.warning("Follow: opening move not delivered (%s); continuing", e)
                         seeded = True
                     logger.info("Follow: initial seed complete, entering live tracking")
                     if clean_logger is not None:
@@ -221,6 +249,12 @@ class FollowController:
 
                         body = data.get("body_landmarks") or []
                         head = data.get("head_pose")
+                        if marching is not None:
+                            before = marching.status()
+                            marching.update(body, asyncio.get_event_loop().time())
+                            if marching.status() != before:
+                                await status_fn({"type": "follow_status", "active": True,
+                                                 **marching.status()})
                         targets = compute_joint_targets(body, head) if body else {}
                         if not targets:
                             empty_target_count += 1
@@ -253,6 +287,8 @@ class FollowController:
                             dispatch_count = skip_count = empty_target_count = 0
                             last_heartbeat = now
                 finally:
+                    if marching is not None:
+                        await marching.close()
                     reader_task.cancel()
                     if in_flight is not None and not in_flight.done():
                         in_flight.cancel()

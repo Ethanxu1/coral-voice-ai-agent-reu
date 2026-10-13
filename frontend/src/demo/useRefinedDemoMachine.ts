@@ -23,6 +23,7 @@ import {
   stopSubjectSelection,
   subscribeSubjectSelection,
   type ActionResult,
+  type FollowStatus,
   type MoveSafety,
   type ServoCommand,
   type SubjectSelectionState,
@@ -58,6 +59,9 @@ export interface RefinedState {
   messages: RefinedChatMsg[]
   countdown: number | null
   followActive: boolean
+  // Follow mode: the person is marching in place (the real robot marches
+  // too; in the simulator it is only detected).
+  marching: FollowStatus | null
   capturedFrame: string | null
   micLevel: number
   orbState: 'listening' | 'thinking' | 'countdown' | 'muted'
@@ -96,6 +100,7 @@ const INIT: RefinedState = {
   messages: [],
   countdown: null,
   followActive: false,
+  marching: null,
   capturedFrame: null,
   micLevel: 0,
   orbState: 'listening',
@@ -478,7 +483,9 @@ export function useRefinedDemoMachine() {
     // Stable session ID shared by the intent classifier HTTP calls and the
     // persistent action websocket so Langfuse groups everything in one trace.
     const sessionId = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const session = openActionSession(sessionId)
+    const session = openActionSession(sessionId, (s) => {
+      dispatch({ marching: s.active && s.marching ? s : null })
+    })
 
     const addMsg = (msg: RefinedChatMsg) => {
       msgs = [...msgs, msg]
@@ -884,7 +891,7 @@ export function useRefinedDemoMachine() {
             ['Follow my movement', 'Capture my pose'],
           ))
           followActive = false
-          dispatch({ followActive: false })
+          dispatch({ followActive: false, marching: null })
           continue
         }
 
@@ -1168,7 +1175,7 @@ export function useRefinedDemoMachine() {
             // Robot already mirrors the user — freeze it in place, skip countdown/camera.
             await sendText('stop following', 'immediate').catch(() => {})
             followActive = false
-            dispatch({ followActive: false })
+            dispatch({ followActive: false, marching: null })
             active()
             addMsg(sysMsg('Pose frozen!'))
           } else {

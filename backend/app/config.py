@@ -86,6 +86,14 @@ ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in
     "yes",
 )
 
+# Follow mode: when the person marches in place (and turns), the real
+# robot's own walking engine marches (and turns) too -- app/follow_marching.py.
+# In the simulator it is only detected and shown on the website.
+FOLLOW_MARCHING = os.getenv("CORAL_FOLLOW_MARCHING", "true").lower() in ("true", "1", "yes")
+# Save each follow session's march readings (numbers only, no images) to
+# <user data>/logs/march_frames/ so live runs can be replayed. "false" = off.
+RECORD_MARCH_FRAMES = os.getenv("CORAL_RECORD_MARCH_FRAMES", "true").lower() in ("true", "1", "yes")
+
 # ---------------------------------------------------------------------------
 # Server binding
 # ---------------------------------------------------------------------------

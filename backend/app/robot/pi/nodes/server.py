@@ -6,7 +6,16 @@ accept raw servo commands over HTTP, execute them on the hardware, and return
 when the motion is done. No vision, no classifier, no named motions.
 
 Endpoints
-    POST /move    execute raw servo commands (blocks until the body finishes)
+    POST /move    execute raw servo commands (blocks until the body finishes).
+                  While the robot marches, leg and arm servos are dropped (the
+                  walking engine moves them, arms swinging with the steps).
+    POST /walk    march in place with Hiwonder's walking engine
+                  {step_height m}; must be renewed within
+                  walking.KEEPALIVE_TIMEOUT_S or it stops. Never steps or
+                  turns (only the gyro heading hold, against drift).
+    POST /walk/stop  stop marching; legs ease back to stand
+    GET  /walk/status  {available, state, yaw_deg}
+    GET  /imu     raw Board().get_imu() floats (accel g, gyro deg/s, mag), read-only
     GET  /health  liveness probe
 
 Mirrors the Mac-side ``coral_agent/server.py`` /move contract: the request
@@ -94,6 +103,8 @@ SERVO_LIMITS: Dict[int, Tuple[int, int]] = {
 }
 
 MIN_MOVE_MS = 100  # floor for any single move duration
+# Legs and arms — the walking engine's while it marches (it swings the arms).
+_MARCH_SERVO_IDS = frozenset(range(1, 23))
 
 
 def clamp_position(servo_id: int, position: int) -> int:
@@ -104,6 +115,8 @@ def clamp_position(servo_id: int, position: int) -> int:
 # ── ROS plumbing ──────────────────────────────────────────────────────────────
 _body_srv = None
 _BodyCommandReq = None
+_walker = None  # walking.Walker — None if the walking engine is unavailable
+_board = None  # walking.LatestImu over ainex_sdk.Board — None if unavailable
 
 # One motion at a time: overlapping motor commands fight each other, so a
 # second /move while one is playing gets a 429 instead of a hardware lock.
@@ -111,7 +124,7 @@ _move_lock = threading.Lock()
 
 
 def _init_ros() -> None:
-    global _body_srv, _BodyCommandReq
+    global _body_srv, _BodyCommandReq, _walker, _board
 
     import rospy
 
@@ -124,6 +137,37 @@ def _init_ros() -> None:
     rospy.wait_for_service("/body_commands", timeout=60.0)
     _body_srv = rospy.ServiceProxy("/body_commands", BodyCommand)
     rospy.loginfo("[server] ROS ready — body service wired")
+
+    # Walking is optional: without the engine, /walk reports 503 and /move
+    # works exactly as before.
+    # The IMU is optional too: without it the march runs without heading hold.
+    try:
+        from ainex_sdk import Board  # type: ignore
+        from walking import LatestImu
+
+        board = Board()
+        board.enable_reception()
+        _board = LatestImu(board.get_imu)   # the ONLY get_imu() caller
+        threading.Thread(target=_board.run, name="imu-reader", daemon=True).start()
+        rospy.loginfo("[server] IMU board ready")
+    except Exception as e:
+        rospy.logwarn(f"[server] IMU board unavailable, marching without heading hold: {e}")
+
+    try:
+        from walking import (LEG_STAND_PULSE, STAND_MS, RosWalkingEngine, Walker,
+                             yaw_rate_from_imu)
+
+        def stand_legs() -> None:
+            with _move_lock:
+                _call_body_service([(dict(LEG_STAND_PULSE), STAND_MS)])
+
+        imu = _board
+        yaw_rate = (lambda: yaw_rate_from_imu(imu.latest())) if imu is not None else None
+        _walker = Walker(RosWalkingEngine(), stand_legs, yaw_rate=yaw_rate)
+        threading.Thread(target=_walker.watch, name="walk-watchdog", daemon=True).start()
+        rospy.loginfo("[server] walking engine ready (POST /walk)")
+    except Exception as e:
+        rospy.logwarn(f"[server] walking engine unavailable, /walk will report so: {e}")
 
 
 def _call_body_service(
@@ -179,10 +223,15 @@ async def move(moves: List[ServoMove]):
     """
     # Group into (pulse_dict, duration) frames, matching the body service's
     # input shape. Unknown and head servo ids are silently dropped.
+    if _walker is not None:
+        _walker.note_body_motion()
+    legs_walking = _walker is not None and _walker.legs_busy
     by_duration: Dict[int, Dict[str, int]] = {}
     for m in moves:
         name = ID_TO_NAME.get(m.servo_id)
         if name is None or m.servo_id in _SKIP_SERVO_IDS:
+            continue
+        if legs_walking and m.servo_id in _MARCH_SERVO_IDS:
             continue
         dur = max(MIN_MOVE_MS, m.duration_ms)
         by_duration.setdefault(dur, {})[name] = clamp_position(m.servo_id, m.position)
@@ -201,6 +250,52 @@ async def move(moves: List[ServoMove]):
         _move_lock.release()
 
     return {"status": "done", "count": sum(len(p) for p in by_duration.values())}
+
+
+class WalkRequest(BaseModel):
+    step_height: float = 0.02
+
+
+@app.post("/walk")
+def walk(req: WalkRequest):
+    """Start marching in place, or renew a march. The laptop
+    must keep calling this or the march stops by itself. Not held up by a
+    /move in progress: follow mode keeps moving the arms while marching."""
+    if _walker is None:
+        raise HTTPException(status_code=503, detail="walking engine not available")
+    from walking import WalkerBusy
+
+    try:
+        settings = _walker.walk(req.step_height)
+    except WalkerBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"walking": True, **settings}
+
+
+@app.post("/walk/stop")
+def walk_stop():
+    if _walker is not None:
+        _walker.stop()
+    return {"walking": False}
+
+
+@app.get("/walk/status")
+def walk_status():
+    if _walker is None:
+        return {"available": False, "state": "idle", "yaw_deg": None}
+    return {"available": True, "state": _walker.state, "yaw_deg": round(_walker.yaw_deg, 1),
+            "last_stop_s": _walker.last_stop_s}
+
+
+@app.get("/imu")
+def imu():
+    """Raw floats from Board().get_imu(): accel (g) x,y,z, gyro (deg/s)
+    x,y,z, magnetometer x,y,z. None values = the board didn't answer this
+    call (routine; retry)."""
+    if _board is None:
+        raise HTTPException(status_code=503, detail="IMU board not initialized")
+    values = _board.latest()
+    return {"values": values}
 
 
 def main():

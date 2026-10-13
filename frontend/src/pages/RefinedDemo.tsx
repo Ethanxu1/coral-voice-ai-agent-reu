@@ -235,7 +235,9 @@ export default function RefinedDemo() {
           {state.followActive && (
             <div className="rd-follow-badge">
               <span className="rd-follow-dot" />
-              Following
+              {state.marching
+                ? `Marching${state.marching.robotOnly ? ' (robot only)' : ''}`
+                : 'Following'}
             </div>
           )}
 
