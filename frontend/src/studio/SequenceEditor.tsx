@@ -8,6 +8,45 @@ export interface EditableSequenceStep {
   transitionMs: number
 }
 
+function SequenceTimingInput({
+  value,
+  minimum,
+  maximum,
+  step,
+  onCommit,
+}: {
+  value: number
+  minimum: number
+  maximum: number
+  step: number
+  onCommit: (value: number) => void
+}) {
+  const [draft, setDraft] = useState(String(value))
+
+  useEffect(() => setDraft(String(value)), [value])
+
+  const commit = () => {
+    const parsed = Number(draft)
+    const next = Number.isFinite(parsed)
+      ? Math.min(maximum, Math.max(minimum, Math.round(parsed)))
+      : minimum
+    setDraft(String(next))
+    onCommit(next)
+  }
+
+  return (
+    <input
+      type="number"
+      min={minimum}
+      max={maximum}
+      step={step}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+    />
+  )
+}
+
 export function SequenceEditor({
   steps,
   onChange,
@@ -34,7 +73,7 @@ export function SequenceEditor({
     commit(next)
   }
   const updateTiming = (id: string, field: 'holdMs' | 'transitionMs', value: number) => {
-    commit(ordered.map((step) => (step.id === id ? { ...step, [field]: Math.max(100, value) } : step)))
+    commit(ordered.map((step) => (step.id === id ? { ...step, [field]: value } : step)))
   }
   const dropBefore = (targetId: string) => {
     if (!draggedId || draggedId === targetId) return
@@ -62,23 +101,23 @@ export function SequenceEditor({
             <strong>{step.poseName}</strong>
             <label>
               Hold
-              <input
-                type="number"
-                min="100"
-                step="100"
+              <SequenceTimingInput
                 value={step.holdMs}
-                onChange={(event) => updateTiming(step.id, 'holdMs', Number(event.target.value))}
+                minimum={100}
+                maximum={60_000}
+                step={100}
+                onCommit={(value) => updateTiming(step.id, 'holdMs', value)}
               />
               <span>ms</span>
             </label>
             <label>
               Transition
-              <input
-                type="number"
-                min="100"
-                step="50"
+              <SequenceTimingInput
                 value={step.transitionMs}
-                onChange={(event) => updateTiming(step.id, 'transitionMs', Number(event.target.value))}
+                minimum={100}
+                maximum={60_000}
+                step={50}
+                onCommit={(value) => updateTiming(step.id, 'transitionMs', value)}
               />
               <span>ms</span>
             </label>

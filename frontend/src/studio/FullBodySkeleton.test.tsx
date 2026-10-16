@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { FullBodySkeleton } from './FullBodySkeleton'
+import { FullBodySkeleton, UpperBodySkeleton } from './FullBodySkeleton'
 import type { Landmark } from './types'
 
 function fullBodyLandmarks(): Landmark[] {
@@ -28,6 +28,14 @@ describe('FullBodySkeleton', () => {
 
     render(<FullBodySkeleton landmarks={landmarks} />)
 
+    expect(screen.queryByTestId('bone-left-knee-left-ankle')).not.toBeInTheDocument()
+  })
+
+  it('renders only the head and arm chain in upper-body mode', () => {
+    render(<UpperBodySkeleton landmarks={fullBodyLandmarks()} />)
+
+    expect(screen.getByTestId('bone-left-upper-arm')).toBeInTheDocument()
+    expect(screen.queryByTestId('bone-left-torso')).not.toBeInTheDocument()
     expect(screen.queryByTestId('bone-left-knee-left-ankle')).not.toBeInTheDocument()
   })
 })

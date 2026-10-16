@@ -130,6 +130,22 @@ def test_full_legs_detected_requires_visible_ankles():
     assert full_legs_detected(body) is False
 
 
+def test_upper_body_mode_maps_arms_without_visible_hips():
+    body = _build_body()
+    body[geometry.LEFT_HIP]["visibility"] = 0.0
+    body[geometry.RIGHT_HIP]["visibility"] = 0.0
+
+    targets = compute_joint_targets(
+        body,
+        head_pose=None,
+        enable_legs=False,
+        allow_hipless_arms=True,
+    )
+
+    assert {"l_sho_pitch", "l_sho_roll", "r_sho_pitch", "r_sho_roll"} <= targets.keys()
+    assert not any("hip" in joint or "knee" in joint or "ank" in joint for joint in targets)
+
+
 def test_t_pose_targets():
     """Both arms abducted to T → l_sho_roll and r_sho_roll both move from
     STAND offset toward 0 by ~π/2; pitches near 0."""

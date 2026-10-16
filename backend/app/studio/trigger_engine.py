@@ -104,6 +104,13 @@ class TriggerEngine:
         cooldown = self.cooldown_seconds if cooldown_seconds is None else cooldown_seconds
         self._cooldown_until = now + max(0.0, cooldown)
 
+    def reset(self) -> None:
+        """Clear transient recognition state when trigger listening changes."""
+        self._holds.clear()
+        self._blocked_pairs.clear()
+        self._busy = False
+        self._cooldown_until = 0.0
+
     def snapshot(self, now: float) -> TriggerSnapshot:
         holds = tuple(
             HoldSnapshot(

@@ -2,32 +2,52 @@ import { useEffect, useRef, useState } from 'react'
 
 import RobotViewer from '../components/RobotViewer'
 import { visionVideoFeedUrl } from './api'
-import { FullBodySkeleton } from './FullBodySkeleton'
+import { UpperBodySkeleton } from './FullBodySkeleton'
 import type { Landmark } from './types'
 
 export function LivePreview({
   subjects,
   recognition,
+  poseNamesById = {},
   holds,
   executingSequenceId,
   statusMessage,
   cameraEnabled,
+  onResetSimulator,
+  simulatorResetting,
 }: {
   subjects: { id: string; landmarks: Landmark[] }[]
-  recognition: Record<string, { label: string | null; confidence: number }>
+  recognition: Record<string, { label: string | null; confidence: number; reason?: string }>
+  poseNamesById?: Record<string, string>
   holds: Record<string, number>
   executingSequenceId: string | null
   statusMessage: string | null
   cameraEnabled: boolean
+  onResetSimulator: () => Promise<boolean>
+  simulatorResetting: boolean
 }) {
   const previewRef = useRef<HTMLElement>(null)
   const [fullscreen, setFullscreen] = useState(false)
   const [fullscreenError, setFullscreenError] = useState<string | null>(null)
-  const winner = [...subjects].sort(
-    (left, right) => (recognition[right.id]?.confidence ?? 0) - (recognition[left.id]?.confidence ?? 0),
-  )[0]
+  const winner = [...subjects].sort((left, right) => {
+    const leftRecognition = recognition[left.id]
+    const rightRecognition = recognition[right.id]
+    const recognitionDelta =
+      Number(Boolean(rightRecognition?.label)) - Number(Boolean(leftRecognition?.label))
+
+    return (
+      recognitionDelta ||
+      (rightRecognition?.confidence ?? 0) - (leftRecognition?.confidence ?? 0)
+    )
+  })[0]
   const winnerRecognition = winner ? recognition[winner.id] : undefined
+  const recognizedPoseName = winnerRecognition?.label
+    ? poseNamesById[winnerRecognition.label] ?? winnerRecognition.label
+    : 'No pose matched'
   const progress = winner ? holds[winner.id] ?? 0 : 0
+  const rejectionMessage = !winnerRecognition?.label
+    ? recognitionGuidance(winnerRecognition?.reason)
+    : null
 
   useEffect(() => {
     const syncFullscreen = () => setFullscreen(document.fullscreenElement === previewRef.current)
@@ -58,6 +78,16 @@ export function LivePreview({
           <h2 id="live-preview-title">Live Preview</h2>
         </div>
         <div className="preview-heading-actions">
+          <button
+            type="button"
+            className="preview-fullscreen-button"
+            disabled={simulatorResetting}
+            onClick={() => void onResetSimulator()}
+            aria-label="Reset Simulator"
+          >
+            <span aria-hidden="true">↻</span>
+            {simulatorResetting ? 'Resetting…' : 'Reset Simulator'}
+          </button>
           <span className={`preview-live-dot${winner ? ' is-live' : ''}`}>{winner ? 'Tracking' : 'Waiting'}</span>
           <button
             type="button"
@@ -89,18 +119,19 @@ export function LivePreview({
           </div>
         ) : winner ? (
           <>
-            <FullBodySkeleton landmarks={winner.landmarks} label={`Skeleton for ${winner.id}`} />
+            <UpperBodySkeleton landmarks={winner.landmarks} label={`Skeleton for ${winner.id}`} />
             <div className="recognition-readout">
               <span>Person {winner.id}</span>
-              <strong>{winnerRecognition?.label ?? 'Unknown pose'}</strong>
+              <strong>{recognizedPoseName}</strong>
               <b>{Math.round((winnerRecognition?.confidence ?? 0) * 100)}%</b>
+              {rejectionMessage ? <small>{rejectionMessage}</small> : null}
             </div>
           </>
         ) : (
           <div className="preview-empty preview-camera-guidance">
             <span className="preview-reticle" aria-hidden="true" />
             <strong>Step into frame</strong>
-            <small>Your full body, including ankles, must be visible.</small>
+            <small>Keep your shoulders, elbows, and wrists visible.</small>
           </div>
         )}
       </section>
@@ -130,4 +161,13 @@ export function LivePreview({
       </div>
     </aside>
   )
+}
+
+function recognitionGuidance(reason?: string): string | null {
+  if (reason === 'out_of_distribution') return 'Pose differs from its training examples.'
+  if (reason === 'ambiguous') return 'Pose resembles multiple saved poses.'
+  if (reason === 'low_visibility') return 'Keep both shoulders, elbows, and wrists visible.'
+  if (reason === 'low_confidence') return 'Pose match confidence is too low.'
+  if (reason === 'no_samples') return 'Train a Human Pose to begin recognition.'
+  return null
 }

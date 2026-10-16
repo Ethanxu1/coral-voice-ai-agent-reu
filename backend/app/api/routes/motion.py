@@ -37,6 +37,13 @@ router = APIRouter()
 
 _NAME_PROMPT_PATH = Path(__file__).parent.parent.parent / "llm" / "prompts" / "name_extraction.md"
 _NAME_SANITIZE_RE = re.compile(r"[^\w\s\-]")
+_LIVE_LEG_JOINTS = {
+    "l_hip_yaw", "l_hip_roll", "l_hip_pitch", "l_knee", "l_ank_pitch", "l_ank_roll",
+    "r_hip_yaw", "r_hip_roll", "r_hip_pitch", "r_knee", "r_ank_pitch", "r_ank_roll",
+}
+_LIVE_MIRROR_JOINTS = set(SERVO_ID_MAP)
+_MAX_LIVE_JOINT_STEP_RAD = 0.08
+_SIM_MOTION_LOCK = asyncio.Lock()
 
 
 def _sanitize_name(raw: str) -> str:
@@ -53,8 +60,42 @@ def _load_name_extraction_prompt() -> str:
     )
 
 
+def _limit_live_joint_step(
+    current_joints: dict[str, float],
+    target_joints: dict[str, float],
+    limited_joints: set[str],
+) -> tuple[dict[str, float], bool]:
+    """Rate-limit selected simulator live-mirror joints to reduce tipping impulses."""
+    limited = dict(target_joints)
+    changed = False
+    for joint in limited_joints.intersection(target_joints):
+        current = current_joints.get(joint)
+        if current is None:
+            continue
+        delta = target_joints[joint] - current
+        if abs(delta) <= _MAX_LIVE_JOINT_STEP_RAD:
+            continue
+        limited[joint] = current + (1 if delta > 0 else -1) * _MAX_LIVE_JOINT_STEP_RAD
+        changed = True
+    return limited, changed
+
+
+def _limit_live_leg_step(
+    current_joints: dict[str, float],
+    target_joints: dict[str, float],
+) -> tuple[dict[str, float], bool]:
+    """Keep the original leg-only live-mirror behavior for non-gentle callers."""
+    return _limit_live_joint_step(current_joints, target_joints, _LIVE_LEG_JOINTS)
+
+
 @router.post("/move")
 async def demo_move(request: MoveRequest) -> dict[str, Any]:
+    """Serialize Studio moves with resets so a stale move cannot win the race."""
+    async with _SIM_MOTION_LOCK:
+        return await _execute_demo_move(request)
+
+
+async def _execute_demo_move(request: MoveRequest) -> dict[str, Any]:
     """Execute raw servo commands on the simulator, optionally with hardware.
 
     Used by the demo's pose-mimicry path: the frontend fetches servo commands
@@ -70,7 +111,12 @@ async def demo_move(request: MoveRequest) -> dict[str, Any]:
     the same uniform map, regardless of sim/hardware mode.
     """
     if state.simulator is None:
-        return {"status": "error", "detail": "simulator not initialized"}
+        raise HTTPException(status_code=503, detail="simulation server is not initialized")
+    if request.stabilized_preview and request.sim_only is not True:
+        raise HTTPException(
+            status_code=400,
+            detail="stabilized preview is available only for simulator-only moves",
+        )
 
     moves = request.moves
     target_joints = {
@@ -78,12 +124,52 @@ async def demo_move(request: MoveRequest) -> dict[str, Any]:
         for m in moves
         if (joint := JOINT_NAME_MAP.get(m.servo_id)) is not None
     }
-    target_joints, safety = collision_checked_targets(state.simulator, target_joints, "/move")
+    rate_limited = False
+    if request.sim_only is True and not request.stabilized_preview:
+        limited_joints = _LIVE_MIRROR_JOINTS if request.gentle else _LIVE_LEG_JOINTS
+        target_joints, rate_limited = _limit_live_joint_step(
+            state.simulator.get_all_joint_states(),
+            target_joints,
+            limited_joints,
+        )
+    if request.stabilized_preview:
+        state.simulator.enable_stabilized_preview(ttl_seconds=1.0)
+        safety = {
+            "fall_blocked": False,
+            "collision_clamped": False,
+            "rate_limited": False,
+            "safe_fraction": 1.0,
+            "bad_pairs": [],
+            "head_z": None,
+            "threshold_z": None,
+        }
+    else:
+        transition_seconds = (
+            max((max(100, move.duration_ms) for move in moves), default=100) / 1000
+        )
+        dynamics_state = (
+            state.simulator.get_dynamics_state()
+            if request.sim_only is True and request.gentle
+            else None
+        )
+        target_joints, safety = collision_checked_targets(
+            state.simulator,
+            target_joints,
+            "/move",
+            transition_seconds=transition_seconds,
+            dynamics_state=dynamics_state,
+        )
+        safety["rate_limited"] = rate_limited
 
     # Fall check failed → the move is unsafe as a whole. Dispatch nothing (0%
     # of the move) and let the caller report the blocked result to the user.
     if safety["fall_blocked"]:
-        return {"status": "blocked", "count": 0, "safety": safety}
+        return {
+            "status": "blocked",
+            "count": 0,
+            "targets": target_joints,
+            "safety": safety,
+        }
 
     commands = []
     for m in moves:
@@ -105,11 +191,16 @@ async def demo_move(request: MoveRequest) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="simulation server is not initialized")
 
     try:
-        await dispatch_servo_commands(commands, sim_only=None)
+        await dispatch_servo_commands(commands, sim_only=request.sim_only)
     except RobotServerUnavailable as e:
         logger.warning(f"/move: robot server unavailable: {e}")
         raise HTTPException(status_code=503, detail="robot server could not be reached")
-    return {"status": "done", "count": len(commands), "safety": safety}
+    return {
+        "status": "done",
+        "count": len(commands),
+        "targets": target_joints,
+        "safety": safety,
+    }
 
 
 @router.post("/set-pose")
@@ -156,15 +247,20 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
 
 
 @router.post("/reset")
-async def reset_pose() -> dict[str, Any]:
-    """Snap the sim back to the stand pose and, in robot mode, animate the
-    hardware there smoothly."""
+async def reset_pose(sim_only: bool = False) -> dict[str, Any]:
+    """Serialize reset after any in-flight move so standing is the final pose."""
+    async with _SIM_MOTION_LOCK:
+        return await _execute_reset_pose(sim_only)
+
+
+async def _execute_reset_pose(sim_only: bool = False) -> dict[str, Any]:
+    """Reset the sim to standing, optionally leaving hardware untouched."""
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
     await asyncio.to_thread(state.simulator.reset_pose)
 
-    if state.hardware_dispatcher is not None:
+    if state.hardware_dispatcher is not None and not sim_only:
         stand = state.simulator.get_stand_joint_positions()
         commands = [
             ServoCommand(

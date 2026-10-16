@@ -103,6 +103,9 @@ class StabilityChecker:
         self,
         target_joints: dict[str, float],
         current_joints: dict[str, float] | None = None,
+        *,
+        transition_seconds: float | None = None,
+        dynamics_state: dict[str, list[float]] | None = None,
     ) -> float:
         """Reset to the stand keyframe (optionally overridden to the robot's
         current joints), ramp every actuator from the current pose toward
@@ -111,16 +114,40 @@ class StabilityChecker:
         window, and return the head's settled world Z."""
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)  # qpos/qvel/ctrl reset
+        if dynamics_state is not None:
+            qpos = dynamics_state.get("qpos", [])
+            qvel = dynamics_state.get("qvel", [])
+            ctrl = dynamics_state.get("ctrl", [])
+            if (
+                len(qpos) != self.model.nq
+                or len(qvel) != self.model.nv
+                or len(ctrl) != self.model.nu
+            ):
+                raise ValueError("live dynamics snapshot does not match the stability model")
+            self.data.qpos[:] = qpos
+            self.data.qvel[:] = qvel
+            self.data.ctrl[:] = ctrl
         if current_joints:
             for name, val in current_joints.items():
                 addr = self._qpos_addr.get(name)
-                if addr is not None:
+                if addr is not None and dynamics_state is None:
                     self.data.qpos[addr] = val
 
-        start_ctrl = dict(self._stand_joints)
-        if current_joints:
+        start_ctrl = (
+            {
+                name: float(self.data.ctrl[act_id])
+                for name, act_id in self._actuator_id.items()
+            }
+            if dynamics_state is not None
+            else dict(self._stand_joints)
+        )
+        if current_joints and dynamics_state is None:
             start_ctrl.update(current_joints)
-        end_ctrl = dict(self._stand_joints)
+        end_ctrl = (
+            dict(start_ctrl)
+            if dynamics_state is not None
+            else dict(self._stand_joints)
+        )
         end_ctrl.update(target_joints)
 
         # Hold the start pose at t=0 so the ramp begins from the seeded state.
@@ -129,9 +156,12 @@ class StabilityChecker:
             if act_id is not None:
                 self.data.ctrl[act_id] = val
 
-        for step in range(self.ramp_steps + self.settle_steps):
-            if step < self.ramp_steps:
-                f = (step + 1) / self.ramp_steps
+        ramp_steps = self.ramp_steps
+        if transition_seconds is not None:
+            ramp_steps = max(1, round(transition_seconds / float(self.model.opt.timestep)))
+        for step in range(ramp_steps + self.settle_steps):
+            if step < ramp_steps:
+                f = (step + 1) / ramp_steps
                 for name, end_val in end_ctrl.items():
                     start_val = start_ctrl.get(name, 0.0)
                     if start_val == end_val:
@@ -146,6 +176,9 @@ class StabilityChecker:
         self,
         target_joints: dict[str, float],
         current_joints: dict[str, float] | None = None,
+        *,
+        transition_seconds: float | None = None,
+        dynamics_state: dict[str, list[float]] | None = None,
     ) -> dict:
         """Shadow-settle the move under real physics and report whether it topples.
 
@@ -154,7 +187,12 @@ class StabilityChecker:
         starting qpos so the transition being checked matches what will actually
         be dispatched; targets not covered keep their stand value.
         """
-        head_z = self._settle(target_joints, current_joints)
+        head_z = self._settle(
+            target_joints,
+            current_joints,
+            transition_seconds=transition_seconds,
+            dynamics_state=dynamics_state,
+        )
         fell = head_z < self.fall_threshold_z
         return {
             "fell": fell,

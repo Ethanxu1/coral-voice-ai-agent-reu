@@ -73,3 +73,35 @@ def test_studio_retarget_rejects_incomplete_legs(monkeypatch) -> None:
     assert result["pose_detected"] is False
     assert result["commands"] == []
     assert result["detail"] == "Make sure both hips, knees, and ankles are visible"
+
+
+def test_studio_upper_body_mode_ignores_legs_and_uses_fixed_rate(monkeypatch) -> None:
+    body = _landmarks()
+    body[geometry.LEFT_HIP]["visibility"] = 0.0
+    body[geometry.RIGHT_HIP]["visibility"] = 0.0
+    monkeypatch.setattr(vision_server, "_latest_jpeg", b"jpeg")
+    monkeypatch.setattr(vision_server, "_latest_landmarks", body)
+    monkeypatch.setattr(vision_server, "_latest_head_pose", {"yaw": 10.0, "pitch": 0.0})
+    monkeypatch.setattr(
+        vision_server,
+        "compute_joint_targets",
+        lambda *_args, **_kwargs: {
+            "l_sho_pitch": 0.2,
+            "r_el_yaw": -0.3,
+            "l_knee": 0.4,
+            "head_pan": 0.1,
+        },
+    )
+
+    request = vision_server.map_features(upper_body_only=True)
+    try:
+        request.send(None)
+    except StopIteration as completed:
+        result = completed.value
+    else:  # pragma: no cover - upper-body mode performs no async I/O
+        raise AssertionError("Upper-body mapping unexpectedly awaited I/O")
+
+    assert result["pose_detected"] is True
+    assert result["targets"] == {"l_sho_pitch": 0.2, "r_el_yaw": -0.3}
+    assert {command["servo_id"] for command in result["commands"]} == {13, 20}
+    assert {command["duration_ms"] for command in result["commands"]} == {400}

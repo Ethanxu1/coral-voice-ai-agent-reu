@@ -46,13 +46,18 @@ describe('useStudioSocket', () => {
           subject_id: 'person-2',
           label: 'Hands up',
           confidence: 0.82,
+          reason: 'recognized',
         }),
       }),
     )
     rerender()
 
     expect(result.current.connected).toBe(true)
-    expect(result.current.recognition['person-2']).toEqual({ label: 'Hands up', confidence: 0.82 })
+    expect(result.current.recognition['person-2']).toEqual({
+      label: 'Hands up',
+      confidence: 0.82,
+      reason: 'recognized',
+    })
     expect(socket.sent).toEqual([JSON.stringify({ type: 'pong' })])
     expect(MockWebSocket.instances).toHaveLength(1)
   })

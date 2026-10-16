@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+import cv2
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +54,17 @@ _latest_head_pose: Optional[dict] = None
 _latest_selection_state: str = "idle"
 _latest_selected_subject_id: Optional[str] = None
 _latest_subjects: list = []
+_studio_tracking_session: Optional[str] = None
+
+_UPPER_BODY_CONNECTIONS = (
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+)
+_UPPER_BODY_JOINTS = (11, 12, 13, 14, 15, 16)
+_UPPER_BODY_MIN_VISIBILITY = 0.5
 
 # MobileNetV3 pose classifier — lazily loaded on first /classify (keeps torch off
 # the startup path and optional unless the demo actually classifies).
@@ -190,8 +202,62 @@ async def _mjpeg_generator(q: asyncio.Queue):
             _broadcaster.unsubscribe_video(q)
 
 
+def draw_upper_body_preview(frame, landmarks: list[dict]):
+    """Return a clean camera frame with the RPS-style upper-body skeleton."""
+    overlay = frame.copy()
+    if len(landmarks) <= 16:
+        return overlay
+
+    height, width = overlay.shape[:2]
+
+    def visible(index: int) -> bool:
+        return landmarks[index].get("visibility", 0.0) >= _UPPER_BODY_MIN_VISIBILITY
+
+    def point(index: int) -> tuple[int, int]:
+        landmark = landmarks[index]
+        return int(landmark["x"] * width), int(landmark["y"] * height)
+
+    line_color = (80, 190, 255)
+    joint_color = (0, 210, 255)
+    for start, end in _UPPER_BODY_CONNECTIONS:
+        if visible(start) and visible(end):
+            cv2.line(overlay, point(start), point(end), line_color, 3)
+    for index in _UPPER_BODY_JOINTS:
+        if visible(index):
+            cv2.circle(overlay, point(index), 6, joint_color, -1)
+    if visible(0):
+        cv2.circle(overlay, point(0), 20, line_color, 3)
+    return overlay
+
+
+def encode_upper_body_preview(frame, landmarks: list[dict]) -> bytes:
+    """Encode one clean upper-body preview frame as JPEG."""
+    rendered = draw_upper_body_preview(frame, landmarks)
+    encoded, jpeg = cv2.imencode(".jpg", rendered, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    if not encoded:
+        raise RuntimeError("Could not encode upper-body preview frame")
+    return jpeg.tobytes()
+
+
+async def _upper_body_mjpeg_generator():
+    boundary = b"--frame"
+    while True:
+        frame = _latest_clean_frame
+        if frame is not None:
+            jpeg = encode_upper_body_preview(frame, _latest_landmarks)
+            yield boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+        await asyncio.sleep(1.0 / 20.0)
+
+
 @app.get("/video_feed")
-async def video_feed():
+async def video_feed(overlay: Optional[str] = None):
+    if overlay == "upper_body":
+        return StreamingResponse(
+            _upper_body_mjpeg_generator(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+    if overlay is not None:
+        raise HTTPException(status_code=400, detail=f"unknown video overlay '{overlay}'")
     assert _broadcaster is not None
     q = _broadcaster.subscribe_video()
     return StreamingResponse(
@@ -274,10 +340,21 @@ async def _classify_clean_frame() -> tuple[str, dict]:
 # Move duration (ms) for pose-mimicry commands. Slow enough to look deliberate,
 # fast enough that the child sees Coral react promptly to their pose.
 _FOLLOW_DURATION_MS = 1000
+_UPPER_BODY_DURATION_MS = 400
+_UPPER_BODY_ARM_JOINTS = frozenset({
+    "l_sho_pitch",
+    "r_sho_pitch",
+    "l_sho_roll",
+    "r_sho_roll",
+    "l_el_pitch",
+    "r_el_pitch",
+    "l_el_yaw",
+    "r_el_yaw",
+})
 
 
 @app.post("/map-features")
-async def map_features(leg_mode: str = "buckets"):
+async def map_features(leg_mode: str = "buckets", upper_body_only: bool = False):
     """Retarget the latest MediaPipe landmarks to robot servo commands.
 
     Instead of picking a canned pose class, we map the person's actual body
@@ -318,8 +395,45 @@ async def map_features(leg_mode: str = "buckets"):
         _knee_vis(geometry.RIGHT_KNEE),
     )
 
-    # The arm retargeting is anchored on the hips; without them we'd only be able
-    # to move the head, so ask the caller to reframe and retake instead.
+    if upper_body_only:
+        targets = compute_joint_targets(
+            body,
+            None,
+            enable_legs=False,
+            allow_hipless_arms=True,
+        )
+        targets = {
+            joint: target
+            for joint, target in targets.items()
+            if joint in _UPPER_BODY_ARM_JOINTS
+        }
+        if not targets:
+            return {
+                "pose_detected": False,
+                "detail": "Make sure your shoulders, elbows, and wrists are visible",
+                "commands": [],
+                "targets": {},
+                "upper_body_only": True,
+                "body_landmarks": body,
+                "image_b64": image_b64,
+                "image_format": "jpeg",
+            }
+        commands = targets_to_servo_commands(targets, _UPPER_BODY_DURATION_MS)
+        return {
+            "pose_detected": True,
+            "commands": [
+                {"servo_id": c.servo_id, "position": c.position, "duration_ms": c.duration_ms}
+                for c in commands
+            ],
+            "targets": targets,
+            "upper_body_only": True,
+            "body_landmarks": body,
+            "image_b64": image_b64,
+            "image_format": "jpeg",
+        }
+
+    # Full-body modes anchor arm retargeting on the hips. Without them, ask the
+    # caller to reframe instead of returning a partial head-only pose.
     if not hips_detected(body):
         return {
             "pose_detected": False,
@@ -500,9 +614,53 @@ async def subject_selection_stop():
     if _estimator is None:
         raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
     _estimator.set_multi_person_mode(False)
-    _estimator.subject_selector.reset()
+    _estimator.subject_selector.stop()
     logger.info("Subject selection stopped (single-person mode)")
     return {"state": "idle", "selected_subject_id": None}
+
+
+@app.post("/studio/tracking/start")
+async def studio_tracking_start(session_id: str):
+    """Use direct single-person tracking while Motion Studio captures a pose."""
+    global _studio_tracking_session
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    _studio_tracking_session = session_id
+    _estimator.set_multi_person_mode(False)
+    _estimator.subject_selector.stop()
+    logger.info("Motion Studio pose capture started (single-person mode)")
+    return {"mode": "single_person", "session_id": session_id}
+
+
+@app.post("/studio/tracking/passive")
+async def studio_passive_tracking():
+    """Track every visible person without running subject selection."""
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    if _studio_tracking_session is not None:
+        return {"mode": "single_person", "state": "idle"}
+    _estimator.set_multi_person_mode(True)
+    _estimator.subject_selector.stop()
+    return {"mode": "multi_person", "state": "idle"}
+
+
+@app.post("/studio/tracking/stop")
+async def studio_tracking_stop(session_id: str):
+    """Restore passive multi-person tracking without selecting a subject."""
+    global _studio_tracking_session
+    if _estimator is None:
+        raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
+    if session_id != _studio_tracking_session:
+        return {
+            "mode": "single_person" if _studio_tracking_session else "multi_person",
+            "state": _estimator.subject_selector.state,
+            "stale": True,
+        }
+    _studio_tracking_session = None
+    _estimator.set_multi_person_mode(True)
+    _estimator.subject_selector.stop()
+    logger.info("Motion Studio pose capture stopped (passive multi-person mode)")
+    return {"mode": "multi_person", "state": "idle", "stale": False}
 
 
 @app.get("/subject-selection/status")

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 
-import { FullBodySkeleton } from './FullBodySkeleton'
+import { UpperBodySkeleton } from './FullBodySkeleton'
 import type { HumanPose, Landmark } from './types'
 
 type TrainingApi = {
@@ -31,11 +31,17 @@ export function PoseTrainingDialog({
   onClose: () => void
 }) {
   const [name, setName] = useState('')
-  const [selectedSubjectId, setSelectedSubjectId] = useState(subjects[0]?.id ?? '')
   const [samples, setSamples] = useState<Landmark[][]>([])
   const [message, setMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const selected = subjects.find((subject) => subject.id === selectedSubjectId) ?? subjects[0]
+  const selected = useMemo(
+    () => [...subjects].filter((subject) => upperBodyVisible(subject.landmarks)).sort(
+      (left, right) => upperBodyVisibility(right.landmarks) - upperBodyVisibility(left.landmarks),
+    )[0] ?? [...subjects].sort(
+      (left, right) => upperBodyVisibility(right.landmarks) - upperBodyVisibility(left.landmarks),
+    )[0],
+    [subjects],
+  )
   const duplicate = existingNames.some(
     (existing) => existing.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
   )
@@ -48,8 +54,8 @@ export function PoseTrainingDialog({
   if (!open) return null
 
   const capture = () => {
-    if (!selected || !fullBodyVisible(selected.landmarks)) {
-      setMessage('Full body not visible')
+    if (!selected || !upperBodyVisible(selected.landmarks)) {
+      setMessage('Upper body not visible')
       return
     }
     setSamples((current) => [...current, selected.landmarks.map((landmark) => ({ ...landmark }))])
@@ -89,7 +95,7 @@ export function PoseTrainingDialog({
         <div className="training-grid">
           <div className="training-preview">
             {selected ? (
-              <FullBodySkeleton landmarks={selected.landmarks} label="Selected person skeleton" />
+              <UpperBodySkeleton landmarks={selected.landmarks} label="Current upper-body skeleton" />
             ) : (
               <p>No person detected</p>
             )}
@@ -100,17 +106,7 @@ export function PoseTrainingDialog({
               <input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
             </label>
             {duplicate && <p className="field-error">Use a unique pose name</p>}
-            <label>
-              Person
-              <select
-                value={selectedSubjectId}
-                onChange={(event) => setSelectedSubjectId(event.target.value)}
-              >
-                {subjects.map((subject) => (
-                  <option key={subject.id} value={subject.id}>{subject.id}</option>
-                ))}
-              </select>
-            </label>
+            <p className="training-tracking-note">The clearest visible upper body is captured automatically.</p>
             <div className="sample-meter" aria-label={sampleMessage}>
               {[0, 1, 2].map((index) => (
                 <span key={index} className={samples.length > index ? 'is-filled' : ''} />
@@ -134,8 +130,10 @@ export function PoseTrainingDialog({
   )
 }
 
-function fullBodyVisible(landmarks: Landmark[]): boolean {
-  const required = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
+const UPPER_BODY_JOINTS = [0, 11, 12, 13, 14, 15, 16] as const
+
+function upperBodyVisible(landmarks: Landmark[]): boolean {
+  const required = UPPER_BODY_JOINTS
   return required.every((index) => {
     const landmark = landmarks[index]
     return Boolean(
@@ -145,4 +143,9 @@ function fullBodyVisible(landmarks: Landmark[]): boolean {
         landmark.visibility >= 0.5,
     )
   })
+}
+
+function upperBodyVisibility(landmarks: Landmark[]): number {
+  const visible = UPPER_BODY_JOINTS.map((index) => landmarks[index]?.visibility ?? 0)
+  return visible.reduce((total, visibility) => total + visibility, 0) / visible.length
 }

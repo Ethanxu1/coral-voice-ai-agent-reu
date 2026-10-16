@@ -13,18 +13,21 @@ import type {
 } from './types'
 import { useStudioSocket } from './useStudioSocket'
 
+const INTERACTION_SEQUENCE_PREFIX = '__interaction_pose__:'
+
 export function useStudioController() {
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState('')
   const [humanPoses, setHumanPoses] = useState<HumanPose[]>([])
   const [robotPoses, setRobotPoses] = useState<RobotPose[]>([])
-  const [sequences, setSequences] = useState<MotionSequence[]>([])
+  const [allSequences, setAllSequences] = useState<MotionSequence[]>([])
   const [rules, setRules] = useState<BehaviorRule[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [trainingOpen, setTrainingOpen] = useState(false)
   const [outputMode, setOutputModeState] = useState<OutputMode>('simulator')
+  const [triggerEnabled, setTriggerEnabledState] = useState(false)
   const [cameraEnabled, setCameraEnabledState] = useState(true)
   const [cameraBusy, setCameraBusy] = useState(false)
+  const [simulatorResetting, setSimulatorResetting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const pose = usePoseWebSocket()
@@ -39,7 +42,7 @@ export function useStudioController() {
     ])
     setHumanPoses(nextHuman)
     setRobotPoses(nextRobot)
-    setSequences(nextSequences)
+    setAllSequences(nextSequences)
     setRules(nextRules)
   }, [])
 
@@ -53,11 +56,37 @@ export function useStudioController() {
     }
   }, [activeProjectId, loadProject])
 
+  const resetSimulator = useCallback(async (): Promise<boolean> => {
+    setSimulatorResetting(true)
+    try {
+      await studioApi.resetSimulator()
+      setError(null)
+      return true
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not reset the simulator')
+      return false
+    } finally {
+      setSimulatorResetting(false)
+    }
+  }, [])
+
+  const enterRobotPoseCapture = useCallback(
+    (sessionId: string) => studioApi.enterRobotPoseCapture(sessionId).then(() => undefined),
+    [],
+  )
+
+  const exitRobotPoseCapture = useCallback(
+    (sessionId: string) => studioApi.exitRobotPoseCapture(sessionId).then(() => undefined),
+    [],
+  )
+
   useEffect(() => {
     let active = true
     const boot = async () => {
       try {
+        await resetSimulator()
         await studioApi.setOutputMode('simulator')
+        const triggerMode = await studioApi.getTriggerMode()
         let available = await studioApi.listProjects()
         if (available.length === 0) {
           available = [await studioApi.createProject('My Motion Project')]
@@ -66,6 +95,7 @@ export function useStudioController() {
         setProjects(available)
         setActiveProjectId(available[0].id)
         setOutputModeState('simulator')
+        setTriggerEnabledState(triggerMode.enabled)
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : 'Studio backend unavailable')
       } finally {
@@ -74,7 +104,7 @@ export function useStudioController() {
     }
     void boot()
     return () => { active = false }
-  }, [])
+  }, [resetSimulator])
 
   useEffect(() => {
     let active = true
@@ -131,19 +161,38 @@ export function useStudioController() {
     setOutputModeState(result.mode)
   }
 
-  const createRule = async (input: {
+  const setTriggerEnabled = async (enabled: boolean) => {
+    const result = await studioApi.setTriggerMode(enabled)
+    setTriggerEnabledState(result.enabled)
+  }
+
+  const createPoseRule = async (input: {
     humanPoseId: string
-    sequenceId: string
+    robotPoseId: string
     cooldownSeconds: number
   }) => {
-    await studioApi.createRule({
+    const responseSequence = await studioApi.createSequence({
       project_id: activeProjectId,
-      human_pose_id: input.humanPoseId,
-      sequence_id: input.sequenceId,
-      cooldown_seconds: input.cooldownSeconds,
-      priority: 0,
-      enabled: true,
+      name: `${INTERACTION_SEQUENCE_PREFIX}${input.humanPoseId}:${input.robotPoseId}:${Date.now()}`,
+      steps: [{
+        robot_pose_id: input.robotPoseId,
+        hold_ms: 700,
+        transition_ms: 300,
+      }],
     })
+    try {
+      await studioApi.createRule({
+        project_id: activeProjectId,
+        human_pose_id: input.humanPoseId,
+        sequence_id: responseSequence.id,
+        cooldown_seconds: input.cooldownSeconds,
+        priority: 0,
+        enabled: true,
+      })
+    } catch (cause) {
+      await studioApi.deleteSequence(responseSequence.id).catch(() => undefined)
+      throw cause
+    }
     await refresh()
   }
 
@@ -163,13 +212,56 @@ export function useStudioController() {
     await refresh()
   }
 
-  const captureRobotPose = async (name: string) => {
+  const updateSequence = async (
+    sequenceId: string,
+    name: string,
+    steps: { robotPoseId: string; holdMs: number; transitionMs: number }[],
+  ) => {
+    await studioApi.updateSequence(sequenceId, {
+      name,
+      steps: steps.map((step) => ({
+        robot_pose_id: step.robotPoseId,
+        hold_ms: step.holdMs,
+        transition_ms: step.transitionMs,
+      })),
+    })
+    await refresh()
+  }
+
+  const deleteInteraction = async (ruleId: string) => {
+    await studioApi.deleteInteraction(ruleId)
+    await refresh()
+  }
+
+  const reorderInteractions = async (ruleIds: string[]) => {
+    await studioApi.reorderInteractions({ project_id: activeProjectId, rule_ids: ruleIds })
+    await refresh()
+  }
+
+  const deleteHumanPose = async (poseId: string) => {
+    await studioApi.deleteHumanPose(poseId)
+    if (selectedId === poseId) setSelectedId(null)
+    await refresh()
+  }
+
+  const deleteRobotPose = async (poseId: string) => {
+    await studioApi.deleteRobotPose(poseId)
+    if (selectedId === poseId) setSelectedId(null)
+    await refresh()
+  }
+
+  const mirrorRobotPose = useCallback(
+    (signal?: AbortSignal) => studioApi.mirrorRetargetedPose(signal),
+    [],
+  )
+
+  const captureRobotPose = async (name: string, joints: Record<string, number>) => {
     if (!cameraEnabled) throw new Error('Turn on the computer camera before capturing a pose')
-    const captured = await studioApi.captureRetargetedPose()
+    if (Object.keys(joints).length === 0) throw new Error('Wait for the robot to mirror your pose')
     const pose = await studioApi.createRobotPose({
       project_id: activeProjectId,
       name,
-      joints: captured.targets,
+      joints,
       thumbnail_svg: '',
       source: 'human',
     })
@@ -202,6 +294,22 @@ export function useStudioController() {
     URL.revokeObjectURL(url)
   }
 
+  const sequences = useMemo(
+    () => allSequences.filter((sequence) => !sequence.name.startsWith(INTERACTION_SEQUENCE_PREFIX)),
+    [allSequences],
+  )
+  const interactionRules = useMemo(
+    () => rules.flatMap((rule) => {
+      const sequence = allSequences.find((item) => item.id === rule.sequence_id)
+      if (
+        !sequence?.name.startsWith(INTERACTION_SEQUENCE_PREFIX)
+        || sequence.steps.length !== 1
+      ) return []
+      return [{ ...rule, robot_pose_id: sequence.steps[0].robot_pose_id }]
+    }),
+    [allSequences, rules],
+  )
+
   return {
     projects,
     activeProjectId,
@@ -210,21 +318,33 @@ export function useStudioController() {
     robotPoses,
     sequences,
     rules,
+    interactionRules,
     selectedId,
     setSelected: (_kind: 'human' | 'robot' | 'sequence', id: string) => setSelectedId(id),
-    trainingOpen,
-    setTrainingOpen,
     subjects,
     trainingApi: studioApi,
     refresh,
-    createRule,
+    resetSimulator,
+    simulatorResetting,
+    createPoseRule,
+    deleteInteraction,
+    reorderInteractions,
     createSequence,
+    updateSequence,
     previewSequence: studioApi.previewSequence,
+    previewRobotPose: studioApi.previewRobotPose,
+    deleteHumanPose,
+    deleteRobotPose,
+    mirrorRobotPose,
+    enterRobotPoseCapture,
+    exitRobotPoseCapture,
     captureRobotPose,
     importProject,
     exportProject,
     outputMode,
     setOutputMode,
+    triggerEnabled,
+    setTriggerEnabled,
     cameraEnabled,
     cameraBusy,
     setCameraEnabled,

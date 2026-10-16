@@ -45,6 +45,9 @@ def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
+INTERACTION_SEQUENCE_PREFIX = "__interaction_pose__:"
+
+
 class StudioRepository:
     """Migration-driven repository for projects and reusable motion blocks."""
 
@@ -351,6 +354,40 @@ class StudioRepository:
             ).fetchall()
         return sequence_from_rows(row, step_rows)
 
+    def update_sequence(
+        self,
+        sequence_id: str,
+        name: str,
+        steps: SequenceValue[Mapping[str, Any]],
+    ) -> Sequence:
+        self._require("sequences", sequence_id)
+        timestamp = _now()
+        with self.transaction():
+            with self._connection() as connection:
+                connection.execute(
+                    "UPDATE sequences SET name = ?, updated_at = ? WHERE id = ?",
+                    (name, timestamp, sequence_id),
+                )
+                connection.execute(
+                    "DELETE FROM sequence_steps WHERE sequence_id = ?",
+                    (sequence_id,),
+                )
+                for position, step in enumerate(steps):
+                    connection.execute(
+                        """INSERT INTO sequence_steps
+                           (id, sequence_id, robot_pose_id, position, hold_ms,
+                            transition_ms) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            str(uuid4()),
+                            sequence_id,
+                            str(step["robot_pose_id"]),
+                            position,
+                            int(step.get("hold_ms", 500)),
+                            int(step.get("transition_ms", 250)),
+                        ),
+                    )
+        return self.get_sequence(sequence_id)
+
     def list_sequences(self, project_id: str) -> list[Sequence]:
         with self._connection() as connection:
             rows = connection.execute(
@@ -412,10 +449,65 @@ class StudioRepository:
         )
 
     def list_behavior_rules(self, project_id: str) -> list[BehaviorRule]:
-        return [
-            behavior_rule_from_row(row)
-            for row in self._rows_for_project("behavior_rules", project_id)
-        ]
+        with self._connection() as connection:
+            rows = connection.execute(
+                """SELECT * FROM behavior_rules WHERE project_id = ?
+                   ORDER BY priority DESC, created_at, id""",
+                (project_id,),
+            ).fetchall()
+        return [behavior_rule_from_row(row) for row in rows]
+
+    def reorder_interactions(self, project_id: str, rule_ids: list[str]) -> None:
+        if len(rule_ids) != len(set(rule_ids)):
+            raise ValueError("Interaction order contains duplicate rules")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT behavior_rules.id
+                   FROM behavior_rules
+                   JOIN sequences ON sequences.id = behavior_rules.sequence_id
+                   WHERE behavior_rules.project_id = ?
+                     AND substr(sequences.name, 1, ?) = ?
+                     AND (SELECT COUNT(*) FROM sequence_steps
+                          WHERE sequence_id = sequences.id) = 1""",
+                (project_id, len(INTERACTION_SEQUENCE_PREFIX), INTERACTION_SEQUENCE_PREFIX),
+            ).fetchall()
+            existing_ids = {row["id"] for row in rows}
+            if existing_ids != set(rule_ids):
+                raise ValueError("Interaction order is stale")
+            timestamp = _now()
+            for index, rule_id in enumerate(rule_ids):
+                connection.execute(
+                    """UPDATE behavior_rules SET priority = ?, updated_at = ?
+                       WHERE id = ? AND project_id = ?""",
+                    (len(rule_ids) - index, timestamp, rule_id, project_id),
+                )
+
+    def delete_interaction(self, rule_id: str) -> bool:
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT behavior_rules.sequence_id, sequences.name,
+                          (SELECT COUNT(*) FROM sequence_steps
+                           WHERE sequence_id = sequences.id) AS step_count
+                   FROM behavior_rules
+                   JOIN sequences ON sequences.id = behavior_rules.sequence_id
+                   WHERE behavior_rules.id = ?""",
+                (rule_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            if (
+                not row["name"].startswith(INTERACTION_SEQUENCE_PREFIX)
+                or row["step_count"] != 1
+            ):
+                raise ValueError("Rule is not a direct interaction")
+            connection.execute("DELETE FROM behavior_rules WHERE id = ?", (rule_id,))
+            remaining_references = connection.execute(
+                "SELECT COUNT(*) FROM behavior_rules WHERE sequence_id = ?",
+                (row["sequence_id"],),
+            ).fetchone()[0]
+            if remaining_references == 0:
+                connection.execute("DELETE FROM sequences WHERE id = ?", (row["sequence_id"],))
+        return True
 
     def delete_robot_pose(self, pose_id: str) -> DeleteResult:
         with self._connection() as connection:

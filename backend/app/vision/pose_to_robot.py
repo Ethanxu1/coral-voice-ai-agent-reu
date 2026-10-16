@@ -222,7 +222,11 @@ def hipless_arms_enabled() -> bool:
     return _allow_hipless_arms
 
 
-def _torso_frame_from(body: list[dict]):
+def _torso_frame_from(
+    body: list[dict],
+    *,
+    allow_hipless_arms: Optional[bool] = None,
+):
     """Build torso frame from world landmarks; returns None if the shoulders (or,
     unless hip-less arms are allowed, the hips) are missing world coords or
     visibility.
@@ -235,7 +239,7 @@ def _torso_frame_from(body: list[dict]):
     l_sho = geometry.world_xyz(body[_LM_L_SHOULDER])
     r_sho = geometry.world_xyz(body[_LM_R_SHOULDER])
 
-    hips_ok = all(
+    hips_ok = len(body) > _LM_R_HIP and all(
         _has_world(body[idx]) and _visible(body[idx]) for idx in (_LM_L_HIP, _LM_R_HIP)
     )
     if hips_ok:
@@ -245,7 +249,10 @@ def _torso_frame_from(body: list[dict]):
             geometry.world_xyz(body[_LM_L_HIP]),
             geometry.world_xyz(body[_LM_R_HIP]),
         )
-    if not _allow_hipless_arms:
+    hipless_allowed = (
+        _allow_hipless_arms if allow_hipless_arms is None else allow_hipless_arms
+    )
+    if not hipless_allowed:
         return None
 
     # Hips out of frame: stand in a pair of hips straight below the shoulders
@@ -283,6 +290,7 @@ def compute_joint_targets(
     head_pose: Optional[dict],
     *,
     enable_legs: Optional[bool] = None,
+    allow_hipless_arms: Optional[bool] = None,
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
@@ -305,7 +313,10 @@ def compute_joint_targets(
     if len(body_landmarks) > _LM_R_WRIST:
 
         # builds the torso frame used as the local coord system
-        R_torso = _torso_frame_from(body_landmarks)
+        R_torso = _torso_frame_from(
+            body_landmarks,
+            allow_hipless_arms=allow_hipless_arms,
+        )
 
         if R_torso is not None:
             # Person's RIGHT side → robot's LEFT arm

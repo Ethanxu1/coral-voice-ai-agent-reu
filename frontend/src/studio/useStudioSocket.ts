@@ -28,7 +28,11 @@ export function studioSocketReducer(state: StudioSocketState, action: Action): S
       latestEvent: event,
       recognition: {
         ...state.recognition,
-        [event.subjectId]: { label: event.label, confidence: event.confidence },
+        [event.subjectId]: {
+          label: event.label,
+          confidence: event.confidence,
+          reason: event.reason,
+        },
       },
     }
   }
@@ -62,6 +66,7 @@ function parseEvent(data: string): StudioEvent | 'ping' | null {
         subjectId: String(raw.subject_id),
         label: raw.label == null ? null : String(raw.label),
         confidence: Number(raw.confidence),
+        reason: raw.reason == null ? undefined : String(raw.reason),
       }
     }
     if (raw.type === 'hold_progress') {

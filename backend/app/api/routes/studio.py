@@ -25,6 +25,9 @@ from app.studio.schemas import (
     CreateSequenceRequest,
     OutputModeRequest,
     ProjectPackage,
+    ReorderInteractionsRequest,
+    TriggerModeRequest,
+    UpdateSequenceRequest,
 )
 from app.studio.sequence_player import OutputMode
 
@@ -189,6 +192,34 @@ async def preview_sequence(sequence_id: str):
     return jsonable_encoder(await _studio_runtime().preview(sequence_id))
 
 
+@router.put("/sequences/{sequence_id}")
+def update_sequence(sequence_id: str, request: UpdateSequenceRequest):
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Sequence name is required")
+    try:
+        sequence = _repo().update_sequence(
+            sequence_id,
+            name,
+            [step.model_dump() for step in request.steps],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Sequence not found") from exc
+    except Exception as exc:
+        _translate_integrity_error(exc)
+    return jsonable_encoder(sequence)
+
+
+@router.delete("/sequences/{sequence_id}")
+def delete_sequence(sequence_id: str):
+    result = _repo().delete_sequence(sequence_id)
+    if not result.deleted and result.dependents:
+        raise HTTPException(status_code=409, detail={"dependents": result.dependents})
+    if not result.deleted:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    return {"deleted": True}
+
+
 @router.get("/rules")
 def list_rules(project_id: str):
     return jsonable_encoder(_repo().list_behavior_rules(project_id))
@@ -198,6 +229,26 @@ def list_rules(project_id: str):
 def create_rule(request: CreateRuleRequest):
     rule = _repo().create_behavior_rule(**request.model_dump())
     return jsonable_encoder(rule)
+
+
+@router.put("/interactions/order")
+def reorder_interactions(request: ReorderInteractionsRequest):
+    try:
+        _repo().reorder_interactions(request.project_id, request.rule_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"reordered": True}
+
+
+@router.delete("/interactions/{rule_id}")
+def delete_interaction(rule_id: str):
+    try:
+        deleted = _repo().delete_interaction(rule_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Interaction not found")
+    return {"deleted": True}
 
 
 @router.delete("/robot-poses/{pose_id}")
@@ -210,15 +261,36 @@ def delete_robot_pose(pose_id: str):
     return {"deleted": True}
 
 
+@router.delete("/human-poses/{pose_id}")
+def delete_human_pose(pose_id: str):
+    result = _repo().delete_human_pose(pose_id)
+    if not result.deleted and result.dependents:
+        raise HTTPException(status_code=409, detail={"dependents": result.dependents})
+    if not result.deleted:
+        raise HTTPException(status_code=404, detail="Human pose not found")
+    _studio_runtime().refresh_recognizer()
+    return {"deleted": True}
+
+
 @router.get("/output-mode")
 def get_output_mode():
     return {"mode": _studio_runtime().output_mode.value}
 
 
 @router.put("/output-mode")
-def set_output_mode(request: OutputModeRequest):
-    mode = _studio_runtime().set_output_mode(OutputMode(request.mode))
+async def set_output_mode(request: OutputModeRequest):
+    mode = await _studio_runtime().set_output_mode(OutputMode(request.mode))
     return {"mode": mode.value}
+
+
+@router.get("/trigger-mode")
+def get_trigger_mode():
+    return {"enabled": _studio_runtime().trigger_enabled}
+
+
+@router.put("/trigger-mode")
+def set_trigger_mode(request: TriggerModeRequest):
+    return {"enabled": _studio_runtime().set_trigger_enabled(request.enabled)}
 
 
 @router.websocket("/ws")

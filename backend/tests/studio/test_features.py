@@ -59,6 +59,23 @@ def test_translation_and_scale_do_not_change_features(full_body_pose) -> None:
     )
 
 
+def test_weighted_upper_body_features_do_not_change_with_hip_noise(full_body_pose) -> None:
+    noisy_hips = deepcopy(full_body_pose)
+    noisy_hips[23].update(x=-4.0, y=8.0, visibility=0.01)
+    noisy_hips[24].update(x=6.0, y=-3.0, visibility=0.01)
+
+    original = extract_pose_features(full_body_pose)
+    changed = extract_pose_features(noisy_hips)
+    original_weighted = [
+        value for value, weight in zip(original.values, original.weights, strict=True) if weight > 0
+    ]
+    changed_weighted = [
+        value for value, weight in zip(changed.values, changed.weights, strict=True) if weight > 0
+    ]
+
+    assert changed_weighted == pytest.approx(original_weighted, abs=1e-6)
+
+
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
 def test_non_finite_landmark_is_rejected(full_body_pose, bad: float) -> None:
     full_body_pose[25]["x"] = bad
@@ -67,22 +84,39 @@ def test_non_finite_landmark_is_rejected(full_body_pose, bad: float) -> None:
         extract_pose_features(full_body_pose)
 
 
-def test_missing_ankle_rejects_training_sample(full_body_pose) -> None:
+def test_hidden_ankle_is_accepted_for_upper_body_training(full_body_pose) -> None:
     full_body_pose[27]["visibility"] = 0.1
 
     quality = validate_training_sample(full_body_pose)
 
+    assert quality.accepted is True
+    assert quality.message == "Sample ready"
+
+
+def test_hidden_wrist_rejects_upper_body_training(full_body_pose) -> None:
+    full_body_pose[15]["visibility"] = 0.1
+
+    quality = validate_training_sample(full_body_pose)
+
     assert quality.accepted is False
-    assert quality.message == "Full body not visible"
+    assert quality.message == "Upper body not visible"
 
 
-def test_skeleton_svg_contains_full_legs_and_only_finite_coordinates(
+def test_skeleton_svg_contains_upper_body_only_and_finite_coordinates(
     full_body_pose,
 ) -> None:
     svg = render_skeleton_svg(full_body_pose)
 
     assert svg.startswith('<svg xmlns="http://www.w3.org/2000/svg"')
-    assert svg.count("<line ") == 12
+    assert svg.count("<line ") == 5
+    assert svg.count("<circle ") == 7
     assert "nan" not in svg.lower()
     assert "inf" not in svg.lower()
-    assert all(math.isfinite(value) for value in extract_pose_features(full_body_pose).values)
+    features = extract_pose_features(full_body_pose)
+    assert all(math.isfinite(value) for value in features.values)
+    lower_body_weights = [
+        weight
+        for name, weight in zip(features.names, features.weights, strict=True)
+        if any(part in name for part in ("hip", "knee", "ankle", "thigh", "shin"))
+    ]
+    assert lower_body_weights and set(lower_body_weights) == {0.0}

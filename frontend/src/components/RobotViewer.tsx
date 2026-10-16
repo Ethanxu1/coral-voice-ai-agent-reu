@@ -19,6 +19,26 @@ interface GeomInfo {
 }
 
 const FLOATS_PER_GEOM = 7
+const FALL_ALARM_COOLDOWN_MS = 5_000
+
+function playFallAlarm() {
+  const AudioContextClass = window.AudioContext
+  if (!AudioContextClass) return
+  const context = new AudioContextClass()
+  const oscillator = context.createOscillator()
+  const gain = context.createGain()
+  oscillator.type = 'square'
+  oscillator.frequency.setValueAtTime(880, context.currentTime)
+  gain.gain.setValueAtTime(0.08, context.currentTime)
+  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.4)
+  oscillator.connect(gain)
+  gain.connect(context.destination)
+  oscillator.onended = () => void context.close()
+  void context.resume().then(() => {
+    oscillator.start()
+    oscillator.stop(context.currentTime + 0.4)
+  }).catch(() => void context.close())
+}
 
 const BACKEND_ORIGIN = (() => {
   const u = new URL(SIM_WS)
@@ -70,11 +90,24 @@ function RobotMeshes({
   )
 }
 
-export default function RobotViewer({ embedded = false }: { embedded?: boolean } = {}) {
+export default function RobotViewer({
+  embedded = false,
+  onStabilityChange,
+}: {
+  embedded?: boolean
+  onStabilityChange?: (fallen: boolean) => void
+} = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
+  const [fallen, setFallen] = useState(false)
   const posesRef = useRef<Float32Array | null>(null)
+  const lastFallAlarmAtRef = useRef(Number.NEGATIVE_INFINITY)
+  const onStabilityChangeRef = useRef(onStabilityChange)
+
+  useEffect(() => {
+    onStabilityChangeRef.current = onStabilityChange
+  }, [onStabilityChange])
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -109,6 +142,10 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
             }
           } else if (msg.type === 'error') {
             setStatus(`error: ${msg.detail}`)
+          } else if (msg.type === 'stability') {
+            const nextFallen = Boolean(msg.fallen)
+            setFallen(nextFallen)
+            onStabilityChangeRef.current?.(nextFallen)
           }
         } else {
           posesRef.current = new Float32Array(ev.data as ArrayBuffer)
@@ -129,6 +166,14 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
     }
   }, [])
 
+  useEffect(() => {
+    if (!fallen) return
+    const now = Date.now()
+    if (now - lastFallAlarmAtRef.current < FALL_ALARM_COOLDOWN_MS) return
+    lastFallAlarmAtRef.current = now
+    playFallAlarm()
+  }, [fallen])
+
   return (
     <div
       style={
@@ -137,6 +182,26 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
           : { position: 'relative', width: '100vw', height: '100vh', background: '#15151a' }
       }
     >
+      {fallen && (
+        <div
+          role="alert"
+          style={{
+            position: 'absolute',
+            zIndex: 5,
+            top: 14,
+            right: 14,
+            padding: '10px 14px',
+            border: '2px solid #ff6b52',
+            borderRadius: 6,
+            color: '#fff',
+            background: 'rgba(132, 28, 17, 0.94)',
+            font: '700 13px system-ui, sans-serif',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+          }}
+        >
+          ⚠ Fall detected — reset the simulator
+        </div>
+      )}
       {!embedded && (
         <div
           style={{

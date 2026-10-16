@@ -67,3 +67,51 @@ def test_genuinely_unstable_lean_is_still_flagged(checker):
     assert result["fell"], (
         f"expected the lean to be flagged as a fall, got head_z={result['head_z']}"
     )
+
+
+def test_live_balance_snapshot_is_used_as_the_shadow_start(checker):
+    upright = checker.check_fall({}, transition_seconds=0.22)
+    fallen_qpos = checker.data.qpos.copy()
+    fallen_qvel = checker.data.qvel.copy()
+    fallen_ctrl = checker.data.ctrl.copy()
+    fallen_qpos[2] = 0.05
+
+    result = checker.check_fall(
+        {},
+        transition_seconds=0.22,
+        dynamics_state={
+            "qpos": fallen_qpos.tolist(),
+            "qvel": fallen_qvel.tolist(),
+            "ctrl": fallen_ctrl.tolist(),
+        },
+    )
+
+    assert not upright["fell"]
+    assert result["fell"]
+
+
+def test_live_snapshot_keeps_omitted_joints_at_their_current_targets(checker):
+    """The shadow move must match /move: omitted joints do not move."""
+    checker.check_fall({}, transition_seconds=0.22)
+    qpos = checker.data.qpos.copy()
+    qvel = checker.data.qvel.copy()
+    ctrl = checker.data.ctrl.copy()
+    omitted_joint = "l_sho_pitch"
+    omitted_addr = checker._qpos_addr[omitted_joint]
+    omitted_actuator = checker._actuator_id[omitted_joint]
+    physical_position = float(qpos[omitted_addr]) + 0.15
+    current_target = physical_position + 0.35
+    qpos[omitted_addr] = physical_position
+    ctrl[omitted_actuator] = current_target
+
+    checker._settle(
+        {"head_pan": 0.1},
+        transition_seconds=0.22,
+        dynamics_state={
+            "qpos": qpos.tolist(),
+            "qvel": qvel.tolist(),
+            "ctrl": ctrl.tolist(),
+        },
+    )
+
+    assert checker.data.ctrl[omitted_actuator] == pytest.approx(current_target)

@@ -32,6 +32,24 @@ class RobotServerUnavailable(RuntimeError):
     """The requested physical-robot dispatch could not be completed."""
 
 
+async def read_hardware_joint_states(
+    required_joints: set[str],
+) -> dict[str, float]:
+    """Read the physical robot pose for live-motion safety preflight."""
+    if state.hardware_dispatcher is None:
+        try:
+            state.hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
+        except Exception as exc:
+            raise RobotServerUnavailable("robot server could not be reached") from exc
+    try:
+        return await asyncio.to_thread(
+            state.hardware_dispatcher.get_joint_states_strict,
+            required_joints,
+        )
+    except Exception as exc:
+        raise RobotServerUnavailable("robot joint state could not be read") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class MotionPathValidation:
     safe: bool
@@ -103,6 +121,9 @@ def collision_checked_targets(
     target_joints: dict[str, float],
     context: str,
     current: dict[str, float] | None = None,
+    *,
+    transition_seconds: float | None = None,
+    dynamics_state: dict[str, list[float]] | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     """Run both safety checks on target_joints from a starting joint state.
 
@@ -151,7 +172,12 @@ def collision_checked_targets(
             report.update(collision_clamped=True, safe_fraction=safe_frac, bad_pairs=bad_pairs)
 
     if state.stability_checker is not None:
-        fall = state.stability_checker.check_fall(safe_joints, current)
+        fall = state.stability_checker.check_fall(
+            safe_joints,
+            current,
+            transition_seconds=transition_seconds,
+            dynamics_state=dynamics_state,
+        )
         report.update(head_z=fall["head_z"], threshold_z=fall["threshold_z"])
         if fall["fell"]:
             logger.warning(
@@ -207,6 +233,61 @@ def validate_motion_path(
             current = dict(safe_targets)
         current.update(target)
     return MotionPathValidation(True, None, None, tuple(reports))
+
+
+def validate_preview_motion_path(
+    sim: AiNexSimulator | None,
+    target_frames: list[dict[str, float]],
+    context: str,
+    *,
+    initial: dict[str, float] | None = None,
+    samples_per_transition: int = 10,
+) -> MotionPathValidation:
+    """Preflight stabilized simulator playback without masking collisions.
+
+    A preview holds the simulated robot upright and never reaches hardware, so
+    falls and self-collisions are warnings rather than blockers. Validation
+    still visits every sample so the UI can report that the exact saved motion
+    is simulator-only. Mechanical joint limits remain enforced by the sim.
+    """
+    if samples_per_transition <= 0:
+        raise ValueError("samples_per_transition must be positive")
+    current = dict(initial or (sim.get_all_joint_states() if sim is not None else {}))
+    reports: list[dict[str, Any]] = []
+    saw_fall = False
+    saw_collision = False
+    for step_index, target in enumerate(target_frames):
+        start = dict(current)
+        joints = set(start) | set(target)
+        for sample_index in range(1, samples_per_transition + 1):
+            fraction = sample_index / samples_per_transition
+            interpolated = {
+                joint: start.get(joint, target.get(joint, 0.0))
+                + fraction
+                * (target.get(joint, start.get(joint, 0.0)) - start.get(joint, target.get(joint, 0.0)))
+                for joint in joints
+            }
+            _safe_targets, report = collision_checked_targets(
+                sim,
+                interpolated,
+                f"{context} step {step_index} sample {sample_index}",
+                current=current,
+            )
+            reports.append(
+                dict(report, step_index=step_index, sample_index=sample_index)
+            )
+            saw_collision = saw_collision or bool(report["collision_clamped"])
+            saw_fall = saw_fall or bool(report["fall_blocked"])
+            # Stabilized preview follows the requested kinematic pose even when
+            # the dynamic checker says an unsupported robot would have fallen.
+            current = dict(interpolated)
+        current.update(target)
+    return MotionPathValidation(
+        True,
+        None,
+        "collision_risk" if saw_collision else ("fall_risk" if saw_fall else None),
+        tuple(reports),
+    )
 
 
 def apply_safety_clamp_to_sim(

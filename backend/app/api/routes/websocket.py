@@ -51,6 +51,22 @@ router = APIRouter()
 connected_clients: set[WebSocket] = set()
 
 
+def _sim_stability_payload(simulator, checker) -> dict[str, object]:
+    """Build a live, actual-state fall report for simulator viewers."""
+    head_z = round(float(simulator.get_head_height()), 4)
+    threshold_z = round(float(checker.fall_threshold_z), 4)
+    stabilized_preview = simulator.is_stabilized_preview_active()
+    payload: dict[str, object] = {
+        "type": "stability",
+        "fallen": False if stabilized_preview else head_z < threshold_z,
+        "head_z": head_z,
+        "threshold_z": threshold_z,
+    }
+    if stabilized_preview:
+        payload["stabilized_preview"] = True
+    return payload
+
+
 # Child-friendly error copy so a failure feels recoverable, not scary.
 _CHILD_FRIENDLY_ERRORS = {
     "robot_unavailable": (
@@ -467,6 +483,10 @@ async def sim_stream_endpoint(websocket: WebSocket):
             await websocket.send_bytes(state.simulator.get_geom_poses())
             frame_count += 1
             if frame_count % joint_frame_interval == 0:
+                if state.stability_checker is not None:
+                    await websocket.send_json(
+                        _sim_stability_payload(state.simulator, state.stability_checker)
+                    )
                 await websocket.send_json(
                     {
                         "type": "joints",

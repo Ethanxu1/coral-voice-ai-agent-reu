@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -43,6 +43,7 @@ class WeightedKnnRecognizer:
         min_confidence: float = 0.78,
         margin: float = 0.08,
         distance_scale: float = 2.0,
+        label_thresholds: Mapping[str, float] | None = None,
     ) -> None:
         if k <= 0:
             raise ValueError("k must be positive")
@@ -52,11 +53,16 @@ class WeightedKnnRecognizer:
             raise ValueError("margin must be between 0 and 1")
         if distance_scale <= 0:
             raise ValueError("distance_scale must be positive")
+        if label_thresholds and any(
+            not 0 <= threshold <= 1 for threshold in label_thresholds.values()
+        ):
+            raise ValueError("label thresholds must be between 0 and 1")
         self._samples = tuple(samples)
         self._k = k
         self._min_confidence = min_confidence
         self._required_margin = margin
         self._distance_scale = distance_scale
+        self._label_thresholds = dict(label_thresholds or {})
 
     def classify(
         self, subject_id: str, features: PoseFeatures
@@ -82,10 +88,13 @@ class WeightedKnnRecognizer:
             return RecognitionResult(subject_id, None, 0.0, 0.0, "low_visibility")
 
         best_label, best_score = ranked[0]
+        acceptance_threshold = self._label_thresholds.get(
+            best_label, self._min_confidence
+        )
         class_confidence = best_score / total
         runner_up = ranked[1][1] / total if len(ranked) > 1 else 0.0
         score_margin = class_confidence - runner_up
-        if class_confidence < self._min_confidence:
+        if class_confidence < acceptance_threshold:
             return RecognitionResult(
                 subject_id, None, class_confidence, score_margin, "low_confidence"
             )
@@ -95,13 +104,64 @@ class WeightedKnnRecognizer:
             )
         proximity = 1.0 / (1.0 + self._distance_scale * neighbors[0][0])
         confidence = class_confidence * proximity
-        if confidence < self._min_confidence:
+        if confidence < acceptance_threshold:
             return RecognitionResult(
                 subject_id, None, confidence, score_margin, "out_of_distribution"
             )
         return RecognitionResult(
             subject_id, best_label, confidence, score_margin, "recognized"
         )
+
+
+def calibrate_label_thresholds(
+    samples: Sequence[RecognizerSample],
+    *,
+    target_thresholds: Mapping[str, float],
+    floor: float = 0.65,
+    tolerance: float = 0.03,
+    k: int = 3,
+    margin: float = 0.08,
+    distance_scale: float = 2.0,
+) -> dict[str, float]:
+    """Calibrate each label from leave-one-out training variation."""
+    if not 0 <= floor <= 1:
+        raise ValueError("calibration floor must be between 0 and 1")
+    if not 0 <= tolerance <= 1:
+        raise ValueError("calibration tolerance must be between 0 and 1")
+
+    scores_by_label: defaultdict[str, list[float]] = defaultdict(list)
+    impostor_scores_by_label: defaultdict[str, list[float]] = defaultdict(list)
+    for index, sample in enumerate(samples):
+        remaining = [*samples[:index], *samples[index + 1 :]]
+        if not remaining:
+            continue
+        result = WeightedKnnRecognizer(
+            remaining,
+            k=k,
+            min_confidence=0.0,
+            margin=margin,
+            distance_scale=distance_scale,
+        ).classify("calibration", sample.features)
+        if result.label == sample.label:
+            scores_by_label[sample.label].append(result.confidence)
+        elif result.label is not None:
+            impostor_scores_by_label[result.label].append(result.confidence)
+
+    calibrated: dict[str, float] = {}
+    for label, target in target_thresholds.items():
+        scores = scores_by_label.get(label, [])
+        if len(scores) < 2 or impostor_scores_by_label[label]:
+            calibrated[label] = target
+            continue
+
+        # A configured threshold below the normal calibration floor is an
+        # intentional override and must not be raised by calibration.
+        lower_bound = min(floor, target)
+        calibrated[label] = max(
+            lower_bound,
+            min(target, min(scores) - tolerance),
+        )
+    return calibrated
 
 
 def _weighted_distance(query: PoseFeatures, sample: PoseFeatures) -> float:

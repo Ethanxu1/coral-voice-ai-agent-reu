@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 type LibraryItem = { id: string; name: string }
 type SequenceItem = LibraryItem & { steps: unknown[] }
 
@@ -10,6 +12,11 @@ export function BlockLibrary({
   onTrainHumanPose,
   onCaptureRobotPose,
   onCreateSequence,
+  onDeleteHumanPose,
+  onDeleteRobotPose,
+  onPreviewRobotPose,
+  onPreviewSequence,
+  previewBusy = false,
 }: {
   humanPoses: LibraryItem[]
   robotPoses: LibraryItem[]
@@ -19,6 +26,11 @@ export function BlockLibrary({
   onTrainHumanPose: () => void
   onCaptureRobotPose: () => void
   onCreateSequence: () => void
+  onDeleteHumanPose: (id: string) => void
+  onDeleteRobotPose: (id: string) => void
+  onPreviewRobotPose: (id: string) => void
+  onPreviewSequence: (id: string) => void
+  previewBusy?: boolean
 }) {
   return (
     <aside className="studio-library" aria-label="Block Library">
@@ -33,15 +45,22 @@ export function BlockLibrary({
         count={humanPoses.length}
         actionLabel="Train pose"
         onAction={onTrainHumanPose}
+        collapsible
       >
         {humanPoses.map((pose) => (
-          <BlockButton
-            key={pose.id}
-            name={pose.name}
-            meta="Learned trigger"
-            selected={selectedId === pose.id}
-            onClick={() => onSelect('human', pose.id)}
-          />
+          <div className="library-block-row" key={pose.id}>
+            <BlockButton
+              name={pose.name}
+              meta="Learned trigger"
+              selected={selectedId === pose.id}
+              onClick={() => onSelect('human', pose.id)}
+            />
+            <ItemAction
+              label={`Delete human pose ${pose.name}`}
+              symbol="×"
+              onClick={() => onDeleteHumanPose(pose.id)}
+            />
+          </div>
         ))}
       </LibrarySection>
       <LibrarySection
@@ -49,15 +68,26 @@ export function BlockLibrary({
         count={robotPoses.length}
         actionLabel="Capture pose"
         onAction={onCaptureRobotPose}
+        collapsible
       >
         {robotPoses.map((pose) => (
-          <BlockButton
-            key={pose.id}
-            name={pose.name}
-            meta="Robot keyframe"
-            selected={selectedId === pose.id}
-            onClick={() => onSelect('robot', pose.id)}
-          />
+          <div className="library-block-row" key={pose.id}>
+            <BlockButton
+              name={pose.name}
+              meta="Robot keyframe"
+              selected={selectedId === pose.id}
+              disabled={previewBusy}
+              onClick={() => {
+                onSelect('robot', pose.id)
+                onPreviewRobotPose(pose.id)
+              }}
+            />
+            <ItemAction
+              label={`Delete robot pose ${pose.name}`}
+              symbol="×"
+              onClick={() => onDeleteRobotPose(pose.id)}
+            />
+          </div>
         ))}
       </LibrarySection>
       <LibrarySection
@@ -67,16 +97,41 @@ export function BlockLibrary({
         onAction={onCreateSequence}
       >
         {sequences.map((sequence) => (
-          <BlockButton
-            key={sequence.id}
-            name={sequence.name}
-            meta={`${sequence.steps.length} ${sequence.steps.length === 1 ? 'step' : 'steps'}`}
-            selected={selectedId === sequence.id}
-            onClick={() => onSelect('sequence', sequence.id)}
-          />
+          <div className="library-block-row" key={sequence.id}>
+            <BlockButton
+              name={sequence.name}
+              meta={`${sequence.steps.length} ${sequence.steps.length === 1 ? 'step' : 'steps'}`}
+              selected={selectedId === sequence.id}
+              onClick={() => onSelect('sequence', sequence.id)}
+            />
+            <ItemAction
+              label={`Play sequence ${sequence.name}`}
+              symbol="▶"
+              disabled={previewBusy}
+              onClick={() => onPreviewSequence(sequence.id)}
+            />
+          </div>
         ))}
       </LibrarySection>
     </aside>
+  )
+}
+
+function ItemAction({
+  label,
+  symbol,
+  onClick,
+  disabled = false,
+}: {
+  label: string
+  symbol: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button className="library-item-action" type="button" aria-label={label} onClick={onClick} disabled={disabled}>
+      {symbol}
+    </button>
   )
 }
 
@@ -86,23 +141,40 @@ function LibrarySection({
   actionLabel,
   onAction,
   children,
+  collapsible = false,
 }: {
   title: string
   count: number
   actionLabel: string
   onAction: () => void
   children: React.ReactNode
+  collapsible?: boolean
 }) {
+  const [expanded, setExpanded] = useState(true)
   return (
-    <section className="library-section">
+    <section className={`library-section${expanded ? '' : ' is-collapsed'}`}>
       <div className="library-section-title">
-        <h3>{title}</h3>
-        <span>{count}</span>
+        <div><h3>{title}</h3><span>{count}</span></div>
+        {collapsible && (
+          <button
+            type="button"
+            className="library-collapse-button"
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${title}`}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span aria-hidden="true">⌄</span>
+          </button>
+        )}
       </div>
-      <div className="library-blocks">{children}</div>
-      <button className="studio-text-button" type="button" onClick={onAction}>
-        + {actionLabel}
-      </button>
+      {expanded && (
+        <>
+          <div className="library-blocks">{children}</div>
+          <button className="studio-text-button" type="button" onClick={onAction}>
+            + {actionLabel}
+          </button>
+        </>
+      )}
     </section>
   )
 }
@@ -112,11 +184,13 @@ function BlockButton({
   meta,
   selected,
   onClick,
+  disabled = false,
 }: {
   name: string
   meta: string
   selected: boolean
   onClick: () => void
+  disabled?: boolean
 }) {
   return (
     <button
@@ -125,6 +199,7 @@ function BlockButton({
       onClick={onClick}
       aria-pressed={selected}
       aria-label={`${name}, ${meta}`}
+      disabled={disabled}
     >
       <span className="library-block-mark" aria-hidden="true" />
       <span>

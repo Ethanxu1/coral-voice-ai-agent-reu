@@ -16,6 +16,8 @@ const BONES: readonly [number, number, string][] = [
 ]
 
 const JOINTS = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28] as const
+const UPPER_BODY_BONES = BONES.slice(0, 5)
+const UPPER_BODY_JOINTS = [0, 11, 12, 13, 14, 15, 16] as const
 
 function valid(landmark: Landmark | undefined): landmark is Landmark {
   return Boolean(
@@ -35,9 +37,45 @@ export function FullBodySkeleton({
   className?: string
   label?: string
 }) {
+  return <PoseSkeleton landmarks={landmarks} bones={BONES} joints={JOINTS} className={className} label={label} />
+}
+
+export function UpperBodySkeleton({
+  landmarks,
+  className,
+  label = 'Upper-body pose skeleton',
+}: {
+  landmarks: Landmark[]
+  className?: string
+  label?: string
+}) {
+  return (
+    <PoseSkeleton
+      landmarks={landmarks}
+      bones={UPPER_BODY_BONES}
+      joints={UPPER_BODY_JOINTS}
+      className={className}
+      label={label}
+    />
+  )
+}
+
+function PoseSkeleton({
+  landmarks,
+  bones,
+  joints,
+  className,
+  label,
+}: {
+  landmarks: Landmark[]
+  bones: readonly [number, number, string][]
+  joints: readonly number[]
+  className?: string
+  label: string
+}) {
   return (
     <svg className={className} viewBox="0 0 100 100" role="img" aria-label={label}>
-      {BONES.map(([startIndex, endIndex, name]) => {
+      {bones.map(([startIndex, endIndex, name]) => {
         const start = landmarks[startIndex]
         const end = landmarks[endIndex]
         if (!valid(start) || !valid(end)) return null
@@ -55,7 +93,7 @@ export function FullBodySkeleton({
           />
         )
       })}
-      {JOINTS.map((index) => {
+      {joints.map((index) => {
         const joint = landmarks[index]
         if (!valid(joint)) return null
         return (

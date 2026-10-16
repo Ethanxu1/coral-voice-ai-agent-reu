@@ -58,6 +58,8 @@ _HOLD_CENTROID_MATCH_MAX = 0.15
 # disappears (hand lowered or subject left frame). Buffers 1-2 frame
 # pose-detection flickers without killing hold progress.
 _HOLD_UNRAISE_GRACE = 0.2
+_PASSIVE_TRACK_TTL = 0.75
+_PASSIVE_TRACK_MATCH_MAX = 0.20
 
 # Defaults for the live-tunable thresholds. These are just seed values; the
 # runtime uses whatever's on the SubjectSelector instance so the UI can update
@@ -254,6 +256,12 @@ class _HoldState:
 
 
 @dataclass
+class _PassiveTrack:
+    centroid: tuple[float, float]
+    last_seen_at: float
+
+
+@dataclass
 class SubjectMetrics:
     """Per-subject scoring breakdown for the tuning UI."""
     face_sim: Optional[float] = None
@@ -320,6 +328,8 @@ class SubjectSelector:
         self._holds: dict[str, _HoldState] = {}
         self._lost_frames = 0
         self._hold_counter = 0
+        self._passive_tracks: dict[str, _PassiveTrack] = {}
+        self._passive_counter = 0
         # Live-tunable thresholds — mirror the module defaults but can be
         # rewritten mid-session via update_tuning() from the UI.
         self.face_match_threshold = _DEFAULT_FACE_MATCH_THRESHOLD
@@ -366,6 +376,12 @@ class SubjectSelector:
             self._state = "selecting"
             self._clear_anchor()
 
+    def stop(self) -> None:
+        """Clear selection state while keeping passive detection available."""
+        with self._lock:
+            self._state = "idle"
+            self._clear_anchor()
+
     def _clear_anchor(self) -> None:
         self._anchor_legacy = None
         self._anchor_face = None
@@ -402,6 +418,7 @@ class SubjectSelector:
         raw_subjects = raw_subjects[: self._max_subjects]
 
         with self._lock:
+            passive_mapping = self._associate_passive_subjects(raw_subjects, now)
             if self._state == "selecting":
                 self._update_holds(raw_subjects, now)
                 for hold_id, hold in list(self._holds.items()):
@@ -446,7 +463,7 @@ class SubjectSelector:
                 if hold:
                     progress = min(1.0, (now - hold.started_at) / _HOLD_SECONDS)
             subjects_info.append(SubjectInfo(
-                id=hold_id or f"sub-{idx}",
+                id=hold_id or passive_mapping[idx],
                 body_landmarks=sub.body_landmarks,
                 face_landmarks=sub.face_landmarks,
                 head_pose=sub.head_pose,
@@ -476,6 +493,46 @@ class SubjectSelector:
             primary_head_pose=primary_head,
             subjects=subjects_info,
         )
+
+    def _associate_passive_subjects(
+        self, subjects: list[_RawSubject], now: float
+    ) -> dict[int, str]:
+        """Assign frame-order-independent IDs using nearest-centroid tracks."""
+        self._passive_tracks = {
+            track_id: track
+            for track_id, track in self._passive_tracks.items()
+            if now - track.last_seen_at <= _PASSIVE_TRACK_TTL
+        }
+        candidates = sorted(
+            (
+                math.hypot(
+                    subject.centroid[0] - track.centroid[0],
+                    subject.centroid[1] - track.centroid[1],
+                ),
+                subject_index,
+                track_id,
+            )
+            for subject_index, subject in enumerate(subjects)
+            for track_id, track in self._passive_tracks.items()
+        )
+        mapping: dict[int, str] = {}
+        used_tracks: set[str] = set()
+        for distance, subject_index, track_id in candidates:
+            if distance > _PASSIVE_TRACK_MATCH_MAX:
+                break
+            if subject_index in mapping or track_id in used_tracks:
+                continue
+            mapping[subject_index] = track_id
+            used_tracks.add(track_id)
+
+        for subject_index, subject in enumerate(subjects):
+            track_id = mapping.get(subject_index)
+            if track_id is None:
+                self._passive_counter += 1
+                track_id = f"person-{self._passive_counter}"
+                mapping[subject_index] = track_id
+            self._passive_tracks[track_id] = _PassiveTrack(subject.centroid, now)
+        return mapping
 
     def _build_raw_subjects(
         self,

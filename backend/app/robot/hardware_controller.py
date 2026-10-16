@@ -9,6 +9,8 @@ Environment variables:
     ROBOT_AGENT_PORT  Robot agent HTTP port (default: 9000)
 """
 
+import math
+
 import httpx
 from loguru import logger
 
@@ -127,4 +129,28 @@ class AiNexHardwareController(RobotController):
             if joint_name is None:
                 continue
             states[joint_name] = hardware_units_to_rad(hw_units, joint_name)
+        return states
+
+    def get_joint_states_strict(
+        self, required_joints: set[str] | None = None
+    ) -> dict[str, float]:
+        """Read live positions without the legacy stand-pose fallback."""
+        response = self._client.get(f"{self._base}/positions", timeout=2.0)
+        response.raise_for_status()
+        positions = response.json().get("positions")
+        if not isinstance(positions, dict) or not positions:
+            raise RuntimeError("robot returned no joint positions")
+        states: dict[str, float] = {}
+        for sid_value, hardware_units in positions.items():
+            sid = int(sid_value)
+            joint_name = JOINT_NAME_MAP.get(sid)
+            if joint_name is None:
+                continue
+            value = hardware_units_to_rad(hardware_units, joint_name)
+            if not math.isfinite(value):
+                raise RuntimeError(f"robot returned invalid position for {joint_name}")
+            states[joint_name] = value
+        missing = (required_joints or set()) - states.keys()
+        if not states or missing:
+            raise RuntimeError(f"robot joint positions incomplete: {sorted(missing)}")
         return states

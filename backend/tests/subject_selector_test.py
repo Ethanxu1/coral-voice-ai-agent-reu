@@ -83,6 +83,37 @@ def test_face_embedding() -> None:
     print("test_face_embedding OK")
 
 
+def test_passive_subject_ids_survive_depth_order_changes() -> None:
+    selector = SubjectSelector()
+    left = _standing_pose()
+    right = _standing_pose()
+    for index in (0, 11, 12, 13, 14, 15, 16, 23, 24):
+        left[index] = {**left[index], "x": left[index]["x"] - 0.2, "zw": 0.1}
+        right[index] = {**right[index], "x": right[index]["x"] + 0.2, "zw": 0.2}
+    first = selector.process_frame([
+        {"body_landmarks": left, "face_landmarks": [], "head_pose": None},
+        {"body_landmarks": right, "face_landmarks": [], "head_pose": None},
+    ], now=1.0)
+    first_ids = {
+        round(subject.body_landmarks[11]["x"], 2): subject.id
+        for subject in first.subjects
+    }
+
+    for index in (0, 11, 12, 13, 14, 15, 16, 23, 24):
+        left[index]["zw"] = 0.3
+        right[index]["zw"] = 0.05
+    second = selector.process_frame([
+        {"body_landmarks": left, "face_landmarks": [], "head_pose": None},
+        {"body_landmarks": right, "face_landmarks": [], "head_pose": None},
+    ], now=1.1)
+    second_ids = {
+        round(subject.body_landmarks[11]["x"], 2): subject.id
+        for subject in second.subjects
+    }
+
+    assert second_ids == first_ids
+
+
 def _named_face_lms() -> list[dict]:
     """Six named face landmarks — the subset the multi-person pipeline emits."""
     return [

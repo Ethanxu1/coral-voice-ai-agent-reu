@@ -1,5 +1,7 @@
 """Pydantic request models for the Coral API."""
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -19,6 +21,13 @@ class ServoMove(BaseModel):
 
 class MoveRequest(BaseModel):
     moves: list[ServoMove]
+    # Studio live pose capture must never reach physical hardware.
+    sim_only: Literal[True] | None = None
+    # Smooth every mirrored joint during Studio capture to reduce tipping impulses.
+    gentle: bool = False
+    # Simulator-only direct mirroring: pin the floating base and preserve only
+    # mechanical joint constraints, bypassing predictive collision/fall checks.
+    stabilized_preview: bool = False
 
 
 class SetPoseRequest(BaseModel):

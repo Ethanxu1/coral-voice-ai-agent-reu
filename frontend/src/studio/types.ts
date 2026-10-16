@@ -79,8 +79,22 @@ export interface ProjectPackage {
 
 export type OutputMode = 'simulator' | 'live_robot'
 
+export interface MirrorSafety {
+  fall_blocked: boolean
+  collision_clamped: boolean
+  rate_limited?: boolean
+  safe_fraction: number
+  bad_pairs: string[]
+}
+
+export interface MirrorPoseResult {
+  status: 'done' | 'blocked'
+  targets: Record<string, number>
+  safety: MirrorSafety
+}
+
 export type StudioEvent =
-  | { type: 'recognition'; subjectId: string; label: string | null; confidence: number }
+  | { type: 'recognition'; subjectId: string; label: string | null; confidence: number; reason?: string }
   | { type: 'hold_progress'; subjectId: string; label?: string; progress: number }
   | { type: 'execution_started'; sequenceId: string }
   | { type: 'execution_completed'; sequenceId: string; message?: string }
@@ -90,7 +104,7 @@ export type StudioEvent =
 export interface StudioSocketState {
   connected: boolean
   latestEvent: StudioEvent | null
-  recognition: Record<string, { label: string | null; confidence: number }>
+  recognition: Record<string, { label: string | null; confidence: number; reason?: string }>
   holds: Record<string, number>
   executingSequenceId: string | null
   statusMessage: string | null

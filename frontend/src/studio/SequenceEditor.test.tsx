@@ -25,4 +25,26 @@ describe('SequenceEditor', () => {
       expect.objectContaining({ poseName: 'Stand', holdMs: 700 }),
     ])
   })
+
+  it('rounds and clamps edited timing values to the API range', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<SequenceEditor steps={steps.slice(0, 1)} onChange={onChange} />)
+
+    const hold = screen.getByRole('spinbutton', { name: /Hold/i })
+    await user.clear(hold)
+    await user.type(hold, '70000.4')
+    await user.tab()
+
+    expect(onChange.mock.calls[onChange.mock.calls.length - 1][0][0].holdMs).toBe(60000)
+    expect(hold).toHaveValue(60000)
+
+    const transition = screen.getByRole('spinbutton', { name: /Transition/i })
+    await user.clear(transition)
+    await user.type(transition, '725.7')
+    await user.tab()
+
+    expect(onChange.mock.calls[onChange.mock.calls.length - 1][0][0].transitionMs).toBe(726)
+    expect(transition).toHaveValue(726)
+  })
 })

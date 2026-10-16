@@ -73,6 +73,8 @@ class AiNexSimulator:
         self._lock = threading.Lock()
 
         self._apply_stand_keyframe()
+        self._stabilized_preview_until = 0.0
+        self._stabilized_preview_base_qpos = self.data.qpos[:7].copy()
 
         self._actuator_ids: dict[str, int] = {}
         for i in range(self.model.nu):
@@ -85,6 +87,11 @@ class AiNexSimulator:
             name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, i)
             if name:
                 self._joint_ids[name] = i
+        self._head_body_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            "head_tilt_link",
+        )
 
         # Precompute the mesh geoms we stream to the browser viewer (/ws/sim →
         # RobotViewer.tsx). Each visual link is a single mesh geom, so we render
@@ -153,29 +160,34 @@ class AiNexSimulator:
         return positions
 
     def _apply_stand_keyframe(self, lift: float = 0.0) -> None:
-        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
-        if key_id >= 0:
-            # Lock so a runtime reset (reset_pose command) can't rewrite qpos/ctrl
-            # while the physics thread is mid-step. Uncontended during __init__.
-            with self._lock:
-                mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
-                if lift:
-                    # Raise the floating base (qpos[0:3] = free-joint xyz; the
-                    # keyframe already sets an upright quat in qpos[3:7]) above its
-                    # settled height and zero velocity, so physics drops it into a
-                    # stable stand. Recovers from a fallen pose, which animating
-                    # joints alone cannot.
-                    self.data.qpos[2] += lift
-                    self.data.qvel[:] = 0.0
-                # Sync ctrl targets to the keyframe joint positions so PD
-                # controllers hold the pose rather than pulling toward zero.
-                for i in range(self.model.nu):
-                    joint_id = self.model.actuator_trnid[i, 0]
-                    qpos_addr = self.model.jnt_qposadr[joint_id]
-                    self.data.ctrl[i] = self.data.qpos[qpos_addr]
+        with self._lock:
+            applied = self._apply_stand_keyframe_locked(lift)
+        if applied:
             logger.info(f"Applied 'stand' keyframe (lift={lift:.3f})")
         else:
             logger.warning("'stand' keyframe not found, using default pose")
+
+    def _apply_stand_keyframe_locked(self, lift: float = 0.0) -> bool:
+        """Apply the stand keyframe while the caller holds ``self._lock``."""
+        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
+        if key_id >= 0:
+            mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
+            if lift:
+                # Raise the floating base (qpos[0:3] = free-joint xyz; the
+                # keyframe already sets an upright quat in qpos[3:7]) above its
+                # settled height and zero velocity, so physics drops it into a
+                # stable stand. Recovers from a fallen pose, which animating
+                # joints alone cannot.
+                self.data.qpos[2] += lift
+                self.data.qvel[:] = 0.0
+            # Sync ctrl targets to the keyframe joint positions so PD
+            # controllers hold the pose rather than pulling toward zero.
+            for i in range(self.model.nu):
+                joint_id = self.model.actuator_trnid[i, 0]
+                qpos_addr = self.model.jnt_qposadr[joint_id]
+                self.data.ctrl[i] = self.data.qpos[qpos_addr]
+            return True
+        return False
 
     def get_joint_position(self, joint_name: str) -> float:
         full_name = self.JOINT_NAMES.get(joint_name, joint_name)
@@ -412,8 +424,41 @@ class AiNexSimulator:
         """Re-stand the robot: place it upright slightly above the floor in the
         stand pose and let physics drop it into a settled stand. Recovers from a
         fallen state, which animating the joints alone cannot."""
-        self._apply_stand_keyframe(lift=self.DROP_HEIGHT)
+        with self._lock:
+            self._stabilized_preview_until = 0.0
+            applied = self._apply_stand_keyframe_locked(lift=self.DROP_HEIGHT)
+        if applied:
+            logger.info(f"Applied 'stand' keyframe (lift={self.DROP_HEIGHT:.3f})")
+        else:
+            logger.warning("'stand' keyframe not found, using default pose")
         logger.info("Reset: dropped into standing pose")
+
+    def enable_stabilized_preview(self, ttl_seconds: float = 1.0) -> None:
+        """Temporarily pin the floating base while allowing all joints to move.
+
+        Live Studio frames renew the short lease. If capture closes or stalls,
+        the lease expires and the simulator automatically returns to normal
+        free-body physics without a separate cleanup request.
+        """
+        if ttl_seconds <= 0:
+            raise ValueError("stabilized preview TTL must be positive")
+        now = time.monotonic()
+        with self._lock:
+            if now >= self._stabilized_preview_until:
+                self._stabilized_preview_base_qpos = self.data.qpos[:7].copy()
+            self._stabilized_preview_until = now + ttl_seconds
+
+    def is_stabilized_preview_active(self) -> bool:
+        with self._lock:
+            return time.monotonic() < self._stabilized_preview_until
+
+    def _pin_stabilized_preview_base_locked(self) -> bool:
+        """Pin only the free joint; caller must hold ``self._lock``."""
+        if time.monotonic() >= self._stabilized_preview_until:
+            return False
+        self.data.qpos[:7] = self._stabilized_preview_base_qpos
+        self.data.qvel[:6] = 0.0
+        return True
 
     def get_all_joint_states(self) -> dict[str, float]:
         states = {}
@@ -424,6 +469,15 @@ class AiNexSimulator:
                     states[short_name] = float(self.data.ctrl[actuator_id])
         return states
 
+    def get_dynamics_state(self) -> dict[str, list[float]]:
+        """Snapshot physical state and active targets for shadow safety checks."""
+        with self._lock:
+            return {
+                "qpos": self.data.qpos.copy().tolist(),
+                "qvel": self.data.qvel.copy().tolist(),
+                "ctrl": self.data.ctrl.copy().tolist(),
+            }
+
     def get_joint_limits(self) -> dict[str, tuple[float, float]]:
         limits = {}
         for short_name, full_name in self.JOINT_NAMES.items():
@@ -432,6 +486,14 @@ class AiNexSimulator:
                 ctrlrange = self.model.actuator_ctrlrange[actuator_id]
                 limits[short_name] = (float(ctrlrange[0]), float(ctrlrange[1]))
         return limits
+
+    def get_head_height(self) -> float:
+        """Return the live head height used to detect an actual simulator fall."""
+        if self._head_body_id < 0:
+            raise RuntimeError("head_tilt_link body is missing from the simulator model")
+        with self._lock:
+            mujoco.mj_forward(self.model, self.data)
+            return float(self.data.xpos[self._head_body_id][2])
 
     # === BROWSER VIEWER STREAMING ===
     def get_render_geom_info(self) -> list[dict]:
@@ -570,8 +632,15 @@ class AiNexSimulator:
         try:
             while self._running:
                 with self._lock:
+                    preview_pinned = False
                     for _ in range(steps_per_frame):
                         mujoco.mj_step(self.model, self.data)
+                        preview_pinned = (
+                            self._pin_stabilized_preview_base_locked()
+                            or preview_pinned
+                        )
+                    if preview_pinned:
+                        mujoco.mj_forward(self.model, self.data)
                     if viewer is not None:
                         if viewer.is_running():
                             viewer.sync()

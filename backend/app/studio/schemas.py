@@ -134,6 +134,11 @@ class CreateSequenceRequest(StudioModel):
     steps: list[CreateSequenceStepRequest]
 
 
+class UpdateSequenceRequest(StudioModel):
+    name: str = Field(min_length=1, max_length=120)
+    steps: list[CreateSequenceStepRequest]
+
+
 class CreateRuleRequest(StudioModel):
     project_id: str
     human_pose_id: str
@@ -143,5 +148,14 @@ class CreateRuleRequest(StudioModel):
     enabled: bool = True
 
 
+class ReorderInteractionsRequest(StudioModel):
+    project_id: str
+    rule_ids: list[str]
+
+
 class OutputModeRequest(StudioModel):
     mode: Literal["simulator", "live_robot"]
+
+
+class TriggerModeRequest(StudioModel):
+    enabled: bool

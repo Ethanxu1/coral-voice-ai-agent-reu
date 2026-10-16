@@ -96,7 +96,8 @@ def test_any_person_can_trigger_one_safe_simulator_sequence(tmp_path: Path) -> N
         player,
         trigger_engine=TriggerEngine(hold_seconds=0.7, cooldown_seconds=2.0),
     )
-    runtime.set_output_mode(OutputMode.SIMULATOR)
+    runtime.set_trigger_enabled(True)
+    _run_immediate(runtime.set_output_mode(OutputMode.SIMULATOR))
     events = runtime.subscribe()
     frame = {
         "subjects": [

@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 FULL_BODY_JOINTS = (0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28)
+UPPER_BODY_JOINTS = (0, 11, 12, 13, 14, 15, 16)
 JOINT_NAMES = {
     0: "nose",
     11: "left_shoulder",
@@ -36,6 +37,7 @@ SKELETON_EDGES = (
     (24, 26),
     (26, 28),
 )
+UPPER_BODY_EDGES = SKELETON_EDGES[:5]
 ANGLE_TRIPLETS = {
     "left_elbow_angle": (11, 13, 15),
     "right_elbow_angle": (12, 14, 16),
@@ -85,14 +87,13 @@ def extract_pose_features(
     landmarks: Sequence[Mapping[str, float]],
 ) -> PoseFeatures:
     checked = _checked_landmarks(landmarks)
-    hip_mid = _midpoint(checked[23], checked[24])
     shoulder_mid = _midpoint(checked[11], checked[12])
-    scale = _distance(shoulder_mid, hip_mid)
+    scale = _distance(checked[11], checked[12])
     if scale <= 1e-6:
-        raise InvalidPose("Torso scale is too small")
+        raise InvalidPose("Shoulder width is too small")
 
     positions = {
-        index: tuple((checked[index][axis] - hip_mid[axis]) / scale for axis in range(3))
+        index: tuple((checked[index][axis] - shoulder_mid[axis]) / scale for axis in range(3))
         for index in FULL_BODY_JOINTS
     }
     names: list[str] = []
@@ -101,19 +102,28 @@ def extract_pose_features(
 
     for index in FULL_BODY_JOINTS:
         visibility = checked[index][3]
+        feature_weight = visibility if index in UPPER_BODY_JOINTS else 0.0
         for axis, value in zip(("x", "y", "z"), positions[index], strict=True):
             names.append(f"{JOINT_NAMES[index]}_{axis}")
             values.append(value)
-            weights.append(visibility)
+            weights.append(feature_weight)
 
     for name, (start, middle, end) in ANGLE_TRIPLETS.items():
         names.append(name)
         values.append(_angle(positions[start], positions[middle], positions[end]))
-        weights.append(min(checked[start][3], checked[middle][3], checked[end][3]))
+        weights.append(
+            min(checked[start][3], checked[middle][3], checked[end][3])
+            if {start, middle, end}.issubset(UPPER_BODY_JOINTS)
+            else 0.0
+        )
 
     for name, (start, end) in LIMBS.items():
         direction = _unit_direction(positions[start], positions[end])
-        visibility = min(checked[start][3], checked[end][3])
+        visibility = (
+            min(checked[start][3], checked[end][3])
+            if {start, end}.issubset(UPPER_BODY_JOINTS)
+            else 0.0
+        )
         for axis, value in zip(("x", "y", "z"), direction, strict=True):
             names.append(f"{name}_{axis}")
             values.append(value)
@@ -131,11 +141,11 @@ def validate_training_sample(
     except InvalidPose as exc:
         return SampleQuality(False, str(exc), 0.0, 0.0)
 
-    visibilities = [checked[index][3] for index in FULL_BODY_JOINTS]
+    visibilities = [checked[index][3] for index in UPPER_BODY_JOINTS]
     minimum = min(visibilities)
     mean = sum(visibilities) / len(visibilities)
     if minimum < visibility_threshold:
-        return SampleQuality(False, "Full body not visible", minimum, mean)
+        return SampleQuality(False, "Upper body not visible", minimum, mean)
     return SampleQuality(True, "Sample ready", minimum, mean)
 
 
@@ -143,8 +153,8 @@ def render_skeleton_svg(
     landmarks: Sequence[Mapping[str, float]], width: int = 180, height: int = 220
 ) -> str:
     checked = _checked_landmarks(landmarks)
-    xs = [checked[index][0] for index in FULL_BODY_JOINTS]
-    ys = [checked[index][1] for index in FULL_BODY_JOINTS]
+    xs = [checked[index][0] for index in UPPER_BODY_JOINTS]
+    ys = [checked[index][1] for index in UPPER_BODY_JOINTS]
     x_min, x_max = min(xs), max(xs)
     y_min, y_max = min(ys), max(ys)
     x_span = max(x_max - x_min, 1e-6)
@@ -157,7 +167,7 @@ def render_skeleton_svg(
         return x, y
 
     lines = []
-    for start, end in SKELETON_EDGES:
+    for start, end in UPPER_BODY_EDGES:
         x1, y1 = point(start)
         x2, y2 = point(end)
         lines.append(
@@ -168,7 +178,7 @@ def render_skeleton_svg(
     circles = [
         f'<circle cx="{point(index)[0]:.2f}" cy="{point(index)[1]:.2f}" '
         'r="4" fill="currentColor" />'
-        for index in FULL_BODY_JOINTS
+        for index in UPPER_BODY_JOINTS
     ]
     content = "".join(lines + circles)
     return (
