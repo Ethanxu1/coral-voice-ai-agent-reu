@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from app import config
+from app.robot.angle_utils import joints_to_servo_commands
 
 from . import geometry, leg_modes
 from .frame_broadcaster import FrameBroadcaster
@@ -24,7 +25,6 @@ from .pose_to_robot import (
     compute_joint_targets,
     hips_detected,
     knees_confidently_visible,
-    targets_to_servo_commands,
 )
 
 logger = logging.getLogger("vision")
@@ -259,7 +259,7 @@ async def map_features(leg_mode: str = "buckets"):
     leg_targets_final = {k: round(v, 4) for k, v in targets.items() if k in leg_modes.LEG_JOINTS}
     logger.info("map-features: final leg targets = %s", leg_targets_final)
 
-    commands = targets_to_servo_commands(targets, _FOLLOW_DURATION_MS)
+    commands = joints_to_servo_commands(targets, _FOLLOW_DURATION_MS)
     return {
         "pose_detected": True,
         "commands": [

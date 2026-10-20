@@ -27,9 +27,8 @@ from __future__ import annotations
 import os
 
 import mujoco
-from loguru import logger
-
 from app.config import AINEX_MODEL_PATH
+from loguru import logger
 
 _HEAD_BODY_NAME = "head_tilt_link"
 

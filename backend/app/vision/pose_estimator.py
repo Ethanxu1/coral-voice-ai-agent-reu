@@ -17,7 +17,6 @@ from mediapipe.tasks.python import vision as mp_vision
 from . import geometry
 from .appearance_embedder import AppearanceEmbedder
 from .face_embedder import FaceEmbedder
-
 from .subject_selector import SubjectSelector
 
 # Model asset paths (downloaded on first run)

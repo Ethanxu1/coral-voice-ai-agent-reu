@@ -6,17 +6,16 @@ import asyncio
 import math
 from typing import Any, Awaitable
 
-from loguru import logger
-
-from app.robot.angle_utils import rad_to_servo_units, servo_units_to_rad, speed_to_duration_ms
+from app.robot.angle_utils import (
+    joints_to_servo_commands,
+    speed_to_duration_ms,
+)
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.interface import ServoCommand
-from app.robot.servo_config import SERVO_ID_MAP
-from app.robot.sim_controller import SimController
 from app.simulator import AiNexSimulator
-from app.validation import ValidationResult, validate_waypoint
 from app.state import state
-
+from app.validation import ValidationResult
+from loguru import logger
 
 # Hardware travel time for a reset/stand. The sim teleports into the stand
 # keyframe, but a physical robot has to be animated there, and a full-body move
@@ -231,19 +230,30 @@ async def _execute_on_hardware_if_connected(
     safe_joints, _safety = collision_checked_targets(
         state.simulator, joints, "pose save/demonstrate"
     )
-    commands = [
-        ServoCommand(
-            servo_id=SERVO_ID_MAP[joint],
-            position=rad_to_servo_units(rad),
-            duration_ms=duration_ms,
-        )
-        for joint, rad in safe_joints.items()
-        if joint in SERVO_ID_MAP
-    ]
+    commands = joints_to_servo_commands(safe_joints, duration_ms)
     try:
         await dispatch_servo_commands(commands, sim_only=None)
     except RobotServerUnavailable as e:
         logger.warning(f"Could not execute pose on hardware: {e}")
+
+
+async def reset_to_stand() -> None:
+    """Re-stand the robot.
+
+    The sim drops into its stand keyframe from slightly above the floor, which
+    also recovers a fallen robot (animating joints alone cannot). A physical
+    robot can't be teleported, so connected hardware is animated to the stand
+    pose over RESET_TO_STAND_MS instead.
+    """
+    sim = state.simulator
+    await asyncio.to_thread(sim.reset_pose)
+    if state.hardware_dispatcher is None:
+        return
+    commands = joints_to_servo_commands(sim.get_stand_joint_positions(), RESET_TO_STAND_MS)
+    try:
+        await dispatch_servo_commands(commands, sim_only=None)
+    except RobotServerUnavailable as e:
+        logger.warning(f"Reset: robot server unavailable: {e}")
 
 
 async def execute_waypoints(
@@ -299,20 +309,7 @@ async def execute_waypoints(
                 waypoint.joints = dict(current)
                 safety.update(fall_blocked=True, safe_fraction=0.0)
 
-        commands = []
-        for joint_name, rad in waypoint.joints.items():
-            servo_id = SERVO_ID_MAP.get(joint_name)
-            if servo_id is None:
-                logger.warning(f"No servo ID mapping for joint: {joint_name}")
-                continue
-            commands.append(
-                ServoCommand(
-                    servo_id=servo_id,
-                    position=rad_to_servo_units(rad),
-                    duration_ms=duration_ms,
-                )
-            )
-
+        commands = joints_to_servo_commands(waypoint.joints, duration_ms)
         await dispatch_servo_commands(commands, sim_only=sim_only)
 
         executed.append(

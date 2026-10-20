@@ -5,11 +5,10 @@ Used by pages that speak outside the /ws chat pipeline (Rock Paper Scissors).
 
 from __future__ import annotations
 
+from app.services.tts import generate_speech, tts_enabled
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-
-from app.services.tts import generate_speech, tts_enabled
 
 router = APIRouter()
 

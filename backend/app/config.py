@@ -33,6 +33,11 @@ ROBOT_AGENT_PORT = int(os.getenv("ROBOT_AGENT_PORT", "9000"))
 VISION_BASE = os.getenv("VISION_BASE", "http://localhost:8001")
 
 # ---------------------------------------------------------------------------
+# LLM (intent classification, motion planning, chat)
+# ---------------------------------------------------------------------------
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5.4-mini")
+
+# ---------------------------------------------------------------------------
 # Speech-to-text
 # ---------------------------------------------------------------------------
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")

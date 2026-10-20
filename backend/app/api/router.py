@@ -1,8 +1,7 @@
 """Aggregate API router for the Coral backend."""
 
-from fastapi import APIRouter
-
 from app.api.routes import health, intent, motion, speaker, state, websocket
+from fastapi import APIRouter
 
 router = APIRouter()
 router.include_router(health.router)

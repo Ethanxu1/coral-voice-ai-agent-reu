@@ -17,7 +17,6 @@ from app.schemas.motion_plan import MotionPlan
 from app.services.chat import HierarchicalMemory, process_chat_message
 from app.services.recording import ConversationRecorder
 from app.state import state
-from app.state_manager import StateManager
 
 
 class _FakeSimDispatcher:
@@ -138,7 +137,6 @@ def sim_setup(monkeypatch: pytest.MonkeyPatch):
 def chat_inputs():
     return {
         "memory": HierarchicalMemory(),
-        "state_manager": StateManager(),
         "recorder": ConversationRecorder(),
         "simulator_instance": _FakeSimulator(),
         "session_id": "test-session",

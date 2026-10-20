@@ -12,9 +12,8 @@ Uses mj_forward (kinematics + collision detection, no integration) so a
 """
 
 import mujoco
-from loguru import logger
-
 from app.config import AINEX_MODEL_PATH
+from loguru import logger
 
 # Geom pairs whose contact is expected/harmless and must never count as a
 # self-collision. The feet's outer pads (l_foot2/r_foot2) touch in normal

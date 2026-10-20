@@ -14,11 +14,9 @@ from loguru import logger
 
 from app.config import ROBOT_AGENT_PORT, ROBOT_IP
 
-from .hardware_angle_utils import sim_units_to_hardware_units, hardware_units_to_rad
+from .hardware_angle_utils import hardware_units_to_rad, sim_units_to_hardware_units
 from .interface import RobotController, ServoCommand, ServoFeedback
 from .servo_config import JOINT_NAME_MAP, STAND_PULSE
-
-
 
 
 class AiNexHardwareController(RobotController):

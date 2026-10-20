@@ -2,11 +2,9 @@
 
 import json
 from datetime import datetime
-from pathlib import Path
-
-from loguru import logger
 
 from app.config import RECORDINGS_DIR
+from loguru import logger
 
 # Setup recordings directory
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)

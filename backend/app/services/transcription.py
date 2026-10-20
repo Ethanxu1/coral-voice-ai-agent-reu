@@ -1,50 +1,14 @@
-"""Whisper transcription and prompt loading."""
+"""Whisper speech-to-text."""
 
 import re
 import tempfile
 from pathlib import Path
 
+from app.config import WHISPER_MODEL_SIZE
+from app.llm.prompts import load_prompt
 from loguru import logger
 
-from app.config import WHISPER_MODEL_SIZE
-
-
-_ROUTER_PROMPT_CACHE: str | None = None
-_CHAT_PROMPT_CACHE: str | None = None
-_WHISPER_PROMPT_CACHE: str | None = None
-
-
-PROMPTS_DIR = Path(__file__).resolve().parent.parent / "llm" / "prompts"
-
-
 _whisper_model = None
-
-
-def get_router_prompt() -> str:
-    global _ROUTER_PROMPT_CACHE
-    if _ROUTER_PROMPT_CACHE is None:
-        _ROUTER_PROMPT_CACHE = (
-            PROMPTS_DIR / "router.md"
-        ).read_text(encoding="utf-8")
-    return _ROUTER_PROMPT_CACHE
-
-
-def get_chat_prompt() -> str:
-    global _CHAT_PROMPT_CACHE
-    if _CHAT_PROMPT_CACHE is None:
-        _CHAT_PROMPT_CACHE = (
-            PROMPTS_DIR / "chat.md"
-        ).read_text(encoding="utf-8")
-    return _CHAT_PROMPT_CACHE
-
-
-def get_whisper_prompt() -> str:
-    global _WHISPER_PROMPT_CACHE
-    if _WHISPER_PROMPT_CACHE is None:
-        _WHISPER_PROMPT_CACHE = (
-            PROMPTS_DIR / "whisper.md"
-        ).read_text(encoding="utf-8")
-    return _WHISPER_PROMPT_CACHE
 
 
 def _get_whisper_model_size() -> str:
@@ -95,7 +59,7 @@ def transcribe_audio(audio_bytes: bytes) -> str:
             tmp_path,
             language="en",
             no_speech_threshold=0.6,
-            initial_prompt=get_whisper_prompt(),
+            initial_prompt=load_prompt("whisper"),
             vad_filter=True,
             condition_on_previous_text=False,
             compression_ratio_threshold=2.4,

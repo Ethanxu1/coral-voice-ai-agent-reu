@@ -58,15 +58,6 @@ def list_pose_names() -> list[str]:
         conn.close()
 
 
-def delete_pose(name: str) -> bool:
-    """Delete a saved pose. Returns True if it existed."""
-    with _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM saved_poses WHERE name = ? COLLATE NOCASE", (name,)
-        )
-        return cur.rowcount > 0
-
-
 def clear_all_poses() -> None:
     """Delete all saved poses. Called on server startup so poses don't persist across runs."""
     with _connect() as conn:

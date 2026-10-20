@@ -9,9 +9,6 @@ from __future__ import annotations
 import asyncio
 import base64
 
-from fastapi import WebSocket
-from loguru import logger
-
 from app.config import (
     OPENAI_API_KEY,
     TTS_FORMAT,
@@ -21,11 +18,12 @@ from app.config import (
     TTS_SPEED,
     TTS_VOICE,
 )
+from fastapi import WebSocket
+from loguru import logger
 
 # Import the base OpenAI client, not the Langfuse-wrapped one — TTS does
 # not need tracing and the wrapper may not expose audio.speech cleanly.
 from openai import OpenAI
-
 
 # Lazily initialized client so importing this module never blocks startup.
 _client: OpenAI | None = None

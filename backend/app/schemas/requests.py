@@ -3,14 +3,6 @@
 from pydantic import BaseModel
 
 
-class ChatMessage(BaseModel):
-    """Chat message structure."""
-
-    role: str  # "user" or "assistant"
-    content: str
-    commands: list[str] | None = None
-
-
 class ServoMove(BaseModel):
     servo_id: int
     position: int

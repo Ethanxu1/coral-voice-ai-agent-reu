@@ -3,16 +3,15 @@
 import asyncio
 from datetime import datetime
 
-from fastapi import APIRouter
-from langfuse import get_client, observe, propagate_attributes
-
+from app.config import LLM_MODEL
 from app.data.pose_db import list_pose_names
-from app.llm.config import LLM_MODEL
 from app.llm.intent_classifier import classify_intent
 from app.schemas.requests import IntentRequest
 from app.services.clean_logger import get_or_create_logger
 from app.services.motion import _get_robot_state, convert_state_to_degrees
 from app.validation import describe_joint_state
+from fastapi import APIRouter
+from langfuse import get_client, observe, propagate_attributes
 
 router = APIRouter()
 

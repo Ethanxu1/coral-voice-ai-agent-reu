@@ -11,10 +11,8 @@ internal debug output.
 from __future__ import annotations
 
 import json
-import sys
 import traceback
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional
 
 from app.config import LOGS_DIR
@@ -168,16 +166,6 @@ def get_or_create_logger(session_id: str) -> CleanLogger:
     if session_id not in _clean_loggers:
         _clean_loggers[session_id] = CleanLogger(session_id)
     return _clean_loggers[session_id]
-
-
-def get_clean_logger(session_id: Optional[str] = None) -> Optional[CleanLogger]:
-    """Return a clean logger by session id, or the most recently created one."""
-    if session_id is not None:
-        return _clean_loggers.get(session_id)
-    # Fallback: most recent logger (useful for background tasks with no session).
-    if _clean_loggers:
-        return next(reversed(_clean_loggers.values()))
-    return None
 
 
 def close_logger(session_id: str) -> None:

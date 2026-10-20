@@ -17,6 +17,7 @@ HW_DIRECTION is +1 when hardware and sim have the same increasing direction, -1 
 """
 
 import math
+
 from .robot_params import JOINT_SAFE_RANGES
 from .servo_config import STAND_PULSE, TICKS_PER_RAD
 

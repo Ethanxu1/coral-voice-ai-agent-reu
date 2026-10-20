@@ -19,12 +19,12 @@ from typing import Awaitable, Callable, Optional
 import httpx
 import websockets
 
+from app.robot.angle_utils import joints_to_servo_commands
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
 from app.vision.pose_to_robot import (
     JointAngleSmoother,
     compute_joint_targets,
-    targets_to_servo_commands,
 )
 
 logger = logging.getLogger("follow_controller")
@@ -202,7 +202,7 @@ class FollowController:
                             continue
                         targets = smoother.smooth(targets)
                         prev_targets = dict(targets)
-                        seed_cmds = targets_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
+                        seed_cmds = joints_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
                         logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
                         if clean_logger is not None:
                             clean_logger.follow_event("seeding initial pose", {"joints": len(seed_cmds)})
@@ -236,7 +236,7 @@ class FollowController:
                             if in_flight is not None and not in_flight.done():
                                 skip_count += 1
                             else:
-                                commands = targets_to_servo_commands(targets, live_duration_ms)
+                                commands = joints_to_servo_commands(targets, live_duration_ms)
                                 in_flight = asyncio.create_task(self._dispatch(commands, sim_only))
                                 in_flight.add_done_callback(_log_dispatch_error)
                                 dispatch_count += 1
@@ -339,7 +339,7 @@ class FollowController:
                 clean_logger.capture_stage("frozen")
 
             targets = compute_joint_targets(frozen_landmarks, frozen_head)
-            commands = targets_to_servo_commands(targets, _CAPTURE_DURATION_MS)
+            commands = joints_to_servo_commands(targets, _CAPTURE_DURATION_MS)
 
             # Unfreeze the video feed before dispatching so the camera shows the live
             # view while the robot transitions to the captured pose.

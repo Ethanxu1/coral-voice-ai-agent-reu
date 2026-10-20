@@ -3,16 +3,16 @@
 import asyncio
 import json
 import re
-from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from langfuse.openai import openai
-from loguru import logger
-
+from app.config import LLM_MODEL
 from app.data.pose_db import get_pose, list_pose_names, save_pose
-from app.llm.config import LLM_MODEL
-from app.robot.angle_utils import rad_to_servo_units, servo_units_to_rad
+from app.llm.prompts import load_prompt
+from app.robot.angle_utils import (
+    joints_to_servo_commands,
+    rad_to_servo_units,
+    servo_units_to_rad,
+)
 from app.robot.hardware_angle_utils import hardware_units_to_rad
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import JOINT_NAME_MAP, SERVO_ID_MAP
@@ -24,33 +24,25 @@ from app.schemas.requests import (
     SetPoseRequest,
 )
 from app.services.motion import (
-    RESET_TO_STAND_MS,
     RobotServerUnavailable,
     _execute_on_hardware_if_connected,
     _get_robot_state,
     collision_checked_targets,
     dispatch_servo_commands,
+    reset_to_stand,
 )
 from app.state import state
+from fastapi import APIRouter, HTTPException
+from langfuse.openai import openai
+from loguru import logger
 
 router = APIRouter()
 
-_NAME_PROMPT_PATH = Path(__file__).parent.parent.parent / "llm" / "prompts" / "name_extraction.md"
 _NAME_SANITIZE_RE = re.compile(r"[^\w\s\-]")
 
 
 def _sanitize_name(raw: str) -> str:
     return _NAME_SANITIZE_RE.sub("", raw).strip()
-
-
-def _load_name_extraction_prompt() -> str:
-    if _NAME_PROMPT_PATH.exists():
-        return _NAME_PROMPT_PATH.read_text(encoding="utf-8")
-    return (
-        "Extract just the intended name from the child's naming answer, "
-        "stripping filler like \"let's name it\". Respond with strict JSON: "
-        '{"name": "<extracted name>"}.'
-    )
 
 
 @router.post("/move")
@@ -162,25 +154,7 @@ async def reset_pose() -> dict[str, Any]:
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
-    await asyncio.to_thread(state.simulator.reset_pose)
-
-    if state.hardware_dispatcher is not None:
-        stand = state.simulator.get_stand_joint_positions()
-        commands = [
-            ServoCommand(
-                servo_id=sid,
-                position=rad_to_servo_units(rad),
-                duration_ms=RESET_TO_STAND_MS,
-            )
-            for joint, rad in stand.items()
-            if (sid := SERVO_ID_MAP.get(joint)) is not None
-        ]
-        if commands:
-            try:
-                await dispatch_servo_commands(commands, sim_only=None)
-            except RobotServerUnavailable as e:
-                logger.warning(f"/reset: robot server unavailable: {e}")
-
+    await reset_to_stand()
     return {"status": "done"}
 
 
@@ -214,15 +188,7 @@ async def play_pose_endpoint(req: PlayPoseRequest) -> dict[str, Any]:
         state.simulator, joints, f"/poses/play '{clean_name}'"
     )
     duration_ms = max(1, req.duration_ms)
-    commands = [
-        ServoCommand(
-            servo_id=SERVO_ID_MAP[joint],
-            position=rad_to_servo_units(rad),
-            duration_ms=duration_ms,
-        )
-        for joint, rad in joints.items()
-        if joint in SERVO_ID_MAP
-    ]
+    commands = joints_to_servo_commands(joints, duration_ms)
     await dispatch_servo_commands(commands, sim_only=req.sim_only)
     logger.info(f"Played saved pose '{clean_name}' ({len(commands)} joints)")
     return {"name": clean_name, "joints_played": len(commands), "status": "played"}
@@ -244,7 +210,7 @@ async def extract_name_endpoint(req: ExtractNameRequest) -> dict[str, str]:
         response = openai.chat.completions.create(
             model=LLM_MODEL,
             messages=[
-                {"role": "system", "content": _load_name_extraction_prompt()},
+                {"role": "system", "content": load_prompt("name_extraction")},
                 {"role": "user", "content": raw},
             ],
             response_format={
