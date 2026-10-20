@@ -2,9 +2,9 @@ from dataclasses import dataclass
 
 from app.collision.collision_checker import CollisionChecker
 from app.collision.stability_checker import StabilityChecker
-from app.follow_controller import FollowController
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.sim_controller import SimController
+from app.services.follow import FollowController
 from app.simulator import AiNexSimulator
 
 

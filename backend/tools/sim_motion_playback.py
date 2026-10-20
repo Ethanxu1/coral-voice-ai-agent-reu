@@ -9,15 +9,12 @@ converted to the wrong MuJoCo angle -- watch for those joints visibly ending up 
 the wrong place (e.g. arms flung far past where "stand" holds them).
 
 Usage:
-    python tests/sim_motion_playback.py            # cycle through all motions
-    python tests/sim_motion_playback.py stand dab   # only these motions
+    uv run python backend/tools/sim_motion_playback.py            # cycle through all motions
+    uv run python backend/tools/sim_motion_playback.py stand dab   # only these motions
 """
 
 import sys
 import time
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from app.robot.angle_utils import servo_units_to_rad
 from app.robot.interface import ServoCommand
@@ -70,7 +67,7 @@ def main() -> None:
                 ]
                 controller.send_commands(commands)
             time.sleep(HOLD_SECONDS)
-            print(f"  resetting to stand")
+            print("  resetting to stand")
             controller.reset_to_stand()
             time.sleep(HOLD_SECONDS)
     finally:

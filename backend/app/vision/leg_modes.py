@@ -19,8 +19,7 @@ Three modes, chosen per request:
 
 The legacy mode is authored in *hardware* servo pulses (the units the old node
 and motions.py use). This module converts those pulses back to sim radians with
-hardware_units_to_rad — exactly how server._play_sim_motion renders canned poses
-in the sim — so the values land at the right MuJoCo angles despite the joints
+hardware_units_to_rad so the values land at the right MuJoCo angles despite the joints
 whose hardware neutral isn't 500 (hip_pitch, ankles). The caller then runs the
 merged radian dict through targets_to_servo_commands like any other frame.
 """
@@ -72,7 +71,7 @@ def leg_pulses_to_targets(leg_pulses: Dict[str, int]) -> Dict[str, float]:
 
     Inverts each joint's hardware calibration (stand-pulse anchor + mirror-mount
     direction) so a pose authored in hardware units renders at the right sim
-    angle — the same conversion server._play_sim_motion uses for canned motions.
+    angle.
     """
     return {
         joint: hardware_units_to_rad(int(pulse), joint)

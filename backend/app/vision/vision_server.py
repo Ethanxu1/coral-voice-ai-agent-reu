@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 import os
 import threading
 import time
@@ -14,6 +13,7 @@ import uvicorn
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from loguru import logger
 
 from app import config
 from app.robot.angle_utils import joints_to_servo_commands
@@ -26,9 +26,6 @@ from .pose_to_robot import (
     hips_detected,
     knees_confidently_visible,
 )
-
-logger = logging.getLogger("vision")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 _estimator: Optional[PoseEstimator] = None
 _broadcaster: Optional[FrameBroadcaster] = None
@@ -92,7 +89,7 @@ async def lifespan(app: FastAPI):
     _vision_thread = threading.Thread(target=_vision_loop, daemon=True)
     _vision_thread.start()
     logger.info(
-        "Vision server ready on port 8001 (leg_tracking=%s, models loading in background)",
+        "Vision server ready on port 8001 (leg_tracking={}, models loading in background)",
         "enabled" if config.ENABLE_LEG_TRACKING else "disabled",
     )
     yield
@@ -138,7 +135,7 @@ async def video_feed():
 async def websocket_pose(websocket: WebSocket):
     await websocket.accept()
     client = websocket.client
-    logger.info("WebSocket client connected: %s", client)
+    logger.info("WebSocket client connected: {}", client)
     assert _broadcaster is not None
     q = _broadcaster.subscribe_pose()
     try:
@@ -151,9 +148,9 @@ async def websocket_pose(websocket: WebSocket):
                 # while the vision system is still warming up
                 await websocket.send_text(json.dumps({"type": "ping"}))
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected: %s", client)
+        logger.info("WebSocket client disconnected: {}", client)
     except Exception as exc:
-        logger.warning("WebSocket error for %s: %s", client, exc)
+        logger.warning("WebSocket error for {}: {}", client, exc)
     finally:
         _broadcaster.unsubscribe_pose(q)
 
@@ -199,7 +196,7 @@ async def map_features(leg_mode: str = "buckets"):
         return f"{body[idx]['visibility']:.3f}" if idx < len(body) else "n/a"
 
     logger.info(
-        "map-features knee visibility — left=%s right=%s",
+        "map-features knee visibility — left={} right={}",
         _knee_vis(geometry.LEFT_KNEE),
         _knee_vis(geometry.RIGHT_KNEE),
     )
@@ -239,7 +236,7 @@ async def map_features(leg_mode: str = "buckets"):
             # separately.
             knee_ankle, hip_yaw_l, hip_yaw_r = leg_modes.classify_buckets(body)
             logger.info(
-                "buckets: knee_ankle=%s hip_yaw_l=%s hip_yaw_r=%s",
+                "buckets: knee_ankle={} hip_yaw_l={} hip_yaw_r={}",
                 knee_ankle, hip_yaw_l, hip_yaw_r,
             )
             targets.update(leg_modes.combine_bucket_targets(knee_ankle, hip_yaw_l, hip_yaw_r))
@@ -257,7 +254,7 @@ async def map_features(leg_mode: str = "buckets"):
     # dispatch/rendering issue (right values here, wrong result in the sim) or
     # a mix-up with arm motion (which legitimately moves live every capture).
     leg_targets_final = {k: round(v, 4) for k, v in targets.items() if k in leg_modes.LEG_JOINTS}
-    logger.info("map-features: final leg targets = %s", leg_targets_final)
+    logger.info("map-features: final leg targets = {}", leg_targets_final)
 
     commands = joints_to_servo_commands(targets, _FOLLOW_DURATION_MS)
     return {
@@ -364,7 +361,7 @@ async def subject_selection_tuning_set(updates: dict = Body(...)):
     if _estimator is None:
         raise HTTPException(status_code=503, detail="vision estimator not initialized yet")
     values = _estimator.subject_selector.update_tuning(updates or {})
-    logger.info("subject-selection tuning updated: %s", {k: v for k, v in (updates or {}).items()})
+    logger.info("subject-selection tuning updated: {}", {k: v for k, v in (updates or {}).items()})
     return {"values": values}
 
 

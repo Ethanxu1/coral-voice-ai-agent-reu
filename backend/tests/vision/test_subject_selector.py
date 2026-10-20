@@ -1,28 +1,13 @@
-"""Manual harness / sanity checks for subject selection and re-ID.
-
-Run with:
-    . .venv/bin/activate && PYTHONPATH=src python tests/subject_selector_test.py
-"""
+"""Tests for subject selection and re-identification (SubjectSelector)."""
 
 import math
-import sys
-from pathlib import Path
+import time
+from typing import Optional
 
-# tests/vision shadows src/vision when this script is run directly, so ensure
-# src is on the path first.
-src_root = Path(__file__).resolve().parent.parent / "src"
-src_str = str(src_root)
-if src_str in sys.path:
-    sys.path.remove(src_str)
-sys.path.insert(0, src_str)
+import numpy as np
 
-import time  # noqa: E402
-from typing import Optional  # noqa: E402
-
-import numpy as np  # noqa: E402
-
-from app.vision.appearance_embedder import AppearanceEmbedding  # noqa: E402
-from app.vision.subject_selector import SubjectSelector, compute_face_embedding, hand_raised  # noqa: E402
+from app.vision.appearance_embedder import AppearanceEmbedding
+from app.vision.subject_selector import SubjectSelector, compute_face_embedding, hand_raised
 
 
 def _lm(x: float, y: float, visibility: float = 1.0) -> dict:
@@ -134,8 +119,10 @@ def _one_hot_hist(bin_idx: int, size: int = 512) -> np.ndarray:
 def test_multimodal_selection_and_reacquisition() -> None:
     """End-to-end: lock → out-of-view → return, using stub embedders + dummy frame."""
 
-    vec_a = np.zeros(512, dtype=np.float32); vec_a[0] = 1.0
-    vec_b = np.zeros(512, dtype=np.float32); vec_b[1] = 1.0
+    vec_a = np.zeros(512, dtype=np.float32)
+    vec_a[0] = 1.0
+    vec_b = np.zeros(512, dtype=np.float32)
+    vec_b[1] = 1.0
     face_stub = _StubFaceEmbedder({"A": vec_a, "B": vec_b}, det_score=0.9)
 
     app_a = AppearanceEmbedding(torso_hist=_one_hot_hist(10), legs_hist=_one_hot_hist(20))
@@ -243,10 +230,3 @@ def test_multi_raise_clears_holds() -> None:
     assert r.selected_subject_id is None
     print("test_multi_raise_clears_holds: no commit under simultaneous raise")
 
-
-if __name__ == "__main__":
-    test_hand_raised()
-    test_face_embedding()
-    test_selection_and_reacquisition()
-    test_multimodal_selection_and_reacquisition()
-    test_multi_raise_clears_holds()

@@ -36,18 +36,16 @@ server = "app.main:main"
 robot = "app.main:main_robot"
 sim-test = "app.main:main_sim_test"
 vision = "app.vision.vision_server:main"
-# collision-test / leg-bucket-test moved to backend/tests/ (dev harnesses, not packaged);
-# run directly: `python backend/tests/collision_test.py`, `python backend/tests/leg_bucket_test.py`.
+# Manual dev harnesses (not packaged) live in backend/tools/; run them with
+# `uv run python backend/tools/<name>.py`.
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# The backend lives under backend/app. Each subdirectory (robot, vision, llm,
-# simulator, collision) becomes a top-level package inside the wheel,
-# and the loose modules (main.py, validation.py, state_manager.py,
-# follow_controller.py) sit at the wheel root as `app.*`.
+# The backend lives under backend/app and is importable as the `app` package
+# (app.main, app.robot, app.vision, ...).
 # `only-include = ["backend/app"]` ships everything under backend/app;
 # `sources = ["backend"]` tells hatchling that backend/ is the parent of the
 # package directories, so `backend/app/` becomes the importable `app` package.
@@ -55,10 +53,10 @@ only-include = ["backend/app"]
 sources = ["backend"]
 
 [tool.pytest.ini_options]
-# backend/app on the path so tests import the app packages without an install;
-# only collect real tests (test_*.py) — the *_test.py files are manual harnesses.
-pythonpath = ["backend/app"]
-python_files = ["test_*.py"]
+# backend/ on the path so `import app` works without an install. Manual
+# hardware/sim harnesses live in backend/tools/, outside the test tree.
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
 
 [dependency-groups]
 dev = [

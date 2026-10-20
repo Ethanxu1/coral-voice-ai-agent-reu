@@ -16,19 +16,15 @@ Useful for sanity-checking the hardware conversion (see hardware_angle_utils.py)
 against a real captured pose without touching the robot.
 
 Usage:
-    python tests/hardware_command_preview.py
+    uv run python backend/tools/hardware_command_preview.py
 """
 
 from __future__ import annotations
 
-import sys
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from app.robot.servo_config import JOINT_NAME_MAP
 from app.vision.pose_estimator import FrameResult, PoseEstimator

@@ -11,6 +11,7 @@ from typing import Optional
 import cv2
 import mediapipe as mp
 import numpy as np
+from loguru import logger
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
@@ -93,9 +94,9 @@ def _download_model(url: str, dest: Path):
     if dest.exists():
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[vision] Downloading {dest.name}...")
+    logger.info(f"Downloading {dest.name}...")
     urllib.request.urlretrieve(url, dest)
-    print(f"[vision] Downloaded {dest.name}")
+    logger.info(f"Downloaded {dest.name}")
 
 
 @dataclass
@@ -439,17 +440,14 @@ class PoseEstimator:
         self.stability = StabilityCapture()
 
     def open(self):
-        import logging as _log
-        log = _log.getLogger("vision")
-
         pose_model = _MODELS_DIR / "pose_landmarker_lite.task"
         face_model = _MODELS_DIR / "face_landmarker.task"
-        log.info("Checking/downloading models...")
+        logger.info("Checking/downloading models...")
         _download_model(_POSE_MODEL_URL, pose_model)
         _download_model(_FACE_MODEL_URL, face_model)
-        log.info("Models ready")
+        logger.info("Models ready")
 
-        log.info("Loading pose landmarkers (single + multi)...")
+        logger.info("Loading pose landmarkers (single + multi)...")
         single_pose_opts = mp_vision.PoseLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(pose_model)),
             running_mode=mp_vision.RunningMode.IMAGE,
@@ -469,9 +467,9 @@ class PoseEstimator:
         self._pose_detector_single = mp_vision.PoseLandmarker.create_from_options(single_pose_opts)
         self._pose_detector_multi = mp_vision.PoseLandmarker.create_from_options(multi_pose_opts)
         self._pose_detector = self._pose_detector_single
-        log.info("Pose landmarkers loaded")
+        logger.info("Pose landmarkers loaded")
 
-        log.info("Loading face landmarkers (single + multi)...")
+        logger.info("Loading face landmarkers (single + multi)...")
         single_face_opts = mp_vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(face_model)),
             running_mode=mp_vision.RunningMode.IMAGE,
@@ -495,16 +493,16 @@ class PoseEstimator:
         self._face_detector_single = mp_vision.FaceLandmarker.create_from_options(single_face_opts)
         self._face_detector_multi = mp_vision.FaceLandmarker.create_from_options(multi_face_opts)
         self._face_detector = self._face_detector_single
-        log.info("Face landmarkers loaded")
+        logger.info("Face landmarkers loaded")
 
-        log.info("Opening camera %d...", self._camera_index)
+        logger.info("Opening camera {}...", self._camera_index)
         self._cap = cv2.VideoCapture(self._camera_index)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self._cap.set(cv2.CAP_PROP_FPS, self._target_fps)
         self._frame_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._frame_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        log.info("Camera ready at %dx%d", self._frame_width, self._frame_height)
+        logger.info("Camera ready at {}x{}", self._frame_width, self._frame_height)
         self._running = True
 
     def close(self):

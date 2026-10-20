@@ -29,7 +29,7 @@ HEAD_TURN_MAX_ANGLE = 119
 HEAD_TILT_MAX_ANGLE = 119
 
 # Stand-pose arm defaults — must match the `stand` keyframe (ainex.xml) and
-# HW_STAND_RAD. Calibrated to the physical robot via tools/author_stand.py.
+# HW_STAND_RAD (calibrated to the physical robot).
 STAND_L_SHO_ROLL = -1.3614
 STAND_R_SHO_ROLL = 1.3614
 STAND_L_EL_YAW = -1.5708

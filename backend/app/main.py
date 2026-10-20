@@ -29,13 +29,14 @@ from app.config import (
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
     REPO_ROOT,
+    ROBOT_AGENT_PORT,
     ROBOT_IP,
     ROBOT_MODE,
 )
 from app.data.pose_db import clear_all_poses
-from app.follow_controller import FollowController
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.sim_controller import SimController
+from app.services.follow import FollowController
 from app.services.motion import _sync_sim_to_hardware, dispatch_servo_commands
 from app.services.transcription import _get_whisper_model
 from app.simulator import AiNexSimulator
@@ -250,8 +251,7 @@ def main_robot():
     os.environ["ROBOT_MODE"] = "robot"
     _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {ROBOT_IP})")
-    logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
-    logger.info(f"Make sure robot_server.py is running on the robot at {ROBOT_IP}:9000")
+    logger.info(f"Make sure the Pi servo server is running at {ROBOT_IP}:{ROBOT_AGENT_PORT}")
     uvicorn.run(
         "app.main:app",
         host=CORAL_HOST,

@@ -31,9 +31,9 @@ live (settling in real time, holding briefly, then moving on) so you can watch
 each stance instead of only reading the JSON — same UX as collision_test.py.
 
 Usage:
-    uv run leg-bucket-test                     # run, show the viewer, print a report
-    uv run leg-bucket-test out.json            # also save the JSON report there
-    CORAL_NO_VIEWER=1 uv run leg-bucket-test   # headless (e.g. CI)
+    uv run python backend/tools/leg_bucket_test.py            # run, show the viewer, print a report
+    uv run python backend/tools/leg_bucket_test.py out.json   # also save the JSON report there
+    CORAL_NO_VIEWER=1 uv run python backend/tools/leg_bucket_test.py   # headless
 """
 
 from __future__ import annotations
@@ -49,11 +49,8 @@ import mujoco
 import mujoco.viewer
 from loguru import logger
 
-# Run as a standalone script (python tests/leg_bucket_test.py), so put src on the
-# path to import the package modules below.
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from app.collision.collision_checker import CollisionChecker
+from app.config import AINEX_MODEL_PATH, LOGS_DIR
 from app.vision.leg_modes import HIP_YAW_BUCKETS, KNEE_ANKLE_BUCKETS, combine_bucket_targets
 
 # Fall-risk heuristic: flag a bucket combo if its settled head height drops more
@@ -90,7 +87,7 @@ def _reexec_under_mjpython_if_needed() -> None:
             "won't open on macOS. Set CORAL_NO_VIEWER=1 to silence this."
         )
         return
-    argv = sys.argv if sys.argv and Path(sys.argv[0]).exists() else ["tests/leg_bucket_test.py"]
+    argv = sys.argv if sys.argv and Path(sys.argv[0]).exists() else ["backend/tools/leg_bucket_test.py"]
     os.environ["CORAL_MJPYTHON"] = "1"
     logger.info("macOS: re-launching under mjpython so the MuJoCo viewer window opens...")
     os.execv(str(mjpython), [str(mjpython), *argv])
@@ -109,10 +106,7 @@ class _DynamicsModel:
 
     def __init__(self, model_path: str | None = None):
         if model_path is None:
-            # leg_bucket_test.py lives at src/coral_agent/collision/ — four
-            # levels up from the project root.
-            project_root = Path(__file__).parent.parent
-            model_path = str(project_root / "assets" / "ainex" / "ainex.xml")
+            model_path = str(AINEX_MODEL_PATH)
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
@@ -282,7 +276,7 @@ def main() -> None:
     automatically. Set CORAL_NO_VIEWER=1 for a headless run (e.g. CI).
 
     An optional CLI arg overrides the output path; the default lands in
-    ``data/leg_bucket_test_report.json`` next to the pose database.
+    ``logs/leg_bucket_test_report.json``.
     """
     _reexec_under_mjpython_if_needed()
 
@@ -302,7 +296,7 @@ def main() -> None:
     if out_arg:
         out_path = Path(out_arg)
     else:
-        out_path = Path(__file__).parent.parent / "data" / "leg_bucket_test_report.json"
+        out_path = LOGS_DIR / "leg_bucket_test_report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 

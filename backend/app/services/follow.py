@@ -6,19 +6,19 @@ Two voice-triggered actions:
   the robot to the frozen pose.
 
 Status events ("follow_status", "capture_status") are pushed through a caller-
-supplied async callback so the chat WebSocket layer stays in server.py.
+supplied async callback so the chat WebSocket layer (api/routes/websocket.py)
+owns the client connection.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from typing import Awaitable, Callable, Optional
 
 import httpx
 import websockets
-
+from app.config import VISION_BASE
 from app.robot.angle_utils import joints_to_servo_commands
 from app.robot.interface import ServoCommand
 from app.services.clean_logger import CleanLogger
@@ -26,11 +26,10 @@ from app.vision.pose_to_robot import (
     JointAngleSmoother,
     compute_joint_targets,
 )
+from loguru import logger
 
-logger = logging.getLogger("follow_controller")
-
-VISION_HTTP_BASE = "http://localhost:8001"
-VISION_WS_URL = "ws://localhost:8001/ws/pose"
+VISION_HTTP_BASE = VISION_BASE
+VISION_WS_URL = VISION_BASE.replace("http", "ws", 1) + "/ws/pose"
 
 # Follow loop tuning. duration_ms is kept slightly under one dispatch tick so
 # each interpolation completes before the next command arrives — otherwise
@@ -95,7 +94,7 @@ class FollowController:
             async with httpx.AsyncClient(timeout=3.0) as http:
                 await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
         except Exception as e:
-            logger.debug("Vision continue on follow-start failed: %s", e)
+            logger.debug("Vision continue on follow-start failed: {}", e)
         self._task = asyncio.create_task(self._follow_loop(status_fn, sim_only, clean_logger))
         if clean_logger is not None:
             clean_logger.follow_started()
@@ -167,7 +166,7 @@ class FollowController:
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
-                        logger.warning("Follow reader exited: %s", e)
+                        logger.warning("Follow reader exited: {}", e)
                         if clean_logger is not None:
                             clean_logger.follow_error("vision reader exited", e)
 
@@ -176,7 +175,7 @@ class FollowController:
                         return
                     exc = t.exception()
                     if exc is not None:
-                        logger.warning("Follow dispatch error: %s", exc)
+                        logger.warning("Follow dispatch error: {}", exc)
 
                 reader_task = asyncio.create_task(reader())
                 in_flight: Optional[asyncio.Task] = None
@@ -203,7 +202,7 @@ class FollowController:
                         targets = smoother.smooth(targets)
                         prev_targets = dict(targets)
                         seed_cmds = joints_to_servo_commands(targets, _FOLLOW_SEED_DURATION_MS)
-                        logger.info("Follow: seeding initial pose (%d joints)", len(seed_cmds))
+                        logger.info("Follow: seeding initial pose ({} joints)", len(seed_cmds))
                         if clean_logger is not None:
                             clean_logger.follow_event("seeding initial pose", {"joints": len(seed_cmds)})
                         await self._dispatch(seed_cmds, sim_only)
@@ -245,7 +244,7 @@ class FollowController:
                         now = asyncio.get_event_loop().time()
                         if now - last_heartbeat >= 2.0:
                             logger.info(
-                                "Follow: %d dispatches, %d skips, %d empty-targets in last 2s",
+                                "Follow: {} dispatches, {} skips, {} empty-targets in last 2s",
                                 dispatch_count, skip_count, empty_target_count,
                             )
                             if clean_logger is not None:
@@ -262,7 +261,7 @@ class FollowController:
                 clean_logger.follow_stopped(reason="cancelled")
             raise
         except Exception as exc:
-            logger.warning("Follow loop error: %s", exc)
+            logger.warning("Follow loop error: {}", exc)
             if clean_logger is not None:
                 clean_logger.follow_error("loop crashed", exc)
             await status_fn({"type": "follow_status", "active": False, "error": str(exc)})
@@ -347,7 +346,7 @@ class FollowController:
                 try:
                     await http.post(f"{VISION_HTTP_BASE}/capture/stable_position/continue")
                 except Exception as e:
-                    logger.debug("Vision continue post failed: %s", e)
+                    logger.debug("Vision continue post failed: {}", e)
 
             await self._dispatch(commands, sim_only)
             await status_fn({"type": "capture_status", "stage": "done"})
@@ -360,7 +359,7 @@ class FollowController:
                 clean_logger.capture_error("timeout waiting for frozen frame")
             await status_fn({"type": "capture_status", "stage": "error", "error": "timeout"})
         except Exception as exc:
-            logger.warning("Capture flow error: %s", exc)
+            logger.warning("Capture flow error: {}", exc)
             if clean_logger is not None:
                 clean_logger.capture_error("flow failed", exc)
             await status_fn({"type": "capture_status", "stage": "error", "error": str(exc)})

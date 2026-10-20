@@ -14,13 +14,11 @@ error (construction will fail on first use with a clear message).
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import Optional
 
 import numpy as np
-
-log = logging.getLogger("vision.face_embedder")
+from loguru import logger
 
 _FACE_CROP_MARGIN = 0.30
 # Top of the named-landmark bbox sits at the eyes; the forehead is not
@@ -54,11 +52,11 @@ class FaceEmbedder:
             try:
                 from insightface.app import FaceAnalysis
             except ImportError as e:
-                log.warning("insightface not installed (%s); face embeddings disabled. Install with: uv sync --extra reid", e)
+                logger.warning("insightface not installed ({}); face embeddings disabled. Install with: uv sync --extra reid", e)
                 self._init_failed = True
                 return False
             try:
-                log.info("Loading InsightFace buffalo_s (first run downloads ~50MB to ~/.insightface/models/)")
+                logger.info("Loading InsightFace buffalo_s (first run downloads ~50MB to ~/.insightface/models/)")
                 app = FaceAnalysis(
                     name="buffalo_s",
                     allowed_modules=["detection", "recognition"],
@@ -66,10 +64,10 @@ class FaceEmbedder:
                 )
                 app.prepare(ctx_id=-1, det_size=self._det_size)
                 self._app = app
-                log.info("InsightFace ready")
+                logger.info("InsightFace ready")
                 return True
             except Exception as e:  # noqa: BLE001 — surface any load failure once
-                log.warning("Failed to load InsightFace (%s); face embeddings disabled", e)
+                logger.warning("Failed to load InsightFace ({}); face embeddings disabled", e)
                 self._init_failed = True
                 return False
 
@@ -96,7 +94,7 @@ class FaceEmbedder:
         try:
             faces = self._app.get(crop)
         except Exception as e:  # noqa: BLE001 — protect the vision loop
-            log.debug("InsightFace .get() failed on crop: %s", e)
+            logger.debug("InsightFace .get() failed on crop: {}", e)
             return None
         if not faces:
             return None

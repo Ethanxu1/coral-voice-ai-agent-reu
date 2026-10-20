@@ -13,9 +13,9 @@ native MuJoCo viewer window so you can see each leg's clamped result live
 instead of only reading the JSON.
 
 Usage:
-    uv run collision-test                     # run, show the viewer, print a report
-    uv run collision-test out.json            # also save the JSON report there
-    CORAL_NO_VIEWER=1 uv run collision-test   # headless (e.g. CI)
+    uv run python backend/tools/collision_test.py            # run, show the viewer, print a report
+    uv run python backend/tools/collision_test.py out.json   # also save the JSON report there
+    CORAL_NO_VIEWER=1 uv run python backend/tools/collision_test.py   # headless
 """
 
 from __future__ import annotations
@@ -31,11 +31,8 @@ import mujoco
 import mujoco.viewer
 from loguru import logger
 
-# Run as a standalone script (python tests/collision_test.py), so put src on the
-# path to import the package modules below.
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from app.collision.collision_checker import CollisionChecker
+from app.config import LOGS_DIR
 
 # How long to hold each leg's resulting pose on screen before moving to the next.
 _LEG_PAUSE_S = 1.5
@@ -60,7 +57,7 @@ def _reexec_under_mjpython_if_needed() -> None:
             "won't open on macOS. Set CORAL_NO_VIEWER=1 to silence this."
         )
         return
-    argv = sys.argv if sys.argv and Path(sys.argv[0]).exists() else ["tests/collision_test.py"]
+    argv = sys.argv if sys.argv and Path(sys.argv[0]).exists() else ["backend/tools/collision_test.py"]
     os.environ["CORAL_MJPYTHON"] = "1"
     logger.info("macOS: re-launching under mjpython so the MuJoCo viewer window opens...")
     os.execv(str(mjpython), [str(mjpython), *argv])
@@ -169,7 +166,7 @@ def main() -> None:
     (e.g. CI) — falls back to running the checker without any window.
 
     An optional CLI arg overrides the output path; the default lands in
-    ``data/collision_test_report.json`` next to the pose database.
+    ``logs/collision_test_report.json``.
     """
     _reexec_under_mjpython_if_needed()
 
@@ -190,7 +187,7 @@ def main() -> None:
     else:
         # collision_test.py lives at tests/ — two levels up is the repo root.
         # up from the project root.
-        out_path = Path(__file__).parent.parent / "data" / "collision_test_report.json"
+        out_path = LOGS_DIR / "collision_test_report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 

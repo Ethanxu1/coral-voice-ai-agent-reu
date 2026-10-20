@@ -1,7 +1,7 @@
 """Demo state endpoints."""
 
-from app.follow_controller import gentle_follow_enabled, set_gentle_follow
 from app.schemas.requests import StateRequest
+from app.services.follow import gentle_follow_enabled, set_gentle_follow
 from app.services.motion import _get_robot_state
 from app.vision.pose_to_robot import hipless_arms_enabled, set_hipless_arms
 from fastapi import APIRouter

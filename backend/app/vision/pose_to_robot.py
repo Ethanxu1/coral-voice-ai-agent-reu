@@ -25,7 +25,6 @@ hip yaw, and ankles stay at neutral.
 
 from __future__ import annotations
 
-import logging
 import math
 import time
 from typing import Optional
@@ -40,13 +39,11 @@ from app.validation import JOINT_LIMITS
 
 from . import geometry
 
-logger = logging.getLogger(__name__)
-
 # NOTE: OneEuroFilter is imported lazily inside JointAngleSmoother (see __init__)
 # rather than at module load. Pulling it here would drag in pose_estimator ->
-# mediapipe/cv2, but compute_joint_targets / targets_to_servo_commands only need
-# `geometry` (numpy). Keeping the top-level import light lets the Pi robot_server
-# reuse the retargeting without installing the full vision stack.
+# mediapipe/cv2, but compute_joint_targets only needs
+# `geometry` (numpy). Keeping the top-level import light lets the main server
+# reuse the retargeting (follow mode) without loading the full vision stack.
 
 # MediaPipe pose landmark indices (re-exported from geometry for clarity)
 _LM_L_SHOULDER = geometry.LEFT_SHOULDER

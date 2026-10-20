@@ -23,7 +23,7 @@ from .servo_config import STAND_PULSE, TICKS_PER_RAD
 
 # Joints whose MuJoCo stand-keyframe ctrl value is not 0.0. Must match the
 # `stand` keyframe in ainex.xml exactly (see module docstring). Calibrated to
-# the physical robot's stand at STAND_PULSE via tools/author_stand.py; the legs
+# the physical robot's stand at STAND_PULSE; the legs
 # carry a bent-knee stance and the arms keep their shoulder-roll/elbow-yaw offsets.
 HW_STAND_RAD: dict[str, float] = {
     # Legs (bent-knee stand)
