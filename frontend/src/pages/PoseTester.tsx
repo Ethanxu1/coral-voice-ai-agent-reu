@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { movePulses, SERVO_ID, setPose } from '../api/robot'
+import RobotViewer from '../components/RobotViewer'
 import { PI_BASE } from '../config'
 
 /** The 24 servo joints (matches the server SERVO_ID maps). */
@@ -101,108 +102,125 @@ export default function PoseTester() {
   }
 
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', padding: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <Link to="/"><button className="primitives-test-btn">← Back</button></Link>
-        <h2 style={{ margin: 0 }}>Pose Tester</h2>
-      </div>
+    <div
+      style={{
+        maxWidth: 1280, margin: '0 auto', padding: 24, display: 'grid', gap: 24, alignItems: 'start',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+      }}
+    >
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <Link to="/"><button className="primitives-test-btn">← Back</button></Link>
+          <h2 style={{ margin: 0 }}>Pose Tester</h2>
+        </div>
 
-      <p style={{ opacity: 0.7, fontSize: 14, marginTop: 0 }}>
-        Paste a pulse dict in <code>motions.py</code> format
-        (<code>'joint': pulse,</code>). Values are hardware pulses (0–1000). The sim
-        converts and clamps them; the robot clamps to each servo's safe range.
-      </p>
+        <p style={{ opacity: 0.7, fontSize: 14, marginTop: 0 }}>
+          Paste a pulse dict in <code>motions.py</code> format
+          (<code>'joint': pulse,</code>). Values are hardware pulses (0–1000). The sim
+          converts and clamps them; the robot clamps to each servo's safe range.
+        </p>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, fontSize: 14 }}>
-        <span style={{ fontWeight: 600 }}>Send to:</span>
-        {(['sim', 'robot', 'both'] as Target[]).map((t) => (
-          <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="pose-target"
-              checked={target === t}
-              onChange={() => setTarget(t)}
-              disabled={busy}
-            />
-            {TARGET_LABEL[t]}
-          </label>
-        ))}
-        {target !== 'robot' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={collisionCheck}
-              onChange={(e) => setCollisionCheck(e.target.checked)}
-              disabled={busy}
-            />
-            Collision check (sim)
-          </label>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, fontSize: 14 }}>
+          <span style={{ fontWeight: 600 }}>Send to:</span>
+          {(['sim', 'robot', 'both'] as Target[]).map((t) => (
+            <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="pose-target"
+                checked={target === t}
+                onChange={() => setTarget(t)}
+                disabled={busy}
+              />
+              {TARGET_LABEL[t]}
+            </label>
+          ))}
+          {target !== 'robot' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={collisionCheck}
+                onChange={(e) => setCollisionCheck(e.target.checked)}
+                disabled={busy}
+              />
+              Collision check (sim)
+            </label>
+          )}
+          {target !== 'sim' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+              Move time (ms):
+              <input
+                type="number"
+                min={100}
+                step={100}
+                value={durationMs}
+                onChange={(e) => setDurationMs(Math.max(100, parseInt(e.target.value, 10) || 100))}
+                disabled={busy}
+                style={{ width: 80, padding: '2px 6px', borderRadius: 4, border: '1px solid #ccc' }}
+              />
+            </label>
+          )}
+        </div>
+
         {target !== 'sim' && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            Move time (ms):
-            <input
-              type="number"
-              min={100}
-              step={100}
-              value={durationMs}
-              onChange={(e) => setDurationMs(Math.max(100, parseInt(e.target.value, 10) || 100))}
-              disabled={busy}
-              style={{ width: 80, padding: '2px 6px', borderRadius: 4, border: '1px solid #ccc' }}
-            />
-          </label>
-        )}
-      </div>
-
-      {target !== 'sim' && (
-        <div style={{ background: '#fff3cd', color: '#664d03', padding: '8px 12px', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>
-          Robot target sends pulses to the <strong>physical robot</strong> at{' '}
-          <code>{PI_BASE}</code> — make sure it's standing clear before applying.
-        </div>
-      )}
-
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        spellCheck={false}
-        style={{
-          width: '100%', minHeight: 260, fontFamily: 'monospace', fontSize: 13,
-          padding: 12, borderRadius: 8, border: '1px solid #ccc', resize: 'vertical',
-        }}
-      />
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '12px 0' }}>
-        <button className="primitives-test-btn" onClick={apply} disabled={busy || names.length === 0}>
-          {busy ? 'Applying…' : `▶ Apply to ${TARGET_LABEL[target]} (${names.length})`}
-        </button>
-        <button className="primitives-test-btn" onClick={() => setText(STAND_EXAMPLE)} disabled={busy}>
-          Reset to Stand
-        </button>
-        {unknown.length > 0 && (
-          <span style={{ color: '#b02a37', fontSize: 13 }}>
-            Unknown joint(s) ignored: {[...new Set(unknown)].join(', ')}
-          </span>
-        )}
-      </div>
-
-      {status && (
-        <div style={{ fontSize: 13, padding: '8px 12px', borderRadius: 6, background: '#e7f1ff', color: '#084298' }}>
-          {status}
-        </div>
-      )}
-
-      {names.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Parsed {names.length} joint(s):</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 4 }}>
-            {names.map((n) => (
-              <div key={n} style={{ fontFamily: 'monospace', fontSize: 12, background: '#f6f8fa', padding: '2px 6px', borderRadius: 4 }}>
-                {n}: {pulses[n]}
-              </div>
-            ))}
+          <div style={{ background: '#fff3cd', color: '#664d03', padding: '8px 12px', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>
+            Robot target sends pulses to the <strong>physical robot</strong> at{' '}
+            <code>{PI_BASE}</code> — make sure it's standing clear before applying.
           </div>
+        )}
+
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          spellCheck={false}
+          style={{
+            width: '100%', minHeight: 260, fontFamily: 'monospace', fontSize: 13,
+            padding: 12, borderRadius: 8, border: '1px solid #ccc', resize: 'vertical',
+          }}
+        />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '12px 0' }}>
+          <button className="primitives-test-btn" onClick={apply} disabled={busy || names.length === 0}>
+            {busy ? 'Applying…' : `▶ Apply to ${TARGET_LABEL[target]} (${names.length})`}
+          </button>
+          <button className="primitives-test-btn" onClick={() => setText(STAND_EXAMPLE)} disabled={busy}>
+            Reset to Stand
+          </button>
+          {unknown.length > 0 && (
+            <span style={{ color: '#b02a37', fontSize: 13 }}>
+              Unknown joint(s) ignored: {[...new Set(unknown)].join(', ')}
+            </span>
+          )}
         </div>
-      )}
+
+        {status && (
+          <div style={{ fontSize: 13, padding: '8px 12px', borderRadius: 6, background: '#e7f1ff', color: '#084298' }}>
+            {status}
+          </div>
+        )}
+
+        {names.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Parsed {names.length} joint(s):</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 4 }}>
+              {names.map((n) => (
+                <div key={n} style={{ fontFamily: 'monospace', fontSize: 12, background: '#f6f8fa', color: '#1f2328', padding: '2px 6px', borderRadius: 4 }}>
+                  {n}: {pulses[n]}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <section style={{ position: 'sticky', top: 24 }} aria-label="Simulator">
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Simulator</div>
+        <div style={{ position: 'relative', height: 'min(70vh, 560px)', borderRadius: 8, overflow: 'hidden', background: '#15151a' }}>
+          <RobotViewer embedded />
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+          Live view of the MuJoCo sim. It changes when you apply to Sim or Sim + Robot.
+        </div>
+      </section>
     </div>
   )
 }
