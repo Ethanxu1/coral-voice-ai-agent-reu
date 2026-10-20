@@ -13,16 +13,11 @@ Three modes, chosen per request:
                 in that node (sagittal swing sent to the yaw joint), preserved
                 on purpose so the two behaviours can be compared side by side.
 
-  "classify"  — run the MobileNetV3 pose classifier, then take ALL leg servos
-                (IDs 1-12) from the matching canned pose in robot.motions. The
-                legs snap to that class's stance; the arms keep the live
-                retargeting.
-
   "buckets"   — classify the person's leg pose into a small set of discrete
-                stances rather than continuously retargeting. See the "Mode 4"
+                stances rather than continuously retargeting. See the "Mode 3"
                 section below.
 
-Modes 2 and 3 are authored in *hardware* servo pulses (the units the old node
+The legacy mode is authored in *hardware* servo pulses (the units the old node
 and motions.py use). This module converts those pulses back to sim radians with
 hardware_units_to_rad — exactly how server._play_sim_motion renders canned poses
 in the sim — so the values land at the right MuJoCo angles despite the joints
@@ -33,7 +28,7 @@ merged radian dict through targets_to_servo_commands like any other frame.
 from __future__ import annotations
 
 import math
-from typing import Dict, Literal, Optional
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -42,11 +37,10 @@ from app.robot.servo_config import STAND_PULSE
 
 from . import geometry
 
-LegMode = Literal["retarget", "legacy", "classify", "buckets"]
-LEG_MODES: tuple[str, ...] = ("retarget", "legacy", "classify", "buckets")
+LEG_MODES: tuple[str, ...] = ("retarget", "legacy", "buckets")
 
 # The 12 leg joints (servo IDs 1-12). Used both to strip pelvis-frame legs out
-# of a compute_joint_targets result and to pull leg servos from a canned pose.
+# of a compute_joint_targets result and to convert leg pulses to targets.
 LEG_JOINTS: tuple[str, ...] = (
     "l_ank_roll", "r_ank_roll",
     "l_ank_pitch", "r_ank_pitch",
@@ -55,20 +49,6 @@ LEG_JOINTS: tuple[str, ...] = (
     "l_hip_roll", "r_hip_roll",
     "l_hip_yaw", "r_hip_yaw",
 )
-
-# ── Class → canned pose (mode 3) ────────────────────────────────────────────
-# The 7 classifier labels each name a single-frame pose in robot.motions with
-# the same key. Resolved lazily so importing this module stays torch-free.
-_CLASS_TO_MOTION = {
-    "dab": "dab",
-    "hand-raised": "hand-raised",
-    "muscles": "muscles",
-    "superhero": "superhero",
-    "t-pose": "t-pose",
-    "thinker": "thinker",
-    "warrior2": "warrior2",
-}
-
 
 def strip_legs(targets: Dict[str, float]) -> Dict[str, float]:
     """Return `targets` without any leg joints (keeps arms + head)."""
@@ -80,7 +60,7 @@ def stand_leg_targets() -> Dict[str, float]:
 
     Built from each joint's STAND_PULSE via the same hardware→sim conversion the
     other modes use, so the legs land exactly at the ainex.xml stand keyframe.
-    Used to straighten the legs mode-independently (retarget/legacy/classify all
+    Used to straighten the legs mode-independently (retarget/legacy/buckets all
     share it) when the knees aren't confidently visible, instead of driving them
     off unreliable landmarks or holding a stale pose.
     """
@@ -158,23 +138,7 @@ def legacy_leg_pulses(body_landmarks: list[dict]) -> Dict[str, int]:
     return pulses
 
 
-# ── Mode 3: classified canned-pose leg pulses ───────────────────────────────
-def classify_leg_pulses(class_name: str) -> Dict[str, int]:
-    """Return the 12 leg-servo hardware pulses from the canned pose for
-    `class_name`. Unknown class → full stand stance (safe no-op)."""
-    from app.robot import motions
-
-    motion_name = _CLASS_TO_MOTION.get(class_name)
-    if motion_name is None:
-        return {j: STAND_PULSE[j] for j in LEG_JOINTS}
-    sequence = motions.get_motion(motion_name)
-    if not sequence:
-        return {j: STAND_PULSE[j] for j in LEG_JOINTS}
-    pose = sequence[0][0]  # single-frame pose: (pulse_dict, duration)
-    return {j: int(pose.get(j, STAND_PULSE[j])) for j in LEG_JOINTS}
-
-
-# ── Mode 4: bucketed leg stances ────────────────────────────────────────────
+# ── Mode 3: bucketed leg stances ────────────────────────────────────────────
 #
 # Instead of continuously retargeting, classify the person's legs into a small
 # set of discrete stances and snap straight to a fixed, pre-authored target for
@@ -318,7 +282,7 @@ def _hip_yaw_side_indices(side: str) -> tuple[int, int, int, int]:
 
 def _hip_yaw_bucket_side(body: list[dict], side: str) -> str:
     """Classify a leg's hip yaw from the knee's horizontal (image-x) position
-    relative to the same-side hip and shoulder. See the Mode 4 comment block."""
+    relative to the same-side hip and shoulder. See the Mode 3 comment block."""
     hip_i, knee_i, sho_i, other_hip_i = _hip_yaw_side_indices(side)
     hip_x = body[hip_i]["x"]
     knee_x = body[knee_i]["x"]
@@ -351,7 +315,7 @@ def combine_bucket_targets(
     """
     targets = stand_leg_targets()  # baseline: hip_roll/ank_roll stay stand
     # knee_ankle_bucket's target table below also sets hip_pitch, overriding
-    # the stand baseline for it — see the Mode 4 comment block above.
+    # the stand baseline for it — see the Mode 3 comment block above.
     targets["l_hip_yaw"] = _HIP_YAW_L_TARGETS[hip_yaw_l_bucket]
     targets["r_hip_yaw"] = _HIP_YAW_R_TARGETS[hip_yaw_r_bucket]
     targets.update(_KNEE_ANKLE_BUCKET_TARGETS[knee_ankle_bucket])
@@ -421,7 +385,7 @@ def raw_bucket_readouts(body_landmarks: list[dict]) -> Dict[str, object]:
 def bucket_leg_targets(body_landmarks: list[dict]) -> Dict[str, float]:
     """Classify the person's legs into discrete stances and return sim-radian
     targets for all 12 leg joints (already the caller's target frame — unlike
-    legacy_leg_pulses/classify_leg_pulses this returns targets directly, not
+    legacy_leg_pulses this returns targets directly, not
     hardware pulses, since the bucket tables above are authored in sim radians).
 
     See classify_buckets for the per-component visibility fallback.

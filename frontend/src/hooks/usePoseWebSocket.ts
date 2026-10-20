@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { Landmark, FaceLandmark, HeadPose, CalibrationStatus, StabilityStatus, DetectedSubject, SelectionState } from '../types/pose'
+import type { Landmark, FaceLandmark, HeadPose, StabilityStatus, DetectedSubject, SelectionState } from '../types/pose'
 
 const VISION_BASE = 'http://localhost:8001'
 const VISION_WS = 'ws://localhost:8001/ws/pose'
@@ -14,11 +14,6 @@ export function usePoseWebSocket() {
   const [bodyLandmarks, setBodyLandmarks] = useState<Landmark[]>([])
   const [faceLandmarks, setFaceLandmarks] = useState<FaceLandmark[]>([])
   const [headPose, setHeadPose] = useState<HeadPose | null>(null)
-  const [calibrationStatus, setCalibrationStatus] = useState<CalibrationStatus>({
-    state: 'idle',
-    progress: 0,
-    frame_count: 0,
-  })
   const [stabilityStatus, setStabilityStatus] = useState<StabilityStatus>(INITIAL_STABILITY)
   const [isConnected, setIsConnected] = useState(false)
   const [trackingLost, setTrackingLost] = useState(false)
@@ -62,15 +57,12 @@ export function usePoseWebSocket() {
         if (data.body_landmarks?.length) setBodyLandmarks(data.body_landmarks)
         if (data.face_landmarks?.length) setFaceLandmarks(data.face_landmarks)
         setHeadPose(data.head_pose)
-        if (data.calibration) setCalibrationStatus(data.calibration)
         if (data.stability) setStabilityStatus(data.stability)
         if (data.selection_state) setSelectionState(data.selection_state)
         setSelectedSubjectId(data.selected_subject_id ?? null)
         if (data.subjects) setSubjects(data.subjects)
       } else if (data.type === 'tracking_lost') {
         setTrackingLost(true)
-      } else if (data.type === 'calibration_status') {
-        setCalibrationStatus({ state: data.state, progress: data.progress, frame_count: data.frame_count ?? 0 })
       }
     }
   }, [])
@@ -88,14 +80,6 @@ export function usePoseWebSocket() {
       }
     }
   }, [connect])
-
-  const startCalibration = useCallback(async () => {
-    await fetch(`${VISION_BASE}/calibrate/start`, { method: 'POST' })
-  }, [])
-
-  const resetCalibration = useCallback(async () => {
-    await fetch(`${VISION_BASE}/calibrate/reset`, { method: 'POST' })
-  }, [])
 
   const captureStablePosition = useCallback(async () => {
     await fetch(`${VISION_BASE}/capture/stable_position/start`, { method: 'POST' })
@@ -137,15 +121,12 @@ export function usePoseWebSocket() {
     bodyLandmarks,
     faceLandmarks,
     headPose,
-    calibrationStatus,
     stabilityStatus,
     isConnected,
     trackingLost,
     selectionState,
     selectedSubjectId,
     subjects,
-    startCalibration,
-    resetCalibration,
     captureStablePosition,
     continueLive,
     startSelection,

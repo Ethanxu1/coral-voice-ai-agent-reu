@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import logging
 import math
 import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 import cv2
 import mediapipe as mp
@@ -17,10 +16,8 @@ from mediapipe.tasks.python import vision as mp_vision
 
 from . import geometry
 from .appearance_embedder import AppearanceEmbedder
-from .calibration import CalibrationManager, CalibrationState
 from .face_embedder import FaceEmbedder
 
-from .smpl_fit import UserShape
 from .subject_selector import SubjectSelector
 
 # Model asset paths (downloaded on first run)
@@ -107,18 +104,12 @@ class HeadPose:
     yaw: float
     pitch: float
     roll: float
-    raw_yaw: float
-    raw_pitch: float
-    raw_roll: float
 
     def to_dict(self) -> dict:
         return {
             "yaw": round(self.yaw, 2),
             "pitch": round(self.pitch, 2),
             "roll": round(self.roll, 2),
-            "raw_yaw": round(self.raw_yaw, 2),
-            "raw_pitch": round(self.raw_pitch, 2),
-            "raw_roll": round(self.raw_roll, 2),
         }
 
 
@@ -128,12 +119,9 @@ class FrameResult:
     face_landmarks: list[dict]
     head_pose: Optional[HeadPose]
     jpeg_bytes: bytes
-    calibration: dict
     timestamp: float = field(default_factory=time.time)
-    # Un-annotated BGR frame (no skeleton/text overlay). Carried so consumers
-    # like the pose classifier can run on the clean image — the model was
-    # trained on clean photos, so the drawn overlay is a train/test mismatch.
-    # Mirrors the Pi vision node's separate /clean_frame topic.
+    # Un-annotated BGR frame (no skeleton/text overlay), used by subject
+    # re-ID and the stable-position capture.
     clean_frame: Optional["np.ndarray"] = None
     # Subject-selection enrichment.
     subjects: list[dict] = field(default_factory=list)
@@ -147,7 +135,6 @@ class FrameResult:
             "body_landmarks": self.body_landmarks,
             "face_landmarks": self.face_landmarks,
             "head_pose": self.head_pose.to_dict() if self.head_pose else None,
-            "calibration": self.calibration,
             "subjects": self.subjects,
             "selection_state": self.selection_state,
             "selected_subject_id": self.selected_subject_id,
@@ -213,36 +200,21 @@ class _BufferEntry:
     clean_bgr: np.ndarray  # raw frame before overlay; small (~900KB), kept few seconds only
 
 
-_SMPL_FIT_LOG = logging.getLogger("smpl_fit")
-
-# Signature of the optional SMPL-fit hook fired from StabilityCapture._finalize.
-FitHook = Callable[[list[list[dict]]], Optional[UserShape]]
-
-
 class StabilityCapture:
     """State machine that drives the capture-stable-position UX from the vision loop.
 
-    States: idle → countdown → collecting → fitting → frozen → (continue) → idle.
-    The ``fitting`` state runs synchronously inside the vision thread; the call
-    site (``PoseEstimator``) injects ``fit_hook`` so the SMPL stack stays
-    optional — if it's missing or the fit fails, we skip straight to ``frozen``.
+    States: idle → countdown → collecting → frozen → (continue) → idle.
 
     Lives in the vision thread but ``start()`` / ``continue_live()`` are called
     from the FastAPI thread, so all mutating operations take a lock.
     """
 
-    def __init__(self, fit_hook: Optional[FitHook] = None):
+    def __init__(self):
         self._lock = threading.Lock()
         self._state = "idle"
         self._t0 = 0.0
         self._buffer: list[_BufferEntry] = []
         self._frozen: Optional[FrameResult] = None
-        self._fit_hook = fit_hook
-        self._user_shape: Optional[UserShape] = None
-
-    @property
-    def user_shape(self) -> Optional[UserShape]:
-        return self._user_shape
 
     # ── Public API (called from FastAPI thread) ────────────────────────────
     def start(self) -> bool:
@@ -273,24 +245,13 @@ class StabilityCapture:
                 countdown_remaining = max(0.0, _COUNTDOWN_SECONDS - (now - self._t0))
             elif self._state == "collecting":
                 collection_progress = min(1.0, (now - self._t0) / _COLLECT_SECONDS)
-            elif self._state in ("fitting", "frozen"):
+            elif self._state == "frozen":
                 collection_progress = 1.0
-            d: dict = {
+            return {
                 "state": self._state,
                 "countdown_remaining": round(countdown_remaining, 2),
                 "collection_progress": round(collection_progress, 3),
             }
-            if self._user_shape is not None:
-                d["shape_ready"] = True
-                d["segment_lengths"] = {
-                    "upper_arm": round(self._user_shape.upper_arm_len, 4),
-                    "forearm": round(self._user_shape.forearm_len, 4),
-                    "thigh": round(self._user_shape.thigh_len, 4),
-                    "shin": round(self._user_shape.shin_len, 4),
-                    "shoulder_span": round(self._user_shape.shoulder_span, 4),
-                    "hip_span": round(self._user_shape.hip_span, 4),
-                }
-            return d
 
     # ── Vision-thread hooks ────────────────────────────────────────────────
     @property
@@ -298,7 +259,6 @@ class StabilityCapture:
         return self._state == "frozen" and self._frozen is not None
 
     def frozen_result(self) -> Optional["FrameResult"]:
-        # Refresh timestamp & calibration so the FE sees a live heartbeat.
         if self._frozen is None:
             return None
         return self._frozen
@@ -310,7 +270,6 @@ class StabilityCapture:
         head_pose: Optional["HeadPose"],
         overlay: np.ndarray,
         clean_frame: np.ndarray,
-        calibration: dict,
     ) -> None:
         """Update state and draw countdown/analyzing text onto `overlay` in place."""
         with self._lock:
@@ -318,7 +277,7 @@ class StabilityCapture:
             t0 = self._t0
 
         now = time.time()
-        if state in ("idle", "frozen", "fitting"):
+        if state in ("idle", "frozen"):
             return
 
         if state == "countdown":
@@ -344,10 +303,10 @@ class StabilityCapture:
                     clean_bgr=clean_frame.copy(),
                 ))
             if elapsed >= _COLLECT_SECONDS:
-                self._finalize(calibration)
+                self._finalize()
 
     # ── Internal helpers ───────────────────────────────────────────────────
-    def _finalize(self, calibration: dict) -> None:
+    def _finalize(self) -> None:
         with self._lock:
             buf = list(self._buffer)
 
@@ -361,26 +320,6 @@ class StabilityCapture:
         lm_frames = [e.body_landmarks for e in buf]
         idx = _most_stable_index(lm_frames)
         chosen = buf[idx]
-
-        # ── SMPL β fit (Phase 2). Runs in this vision thread; skipped silently
-        # if weights are missing or torch/smplx isn't installed. The user is
-        # holding still, so blocking for ~1–2 s here is acceptable.
-        fitted_shape: Optional[UserShape] = None
-        if self._fit_hook is not None:
-            with self._lock:
-                self._state = "fitting"
-            t_start = time.time()
-            try:
-                fitted_shape = self._fit_hook(lm_frames)
-                if fitted_shape is not None:
-                    _SMPL_FIT_LOG.info(
-                        "SMPL shape fit completed in %.2fs: upper_arm=%.3fm forearm=%.3fm",
-                        time.time() - t_start,
-                        fitted_shape.upper_arm_len,
-                        fitted_shape.forearm_len,
-                    )
-            except Exception as e:
-                _SMPL_FIT_LOG.warning("SMPL fit failed (%s); proceeding without shape", e)
 
         # Re-render the chosen frame: skeleton overlay + STABLE badge.
         frozen_overlay = chosen.clean_bgr.copy()
@@ -403,13 +342,11 @@ class StabilityCapture:
             face_landmarks=chosen.face_landmarks,
             head_pose=chosen.head_pose,
             jpeg_bytes=jpeg.tobytes(),
-            calibration=calibration,
             clean_frame=chosen.clean_bgr,
         )
 
         with self._lock:
             self._frozen = frozen
-            self._user_shape = fitted_shape
             self._state = "frozen"
             self._buffer.clear()
 
@@ -456,26 +393,6 @@ def _draw_skeleton_from_dicts(frame: np.ndarray, landmarks: list[dict]) -> None:
             cv2.circle(frame, (px, py), 5, color, -1)
 
 
-def _default_smpl_fit_hook(frames: list[list[dict]]) -> Optional[UserShape]:
-    """Run the SMPL β fit, swallowing common opt-in failures.
-
-    Missing weights or absent torch/smplx is a normal state for fresh checkouts
-    — log it once and proceed without per-person shape. Any other exception
-    propagates so ``StabilityCapture._finalize`` can record a clear warning.
-    """
-    try:
-        from .smpl_fit import fit_betas
-        from .smpl_loader import SMPLWeightsMissingError
-    except ImportError as e:
-        _SMPL_FIT_LOG.info("SMPL stack not installed (%s); shape calibration skipped", e)
-        return None
-    try:
-        return fit_betas(frames)
-    except SMPLWeightsMissingError as e:
-        _SMPL_FIT_LOG.info("%s", e)
-        return None
-
-
 class PoseEstimator:
     def __init__(self, camera_index: int = 0, target_fps: float = 30.0):
         self._camera_index = camera_index
@@ -487,7 +404,6 @@ class PoseEstimator:
         self._face_detector_single: Optional[mp_vision.FaceLandmarker] = None
         self._pose_detector_multi: Optional[mp_vision.PoseLandmarker] = None
         self._face_detector_multi: Optional[mp_vision.FaceLandmarker] = None
-        self.calibration = CalibrationManager()
         # Face + appearance embedders for multi-modal re-ID. FaceEmbedder is
         # lazy-loaded on first use so environments without the `reid` extra
         # installed still start; on first call it logs a warning and returns
@@ -521,12 +437,7 @@ class PoseEstimator:
         self._frame_width = 640
         self._frame_height = 480
         self._running = False
-        self.stability = StabilityCapture(fit_hook=_default_smpl_fit_hook)
-
-    @property
-    def user_shape(self) -> Optional[UserShape]:
-        """The SMPL β fit produced by the most recent stable-pose capture, if any."""
-        return self.stability.user_shape
+        self.stability = StabilityCapture()
 
     def open(self):
         import logging as _log
@@ -744,7 +655,6 @@ class PoseEstimator:
         face_result = self._face_detector.detect(mp_image)
 
         overlay = frame.copy()
-        cal = self.calibration.to_dict()
         t_now = time.time()
 
         # ── Multi-person path (subject selection / re-ID) ─────────────────────
@@ -755,7 +665,6 @@ class PoseEstimator:
                 clean_frame=clean_frame,
                 pose_result=pose_result,
                 face_result=face_result,
-                calibration=cal,
                 t_now=t_now,
             )
 
@@ -802,10 +711,7 @@ class PoseEstimator:
             raw_yaw = self._yaw_w_f.filter(raw_yaw, t_now)
             raw_pitch = self._pitch_w_f.filter(raw_pitch, t_now)
             raw_roll = self._roll_w_f.filter(raw_roll, t_now)
-            if self.calibration.state == CalibrationState.COLLECTING:
-                self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
-            yaw, pitch, roll = self.calibration.apply(raw_yaw, raw_pitch, raw_roll)
-            head_pose = HeadPose(yaw, pitch, roll, raw_yaw, raw_pitch, raw_roll)
+            head_pose = HeadPose(raw_yaw, raw_pitch, raw_roll)
 
         if face_result.face_landmarks:
             raw_face_lms = face_result.face_landmarks[0]
@@ -819,10 +725,7 @@ class PoseEstimator:
 
                 if head_pose is None:
                     self._pnp_fail_count = 0
-                    if self.calibration.state == CalibrationState.COLLECTING:
-                        self.calibration.add_frame(raw_yaw_p, raw_pitch_p, raw_roll_p)
-                    yaw, pitch, roll = self.calibration.apply(raw_yaw_p, raw_pitch_p, raw_roll_p)
-                    head_pose = HeadPose(yaw, pitch, roll, raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    head_pose = HeadPose(raw_yaw_p, raw_pitch_p, raw_roll_p)
 
                 face_landmarks_out = self._extract_named_face_landmarks(raw_face_lms)
                 self._draw_face_axes(overlay, rvec, tvec)
@@ -837,7 +740,6 @@ class PoseEstimator:
             head_pose=head_pose,
             overlay=overlay,
             clean_frame=clean_frame,
-            calibration=cal,
         )
         if self.stability.is_frozen:
             frozen = self.stability.frozen_result()
@@ -851,7 +753,6 @@ class PoseEstimator:
             face_landmarks=face_landmarks_out,
             head_pose=head_pose,
             jpeg_bytes=jpeg.tobytes(),
-            calibration=cal,
             clean_frame=clean_frame,
         )
 
@@ -862,7 +763,6 @@ class PoseEstimator:
         clean_frame: np.ndarray,
         pose_result,
         face_result,
-        calibration: dict,
         t_now: float,
     ) -> Optional[FrameResult]:
         """Process a frame in multi-person mode for subject selection/re-ID."""
@@ -928,7 +828,6 @@ class PoseEstimator:
             head_pose=selection.primary_head_pose,
             overlay=overlay,
             clean_frame=clean_frame,
-            calibration=calibration,
         )
         if self.stability.is_frozen:
             frozen = self.stability.frozen_result()
@@ -955,7 +854,6 @@ class PoseEstimator:
             face_landmarks=selection.primary_face_landmarks,
             head_pose=selection.primary_head_pose,
             jpeg_bytes=jpeg.tobytes(),
-            calibration=calibration,
             clean_frame=clean_frame,
             subjects=subjects_json,
             selection_state=selection.state,
@@ -1024,10 +922,7 @@ class PoseEstimator:
             raw_yaw = self._yaw_w_f.filter(raw_yaw, t_now)
             raw_pitch = self._pitch_w_f.filter(raw_pitch, t_now)
             raw_roll = self._roll_w_f.filter(raw_roll, t_now)
-            if self.calibration.state == CalibrationState.COLLECTING:
-                self.calibration.add_frame(raw_yaw, raw_pitch, raw_roll)
-            yaw, pitch, roll = self.calibration.apply(raw_yaw, raw_pitch, raw_roll)
-            head_pose = HeadPose(yaw, pitch, roll, raw_yaw, raw_pitch, raw_roll)
+            head_pose = HeadPose(raw_yaw, raw_pitch, raw_roll)
 
         if raw_face_lms is not None:
             face_landmarks_out = self._extract_named_face_landmarks(raw_face_lms)
@@ -1038,10 +933,7 @@ class PoseEstimator:
                 raw_pitch_p = self._pitch_f.filter(raw_pitch_p, t_now)
                 raw_roll_p = self._roll_f.filter(raw_roll_p, t_now)
                 if head_pose is None:
-                    if self.calibration.state == CalibrationState.COLLECTING:
-                        self.calibration.add_frame(raw_yaw_p, raw_pitch_p, raw_roll_p)
-                    yaw, pitch, roll = self.calibration.apply(raw_yaw_p, raw_pitch_p, raw_roll_p)
-                    head_pose = HeadPose(yaw, pitch, roll, raw_yaw_p, raw_pitch_p, raw_roll_p)
+                    head_pose = HeadPose(raw_yaw_p, raw_pitch_p, raw_roll_p)
 
         return face_landmarks_out, head_pose
 

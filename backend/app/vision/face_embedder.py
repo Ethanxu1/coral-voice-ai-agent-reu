@@ -18,7 +18,6 @@ import logging
 import threading
 from typing import Optional
 
-import cv2
 import numpy as np
 
 log = logging.getLogger("vision.face_embedder")

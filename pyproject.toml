@@ -21,25 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Pi-side only: the MobileNetV3 pose classifier loaded by robot_server.py.
-# Not installed on the Mac (torch is heavy and only the robot needs it).
-robot = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
-]
-
-# SMPL shape calibration (Phase 2). Optional because the SMPL weights are gated
-# behind academic registration and torch is heavy. Install with:
-#   uv sync --extra smpl
-#
-# Use the .npz form of SMPL_NEUTRAL — the legacy .pkl needs chumpy, which has a
-# broken build under Python 3.12. The repo README has a one-liner conversion.
-smpl = [
-    "torch>=2.3",
-    "smplx>=0.1.28",
-    "trimesh>=4.0",  # debug visualization only
-]
-
 # Multi-modal subject re-identification. InsightFace ArcFace embeddings for
 # face identity + HSV torso/legs histograms for appearance fallback. Install:
 #   uv sync --extra reid

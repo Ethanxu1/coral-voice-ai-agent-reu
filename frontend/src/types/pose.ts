@@ -16,15 +16,6 @@ export interface HeadPose {
   yaw: number
   pitch: number
   roll: number
-  raw_yaw: number
-  raw_pitch: number
-  raw_roll: number
-}
-
-export interface CalibrationStatus {
-  state: 'idle' | 'collecting' | 'calibrated'
-  progress: number
-  frame_count: number
 }
 
 export interface StabilityStatus {
@@ -61,24 +52,4 @@ export interface TuningParamSpec {
   hint: string
 }
 
-export interface TuningState {
-  values: Record<string, number>
-  params: TuningParamSpec[]
-}
-
 export type SelectionState = 'idle' | 'selecting' | 'selected' | 'searching'
-
-export interface PoseUpdate {
-  type: 'pose_update' | 'tracking_lost' | 'calibration_status'
-  timestamp: number
-  body_landmarks: Landmark[]
-  face_landmarks: FaceLandmark[]
-  head_pose: HeadPose | null
-  calibration: CalibrationStatus
-  stability?: StabilityStatus
-  selection_state?: SelectionState
-  selected_subject_id?: string | null
-  subjects?: DetectedSubject[]
-  reason?: string
-  message?: string
-}
