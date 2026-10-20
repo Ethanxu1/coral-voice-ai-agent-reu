@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { getFeaturesBase, getRobotBase } from '../demo/robotConfig'
-import { SPEAKER_BASE } from '../demo/config'
 import './ConnectionStatus.css'
 
 export interface ServiceStatus {
@@ -12,7 +11,6 @@ export interface ServiceStatus {
 export const SERVICES: ServiceStatus[] = [
   { name: 'Server', ok: null, url: getRobotBase() },
   { name: 'Vision', ok: null, url: getFeaturesBase() },
-  { name: 'Speaker', ok: null, url: SPEAKER_BASE },
 ]
 
 export async function checkHealth(url: string): Promise<boolean> {

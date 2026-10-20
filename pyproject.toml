@@ -18,10 +18,6 @@ dependencies = [
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
     "httpx>=0.27.0",
-    "pyttsx3>=2.90",
-    "qwen-tts>=0.1.1",
-    "sounddevice>=0.5.5",
-    "soundfile>=0.14.0",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +54,6 @@ reid = [
 server = "app.main:main"
 robot = "app.main:main_robot"
 sim-test = "app.main:main_sim_test"
-speaker = "app.speaker.speaker_server:main"
 vision = "app.vision.vision_server:main"
 # collision-test / leg-bucket-test moved to backend/tests/ (dev harnesses, not packaged);
 # run directly: `python backend/tests/collision_test.py`, `python backend/tests/leg_bucket_test.py`.
@@ -69,7 +64,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # The backend lives under backend/app. Each subdirectory (robot, vision, llm,
-# simulator, speaker, collision) becomes a top-level package inside the wheel,
+# simulator, collision) becomes a top-level package inside the wheel,
 # and the loose modules (main.py, validation.py, state_manager.py,
 # follow_controller.py) sit at the wheel root as `app.*`.
 # `only-include = ["backend/app"]` ships everything under backend/app;

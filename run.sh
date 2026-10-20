@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# Start the CORAL stack: main server (sim or hardware), vision server,
-# optionally speaker, and the frontend dev server. Each process's output is
+# Start the CORAL stack: main server (sim or hardware), vision server, and
+# the frontend dev server. Each process's output is
 # piped into its own file under logs/.
 #
 # Usage:
 #   ./run.sh                          # sim mode: uv run server
 #   ./run.sh -live                    # hardware mode: uv run robot
 #   ./run.sh -live -ip 192.168.8.219  # hardware mode, explicit robot IP
-#   ./run.sh -speaker                 # also start uv run speaker
-#   ./run.sh -live -ip 192.168.8.219 -speaker
 set -euo pipefail
 set -m  # enable job control so each background job gets its own process group
 
 LIVE=false
 ROBOT_IP=""
-WITH_SPEAKER=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -30,13 +27,9 @@ while [[ $# -gt 0 ]]; do
             ROBOT_IP="$2"
             shift 2
             ;;
-        -speaker)
-            WITH_SPEAKER=true
-            shift
-            ;;
         *)
             echo "Unknown argument: $1" >&2
-            echo "Usage: $0 [-live [-ip <robot_ip>]] [-speaker]" >&2
+            echo "Usage: $0 [-live [-ip <robot_ip>]]" >&2
             exit 1
             ;;
     esac
@@ -53,7 +46,7 @@ mkdir -p "$LOG_DIR"
 
 # Ports the stack needs. Fail fast if any are already bound so the user gets a
 # clear error instead of three services silently competing.
-REQUIRED_PORTS=(8000 8001 5002)
+REQUIRED_PORTS=(8000 8001)
 if command -v ss >/dev/null 2>&1; then
     PORT_CHECK_CMD="ss"
 elif command -v netstat >/dev/null 2>&1; then
@@ -130,12 +123,6 @@ PIDS+=("$!")
 echo "Starting vision server -> $LOG_DIR/vision.log"
 uv run vision > "$LOG_DIR/vision.log" 2>&1 &
 PIDS+=("$!")
-
-if [[ "$WITH_SPEAKER" == true ]]; then
-    echo "Starting speaker server -> $LOG_DIR/speaker.log"
-    uv run speaker > "$LOG_DIR/speaker.log" 2>&1 &
-    PIDS+=("$!")
-fi
 
 echo "Starting frontend dev server -> $LOG_DIR/frontend.log"
 (cd "$SCRIPT_DIR/frontend" && npm run dev) > "$LOG_DIR/frontend.log" 2>&1 &

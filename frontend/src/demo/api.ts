@@ -5,7 +5,7 @@
 // 3-2-1 countdown locked to the speaker audio and the camera-click held until
 // /classify returns.
 
-import { ACTION_WS, SPEAKER_BASE } from './config'
+import { ACTION_WS } from './config'
 import { getFeaturesBase, getPiBase, getRobotBase, getSimBase } from './robotConfig'
 import { beginHardwareDispatch } from './hardwareDispatchStatus'
 
@@ -35,25 +35,39 @@ export interface ActionResult {
   safety?: MoveSafety | null
 }
 
-// ── Speaker (Mac :5002) — resolves only after speech finishes ─────────────────
-export async function speak(opts: { script?: string; text?: string }): Promise<void> {
-  const res = await fetch(`${SPEAKER_BASE}/speak`, {
+// ── Speech (OpenAI TTS via the backend's /speak) ─────────────────────────────
+// One shared element so a new line (or killSpeech) cuts off the previous one.
+let speechAudio: HTMLAudioElement | null = null
+
+/** Speak `text` aloud; resolves when playback ends or is cut off. */
+export async function speak({ text }: { text: string }): Promise<void> {
+  const res = await fetch(`${getRobotBase()}/speak`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
+    body: JSON.stringify({ text }),
   })
   if (!res.ok) throw new Error(`speak failed: ${res.status}`)
+  const url = URL.createObjectURL(await res.blob())
+  await killSpeech()
+  const audio = new Audio(url)
+  speechAudio = audio
+  try {
+    await new Promise<void>((resolve, reject) => {
+      audio.onended = () => resolve()
+      audio.onpause = () => resolve()
+      audio.onerror = () => reject(new Error('speech playback failed'))
+      audio.play().catch(reject)
+    })
+  } finally {
+    URL.revokeObjectURL(url)
+    if (speechAudio === audio) speechAudio = null
+  }
 }
 
-// Stop any in-progress speech immediately (tab closed / demo restarted).
-// Best-effort: a failure here must never block teardown. `keepalive` lets the
-// request survive a page unload so a closing tab still silences Coral.
+/** Stop any in-progress speech immediately (tab closed / demo restarted). */
 export async function killSpeech(): Promise<void> {
-  try {
-    await fetch(`${SPEAKER_BASE}/kill`, { method: 'POST', keepalive: true })
-  } catch {
-    /* ignore */
-  }
+  speechAudio?.pause()
+  speechAudio = null
 }
 
 // Retarget the user's current pose to robot servo commands. Hits the vision

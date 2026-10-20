@@ -6,7 +6,6 @@
 
 const env = import.meta.env as Record<string, string | undefined>
 
-export const SPEAKER_BASE = env.VITE_SPEAKER_BASE ?? 'http://localhost:5002'
 export const ACTION_WS = env.VITE_ACTION_WS ?? 'ws://localhost:8000/ws'
 // Binary geom-pose stream that drives the in-browser MuJoCo viewer (RobotViewer).
 export const SIM_WS = env.VITE_SIM_WS ?? 'ws://localhost:8000/ws/sim'

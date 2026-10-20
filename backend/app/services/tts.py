@@ -14,7 +14,6 @@ from loguru import logger
 
 from app.config import (
     OPENAI_API_KEY,
-    TTS_ENABLED,
     TTS_FORMAT,
     TTS_IS_ENABLED,
     TTS_MAX_CHARS,
@@ -26,10 +25,6 @@ from app.config import (
 # Import the base OpenAI client, not the Langfuse-wrapped one — TTS does
 # not need tracing and the wrapper may not expose audio.speech cleanly.
 from openai import OpenAI
-
-
-class TTSError(Exception):
-    """TTS generation failed; callers should fall back to silent text."""
 
 
 # Lazily initialized client so importing this module never blocks startup.
@@ -107,7 +102,7 @@ async def send_chat_response_with_audio(websocket: WebSocket, response_data: dic
             {
                 "type": "audio_response",
                 "audio_base64": base64.b64encode(audio).decode("utf-8"),
-                "format": "mp3",
+                "format": TTS_FORMAT,
             }
         )
 
