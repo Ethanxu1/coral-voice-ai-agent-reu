@@ -67,3 +67,59 @@ def test_chat_goes_through_hybrid_classifier(client, monkeypatch):
     assert seen == ["what is your favorite color?"]
     assert reply["type"] == "chat_response"
     assert reply["content"] == "echo: what is your favorite color?"
+
+
+@pytest.fixture
+def dispatched(monkeypatch):
+    """Record servo dispatches from /ws instead of moving the sim."""
+    calls: list[tuple[list, bool | None]] = []
+
+    async def record(commands, sim_only=None):
+        calls.append((commands, sim_only))
+
+    monkeypatch.setattr(ws_routes, "dispatch_servo_commands", record, raising=False)
+    return calls
+
+
+def test_jog_glides_instead_of_snapping(client, dispatched):
+    """A jog is sent as a timed move, like every other motion — it must not
+    write the new target straight into the sim (which snaps the joint)."""
+    from app.robot.angle_utils import rad_to_servo_units
+    from app.state import state
+
+    start = state.simulator.get_joint_position("head_pan")
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "command", "command": "head_left"})
+        result = ws.receive_json()
+
+    assert result["success"] is True
+    assert state.simulator.get_joint_position("head_pan") == pytest.approx(start)
+    [(commands, _)] = dispatched
+    [cmd] = commands
+    assert cmd.servo_id == 23  # head_pan
+    assert cmd.position == rad_to_servo_units(start - state.simulator.STEP_SIZE)
+    assert cmd.duration_ms >= 300
+
+
+def test_jog_is_safety_checked_before_it_moves(client, dispatched, monkeypatch):
+    """The collision/fall gate runs on the jog target first; only its safe
+    target is dispatched, and the verdict reaches the client."""
+    from app.robot.angle_utils import rad_to_servo_units
+    from app.state import state
+
+    start = state.simulator.get_joint_position("head_pan")
+    report = {"collision_clamped": True, "fall_blocked": False, "bad_pairs": ["a/b"]}
+    monkeypatch.setattr(
+        ws_routes,
+        "collision_checked_targets",
+        lambda sim, targets, context: ({"head_pan": start - 0.05}, report),
+        raising=False,
+    )
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "command", "command": "head_left"})
+        result = ws.receive_json()
+
+    assert result["collision_clamped"] is True
+    assert result["bad_pairs"] == ["a/b"]
+    [(commands, _)] = dispatched
+    assert [c.position for c in commands] == [rad_to_servo_units(start - 0.05)]

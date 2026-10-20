@@ -211,17 +211,6 @@ class AiNexSimulator:
         # DEBUG, so TRACE is silent unless explicitly enabled (LOGURU_LEVEL=TRACE).
         logger.trace(f"Set {joint_name} to {position:.3f} rad")
 
-    def move_joint(self, joint_name: str, delta: float) -> float:
-        current = self.get_joint_position(joint_name)
-        new_pos = current + delta
-
-        if joint_name in JOINT_LIMITS:
-            new_pos = JOINT_LIMITS[joint_name].clamp(new_pos)
-
-        self.set_joint_position(joint_name, new_pos)
-        logger.info(f"Moved {joint_name}: {current:.2f} -> {new_pos:.2f}")
-        return new_pos
-
     def reset_pose(self) -> None:
         """Re-stand the robot: place it upright slightly above the floor in the
         stand pose and let physics drop it into a settled stand. Recovers from a
@@ -251,7 +240,7 @@ class AiNexSimulator:
         """Static per-joint metadata for the browser viewer's manual mode.
 
         Per joint (short name): rotation limits in sim radians (from
-        validation.JOINT_LIMITS, the same source move_joint clamps with, falling
+        validation.JOINT_LIMITS, the same source /test jogs clamp with, falling
         back to the model's mechanical range) and the render-geom indices that
         belong to it (matching get_geom_poses() order), so the client can map
         hovered/clicked meshes to joints.
@@ -403,8 +392,8 @@ class AiNexSimulator:
 
 
 # Command mapping for LLM integration
-# /test page jog buttons: command → (joint, direction). Each press moves the
-# joint by STEP_SIZE radians in that direction.
+# /test page jog buttons: command → (joint, direction). Each press targets the
+# joint STEP_SIZE radians further in that direction.
 JOG_COMMANDS: dict[str, tuple[str, int]] = {
     # Head
     "head_left": ("head_pan", -1),
@@ -472,19 +461,17 @@ PRESET_POSES: dict[str, dict[str, float]] = {
 }
 
 
-def execute_command(simulator: AiNexSimulator, command: str) -> bool:
-    """Run a /test page button command (jog, preset pose, or reset)."""
+def command_targets(simulator: AiNexSimulator, command: str) -> dict[str, float] | None:
+    """Joint targets (radians) for a /test page jog or preset button, or None if
+    the command is unknown. Doesn't move the sim — the caller safety-checks and
+    dispatches the targets like any other motion."""
     command = command.lower().strip()
     if command in JOG_COMMANDS:
         joint, direction = JOG_COMMANDS[command]
-        simulator.move_joint(joint, direction * simulator.STEP_SIZE)
-    elif command in PRESET_POSES:
-        for joint, target in PRESET_POSES[command].items():
-            simulator.set_joint_position(joint, target)
-        logger.info(f"Executing {command} pose")
-    elif command == "reset":
-        simulator.reset_pose()
-    else:
-        logger.warning(f"Unknown command: {command}")
-        return False
-    return True
+        target = simulator.get_joint_position(joint) + direction * simulator.STEP_SIZE
+        if joint in JOINT_LIMITS:
+            target = JOINT_LIMITS[joint].clamp(target)
+        return {joint: target}
+    if command in PRESET_POSES:
+        return dict(PRESET_POSES[command])
+    return None

@@ -30,14 +30,15 @@ from app.services.motion import (
     RobotServerUnavailable,
     _get_robot_state,
     _sync_sim_to_hardware,
-    apply_safety_clamp_to_sim,
+    collision_checked_targets,
     convert_state_to_degrees,
+    dispatch_servo_commands,
     reset_to_stand,
 )
 from app.services.recording import ConversationRecorder
 from app.services.transcription import transcribe_audio
 from app.services.tts import send_chat_response_with_audio
-from app.simulator.mujoco_sim import execute_command
+from app.simulator.mujoco_sim import JOG_COMMANDS, command_targets
 from app.state import state
 from app.validation import describe_joint_state
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -48,9 +49,10 @@ router = APIRouter()
 # Store connected websocket clients
 connected_clients: set[WebSocket] = set()
 
-# Hardware travel time for a /test page jog: a single-joint nudge should feel
-# immediate on the physical robot.
+# Travel time for /test page buttons: a single-joint jog should feel immediate
+# but still glide; a preset pose moves several joints further.
 _JOG_DURATION_MS = 400
+_PRESET_DURATION_MS = 1000
 
 # Child-friendly error copy so a failure feels recoverable, not scary.
 _CHILD_FRIENDLY_ERRORS = {
@@ -255,20 +257,6 @@ async def _handle_audio(session: _Session, message: dict) -> None:
         await _handle_text_turn(session, text, source="audio", pre_context=pre_context)
 
 
-async def _mirror_jog_to_hardware(before: dict[str, float]) -> None:
-    """Send the joints a /test page jog just changed in the sim to connected hardware."""
-    if state.hardware_dispatcher is None:
-        return
-    after = state.simulator.get_all_joint_states()
-    changed = {
-        joint: rad for joint, rad in after.items()
-        if abs(rad - before.get(joint, 0.0)) > 1e-4
-    }
-    commands = joints_to_servo_commands(changed, _JOG_DURATION_MS)
-    if commands:
-        await asyncio.to_thread(state.hardware_dispatcher.send_commands, commands)
-
-
 async def _handle_command(session: _Session, message: dict) -> None:
     """Run a /test page button: reset, sim↔hardware sync, or a jog/preset."""
     command = message.get("command", "")
@@ -285,17 +273,20 @@ async def _handle_command(session: _Session, message: dict) -> None:
         # Snap the sim viewer to the robot's current pose without moving the robot.
         await asyncio.to_thread(_sync_sim_to_hardware)
         success = True
-    else:
-        before = sim.get_all_joint_states()
-        success = execute_command(sim, command)
-        if success:
-            # The jog was applied raw; re-check it against the same collision/fall
-            # gate as every other motion and roll it back if unsafe.
-            after = sim.get_all_joint_states()
-            safety_report = apply_safety_clamp_to_sim(
-                sim, before, after, f"/test command '{command}'"
+    elif (targets := command_targets(sim, command)) is not None:
+        # Same path as every other motion: safety-check the target first, then
+        # dispatch it as a timed move so the sim (and robot) glide there.
+        safe_targets, safety_report = await asyncio.to_thread(
+            collision_checked_targets, sim, targets, f"/test command '{command}'"
+        )
+        duration_ms = _JOG_DURATION_MS if command in JOG_COMMANDS else _PRESET_DURATION_MS
+        try:
+            await dispatch_servo_commands(
+                joints_to_servo_commands(safe_targets, duration_ms), sim_only=None
             )
-            await _mirror_jog_to_hardware(before)
+        except RobotServerUnavailable as e:
+            logger.warning(f"/test command '{command}': robot server unavailable: {e}")
+        success = True
 
     await session.websocket.send_json(
         {
