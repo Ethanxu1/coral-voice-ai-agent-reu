@@ -2,6 +2,7 @@
 
 from app.services.follow import gentle_follow_enabled, set_gentle_follow
 from app.services.motion import _get_robot_state
+from app.state import state
 from app.vision.pose_to_robot import hipless_arms_enabled, set_hipless_arms
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -19,6 +20,22 @@ class HiplessArmsRequest(BaseModel):
     # Slower, smoother following so the simulated robot doesn't topple.
     # Defaults to the same value as `enabled`.
     gentle: bool | None = None
+
+
+class UprightRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/sim/upright")
+async def set_sim_upright(req: UprightRequest) -> dict[str, bool]:
+    """Hold the simulated robot's body upright so it can't tip or fall.
+
+    The test pages (Joint test, Pose Tester) turn this on while open and off on
+    exit. Sim only — it has no effect on a physical robot.
+    """
+    if state.simulator is not None:
+        state.simulator.set_upright_pinned(req.enabled)
+    return {"enabled": req.enabled}
 
 
 @router.post("/follow/hipless-arms")

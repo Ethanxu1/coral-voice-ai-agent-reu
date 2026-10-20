@@ -93,6 +93,7 @@ def collision_checked_targets(
     sim: AiNexSimulator | None,
     target_joints: dict[str, float],
     context: str,
+    check_fall: bool = True,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     """Run both safety checks on target_joints from a starting joint state.
 
@@ -105,7 +106,8 @@ def collision_checked_targets(
        of falling over.
 
     The starting pose is the sim's live joint state, so call this BEFORE
-    moving the sim.
+    moving the sim. `check_fall=False` skips step 2 (the test pages, which pin
+    the sim upright instead).
 
     Returns (safe_targets, safety_report). safety_report is JSON-ready so
     endpoints can pass it straight to the frontend:
@@ -136,7 +138,7 @@ def collision_checked_targets(
             )
             report.update(collision_clamped=True, safe_fraction=safe_frac, bad_pairs=bad_pairs)
 
-    if state.stability_checker is not None:
+    if check_fall and state.stability_checker is not None:
         fall = state.stability_checker.check_fall(safe_joints, current)
         report.update(head_z=fall["head_z"], threshold_z=fall["threshold_z"])
         if fall["fell"]:

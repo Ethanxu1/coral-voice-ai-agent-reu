@@ -22,6 +22,8 @@ class SetPoseRequest(BaseModel):
     # Pose Tester's "collision check off" mode: apply the pose exactly as
     # authored, skipping the collision/fall gate (joint limits still clamp).
     skip_collision_check: bool = False
+    # False skips only the fall check (Pose Tester, which pins the sim upright).
+    check_fall: bool = True
     # 0 applies instantly; otherwise the sim glides there over this many ms.
     duration_ms: int = Field(default=0, ge=0, le=10000)
 

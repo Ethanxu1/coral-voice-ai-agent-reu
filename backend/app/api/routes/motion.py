@@ -110,8 +110,9 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
 
     Pulses are *hardware* servo units (the motions.py format), converted to sim
     radians with hardware_units_to_rad. Unless `skip_collision_check`, the pose
-    goes through the same collision/fall gate as /move first, and the verdict is
-    returned. With `duration_ms` > 0 the sim glides there over that time;
+    goes through the same collision/fall gate as /move first (`check_fall=False`
+    skips the fall half — the Pose Tester pins the sim upright instead), and the
+    verdict is returned. With `duration_ms` > 0 the sim glides there over that time;
     0 applies it instantly. Sim only: never reaches the physical robot.
     """
     if state.simulator is None:
@@ -128,7 +129,7 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
                               "safe_fraction": 1.0, "bad_pairs": []}
     if not req.skip_collision_check:
         targets, safety = await asyncio.to_thread(
-            collision_checked_targets, state.simulator, targets, "/set-pose"
+            collision_checked_targets, state.simulator, targets, "/set-pose", req.check_fall
         )
     if safety["fall_blocked"]:
         return {"status": "blocked", "applied": [], "skipped": skipped, "safety": safety}

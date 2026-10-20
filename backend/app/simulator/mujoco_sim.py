@@ -55,6 +55,10 @@ class AiNexSimulator:
 
     STEP_SIZE = 0.2
 
+    # timestep 0.002 s × 5 steps = one 10 ms frame; the loop sleeps 10 ms per
+    # frame, so physics runs at about real time.
+    STEPS_PER_FRAME = 5
+
     # How far above its settled height to lift the floating base on reset, so the
     # robot drops and settles into a stable stand (re-stands after a fall).
     DROP_HEIGHT = 0.05
@@ -73,6 +77,14 @@ class AiNexSimulator:
         self._lock = threading.Lock()
 
         self._apply_stand_keyframe()
+
+        # Floating-base (free joint) slices of qpos/qvel, and its upright stand
+        # pose, for holding the robot upright on the test pages.
+        root_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "root")
+        self._root_qpos = slice(int(self.model.jnt_qposadr[root_id]), int(self.model.jnt_qposadr[root_id]) + 7)
+        self._root_qvel = slice(int(self.model.jnt_dofadr[root_id]), int(self.model.jnt_dofadr[root_id]) + 6)
+        self._upright_base = self.data.qpos[self._root_qpos].copy()
+        self.upright_pinned = False
 
         self._actuator_ids: dict[str, int] = {}
         for i in range(self.model.nu):
@@ -176,6 +188,33 @@ class AiNexSimulator:
             logger.info(f"Applied 'stand' keyframe (lift={lift:.3f})")
         else:
             logger.warning("'stand' keyframe not found, using default pose")
+
+    def set_upright_pinned(self, enabled: bool) -> None:
+        """Hold the robot's body at its upright stand pose so it can't tip or
+        fall (the joints still move). Enabling also stands a fallen robot up."""
+        with self._lock:
+            self.upright_pinned = enabled
+            if enabled:
+                self._hold_base_upright()
+                mujoco.mj_forward(self.model, self.data)
+        logger.info(f"Sim upright pin {'on' if enabled else 'off'}")
+
+    def _hold_base_upright(self) -> None:
+        self.data.qpos[self._root_qpos] = self._upright_base
+        self.data.qvel[self._root_qvel] = 0.0
+
+    def base_pose(self) -> np.ndarray:
+        """Floating-base pose: xyz position + wxyz orientation quaternion."""
+        with self._lock:
+            return self.data.qpos[self._root_qpos].copy()
+
+    def step(self) -> None:
+        """Advance physics by one 10 ms frame (5 × 2 ms timesteps)."""
+        with self._lock:
+            for _ in range(self.STEPS_PER_FRAME):
+                mujoco.mj_step(self.model, self.data)
+                if self.upright_pinned:
+                    self._hold_base_upright()
 
     def get_joint_position(self, joint_name: str) -> float:
         full_name = self.JOINT_NAMES.get(joint_name, joint_name)
@@ -340,9 +379,6 @@ class AiNexSimulator:
     def _run(
         self, on_close: Callable[[], None] | None = None, open_window: bool = True
     ) -> None:
-        # timestep 0.002s × 5 steps = 0.01s sim per 0.01s sleep ≈ real-time.
-        steps_per_frame = 5
-
         # Open the native window before the stepping loop, unlocked and on this
         # same thread — matching the original working code and coordinating with
         # mjpython's main thread without holding self._lock across it (avoids any
@@ -362,9 +398,8 @@ class AiNexSimulator:
         logger.info("Starting MuJoCo physics loop")
         try:
             while self._running:
+                self.step()
                 with self._lock:
-                    for _ in range(steps_per_frame):
-                        mujoco.mj_step(self.model, self.data)
                     if viewer is not None:
                         if viewer.is_running():
                             viewer.sync()

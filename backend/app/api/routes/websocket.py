@@ -274,10 +274,11 @@ async def _handle_command(session: _Session, message: dict) -> None:
         await asyncio.to_thread(_sync_sim_to_hardware)
         success = True
     elif (targets := command_targets(sim, command)) is not None:
-        # Same path as every other motion: safety-check the target first, then
-        # dispatch it as a timed move so the sim (and robot) glide there.
+        # Same path as every other motion: collision-check the target first,
+        # then dispatch it as a timed move so the sim (and robot) glide there.
+        # No fall check: the Joint test page pins the sim upright instead.
         safe_targets, safety_report = await asyncio.to_thread(
-            collision_checked_targets, sim, targets, f"/test command '{command}'"
+            collision_checked_targets, sim, targets, f"/test command '{command}'", False
         )
         duration_ms = _JOG_DURATION_MS if command in JOG_COMMANDS else _PRESET_DURATION_MS
         try:

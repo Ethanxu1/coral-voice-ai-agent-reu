@@ -112,7 +112,7 @@ def test_jog_is_safety_checked_before_it_moves(client, dispatched, monkeypatch):
     monkeypatch.setattr(
         ws_routes,
         "collision_checked_targets",
-        lambda sim, targets, context: ({"head_pan": start - 0.05}, report),
+        lambda sim, targets, context, check_fall=True: ({"head_pan": start - 0.05}, report),
         raising=False,
     )
     with client.websocket_connect("/ws") as ws:
@@ -123,3 +123,20 @@ def test_jog_is_safety_checked_before_it_moves(client, dispatched, monkeypatch):
     assert result["bad_pairs"] == ["a/b"]
     [(commands, _)] = dispatched
     assert [c.position for c in commands] == [rad_to_servo_units(start - 0.05)]
+
+
+def test_jog_skips_the_fall_check(client, dispatched, monkeypatch):
+    """Joint test jogs are never fall-blocked (the test pages pin the sim upright)."""
+    from app.state import state
+
+    class AlwaysFalls:
+        def check_fall(self, target_joints, current_joints=None):
+            return {"fell": True, "head_z": 0.05, "stand_head_z": 0.36, "threshold_z": 0.25}
+
+    monkeypatch.setattr(state, "stability_checker", AlwaysFalls())
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "command", "command": "left_arm_up"})
+        result = ws.receive_json()
+
+    assert result["fall_blocked"] is False
+    assert len(dispatched) == 1
