@@ -14,7 +14,7 @@ Uses mj_forward (kinematics + collision detection, no integration) so a
 import mujoco
 from loguru import logger
 
-import app.resource_path as resource_path
+from app.config import AINEX_MODEL_PATH
 
 # Geom pairs whose contact is expected/harmless and must never count as a
 # self-collision. The feet's outer pads (l_foot2/r_foot2) touch in normal
@@ -39,7 +39,7 @@ class CollisionChecker:
         buffer_fraction: float = 0.02,
     ):
         if model_path is None:
-            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
+            model_path = str(AINEX_MODEL_PATH)
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)

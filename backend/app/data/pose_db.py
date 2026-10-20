@@ -4,9 +4,9 @@ import json
 import sqlite3
 from datetime import datetime
 
-from app import resource_path
+from app.config import REPO_ROOT
 
-_DB_PATH = resource_path.user_data_dir() / "data" / "poses.db"
+_DB_PATH = REPO_ROOT / "data" / "poses.db"
 
 
 def _connect() -> sqlite3.Connection:

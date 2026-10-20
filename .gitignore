@@ -26,15 +26,6 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-# ...except our hand-written desktop-installer build spec, which is
-# checked in deliberately (see packaging/, .agents/docs/features/desktop-packaging.md).
-!packaging/backend.spec
-
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -224,10 +215,6 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/tsconfig.tsbuildinfo
-
-# Desktop packaging (electron/dist, packaging/dist already covered by the
-# generic dist/ rule above)
-electron/node_modules/
 
 # Nix
 result

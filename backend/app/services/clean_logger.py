@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from app.resource_path import user_data_dir
+from app.config import LOGS_DIR
 
 
 class CleanLogger:
@@ -28,9 +28,7 @@ class CleanLogger:
         self.started_at = datetime.now()
         timestamp = self.started_at.strftime("%Y%m%d_%H%M%S")
 
-        # In dev this lives under the repo's logs/ folder; in a frozen install
-        # it lives under ~/.coral/logs so the bundle directory stays clean.
-        base_dir = user_data_dir() / "logs" / "clean_logs" / session_id
+        base_dir = LOGS_DIR / "clean_logs" / session_id
         base_dir.mkdir(parents=True, exist_ok=True)
 
         self.path = base_dir / f"clean_log_{timestamp}_{session_id}.log"

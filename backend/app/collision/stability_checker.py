@@ -29,7 +29,7 @@ import os
 import mujoco
 from loguru import logger
 
-import app.resource_path as resource_path
+from app.config import AINEX_MODEL_PATH
 
 _HEAD_BODY_NAME = "head_tilt_link"
 
@@ -61,7 +61,7 @@ class StabilityChecker:
         ramp_seconds: float = _RAMP_SECONDS,
     ):
         if model_path is None:
-            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
+            model_path = str(AINEX_MODEL_PATH)
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)

@@ -1,11 +1,23 @@
 """Environment-driven settings for the Coral AI agent."""
 
 import os
+from pathlib import Path
 
 # Load environment variables from .env files before any settings are read.
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+# This file is backend/app/config.py, so the repo root is two levels up.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ASSETS_DIR = REPO_ROOT / "assets"
+AINEX_MODEL_PATH = ASSETS_DIR / "ainex" / "ainex.xml"
+LOGS_DIR = REPO_ROOT / "logs"
+RECORDINGS_DIR = REPO_ROOT / "recordings"
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +101,6 @@ ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in
 # ---------------------------------------------------------------------------
 # Server binding
 # ---------------------------------------------------------------------------
-# Default to localhost for school/Electron deployments so the backend is not
-# exposed on the classroom network. Docker/containerized runs should set
-# CORAL_HOST=0.0.0.0 explicitly.
+# Default to localhost so the backend is not exposed on the classroom network.
+# Containerized runs set CORAL_HOST=0.0.0.0 (see docker-compose.yml).
 CORAL_HOST = os.getenv("CORAL_HOST", "127.0.0.1")

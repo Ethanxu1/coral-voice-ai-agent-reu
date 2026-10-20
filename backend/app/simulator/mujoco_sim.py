@@ -9,7 +9,7 @@ import mujoco.viewer
 import numpy as np
 from loguru import logger
 
-import app.resource_path as resource_path
+from app.config import AINEX_MODEL_PATH
 from app.validation import JOINT_LIMITS
 
 
@@ -61,7 +61,7 @@ class AiNexSimulator:
 
     def __init__(self, model_path: str | None = None):
         if model_path is None:
-            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
+            model_path = str(AINEX_MODEL_PATH)
 
         logger.info(f"Loading MuJoCo model from: {model_path}")
         self.model = mujoco.MjModel.from_xml_path(model_path)

@@ -89,6 +89,4 @@ dev = [
     "hatchling>=1.29.0",
     "pytest>=8.0.0",
     "ruff>=0.8.0",
-    "pyinstaller>=6.11.0",
-    "pyinstaller-hooks-contrib>=2024.10",
 ]

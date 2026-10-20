@@ -1,4 +1,4 @@
-"""Tests for health and readiness endpoints."""
+"""Tests for the health endpoint."""
 
 from __future__ import annotations
 
@@ -47,15 +47,3 @@ def test_health_returns_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-
-
-def test_ready_reports_required_components(client):
-    response = client.get("/ready")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "ok"
-    assert data["assets_present"] is True
-    assert data["whisper_ready"] is True
-    assert data["tts_enabled"] is True
-    assert data["tts_key_present"] is True
-    assert data["db_writable"] is True

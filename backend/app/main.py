@@ -15,11 +15,12 @@ from fastapi.staticfiles import StaticFiles
 from langfuse import Langfuse
 from loguru import logger
 
-from app import resource_path
 from app.api.router import router as api_router
 from app.collision.collision_checker import CollisionChecker
 from app.collision.stability_checker import StabilityChecker
 from app.config import (
+    AINEX_MODEL_PATH,
+    ASSETS_DIR,
     CORAL_HOST,
     CORAL_MUJOCO_WINDOW,
     CORAL_NO_VIEWER,
@@ -27,6 +28,7 @@ from app.config import (
     ENABLE_FALL_CHECK,
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
+    REPO_ROOT,
     ROBOT_IP,
     ROBOT_MODE,
 )
@@ -64,8 +66,7 @@ def _run_startup_validation() -> None:
     """
     from app.config import OPENAI_API_KEY, TTS_IS_ENABLED
 
-    assets_dir = resource_path.repo_root() / "assets" / "ainex"
-    if not assets_dir.is_dir() or not any(assets_dir.rglob("*.xml")):
+    if not AINEX_MODEL_PATH.is_file():
         logger.warning(
             "MuJoCo AiNex assets not found under assets/ainex. "
             "The simulator and browser viewer will not work."
@@ -81,7 +82,7 @@ def _run_startup_validation() -> None:
     else:
         logger.info("TTS disabled.")
 
-    db_parent = Path(resource_path.user_data_dir())
+    db_parent = REPO_ROOT / "data"
     try:
         db_parent.mkdir(parents=True, exist_ok=True)
         if not os.access(db_parent, os.W_OK):
@@ -181,7 +182,6 @@ def create_app() -> FastAPI:
     )
 
     # Serve robot mesh assets (STL) so the browser viewer can load geometry.
-    ASSETS_DIR = resource_path.repo_root() / "assets"
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
     app.include_router(api_router)

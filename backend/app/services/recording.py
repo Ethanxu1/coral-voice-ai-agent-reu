@@ -6,10 +6,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from app import resource_path
+from app.config import RECORDINGS_DIR
 
 # Setup recordings directory
-RECORDINGS_DIR = resource_path.user_data_dir() / "recordings"
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
