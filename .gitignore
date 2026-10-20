@@ -205,7 +205,6 @@ __marimo__/
 # ===================
 
 # Robot model assets — only the AiNex model is tracked.
-# SMPL weights are academic-use only (download manually; see README).
 # Other menagerie models are gitignored to keep the repo small.
 assets/*
 !assets/ainex/

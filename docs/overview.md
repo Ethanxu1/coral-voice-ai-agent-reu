@@ -19,21 +19,23 @@ Everything perceptual and cognitive runs on a laptop. The Pi does nothing but dr
 ```
 ┌───────────────────────── Mac (laptop) ─────────────────────────┐
 │                                                                │
-│  Frontend        :5173   React + Three.js, the child-facing UI │
-│  Main server     :8000   Whisper, LLM, motion planning, MuJoCo │
-│  Vision server   :8001   Webcam → MediaPipe → joint targets    │
-│  Speaker server  :5002   pyttsx3 text-to-speech                │
+│  Frontend   :5173 Docker  React + Three.js, child-facing UI    │
+│  Backend    :8000 Docker  Whisper, LLM, TTS, motion, MuJoCo    │
+│  Postgres   :5432 Docker  saved poses                          │
+│  Vision     :8001 host    Webcam → MediaPipe → joint targets   │
 │                                                                │
 └────────────────────────────┬───────────────────────────────────┘
                              │  HTTP  (ROBOT_IP:9000)
                              ▼
 ┌───────────────────── Raspberry Pi ─────────────────────────────┐
 │  ainex Docker container — ROS Noetic                           │
-│  robot_server.py → servo bus → physical AiNex                  │
+│  nodes/server.py → servo bus → physical AiNex                  │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-The split exists because the Pi cannot run the perception and language stack, and because the demo must work with no robot attached at all. **Simulation mode is the default**: `uv run server` drives a MuJoCo model instead of hardware, over the same interface.
+The split exists because the Pi cannot run the perception and language stack, and because the demo must work with no robot attached at all. **Simulation mode is the default**: `./run.sh` drives a MuJoCo model instead of hardware, over the same interface; `./run.sh -live` also drives the robot.
+
+`./run.sh` starts the Docker services with `docker compose` and the vision server on the host, because Docker on macOS cannot reach a webcam. On Linux the backend container uses the host network (`docker-compose.linux.yml`) so it reaches the vision server on localhost.
 
 See [hardware.md](hardware.md) for how to reach the Pi and get code onto it.
 
@@ -43,20 +45,19 @@ See [hardware.md](hardware.md) for how to reach the Pi and get code onto it.
 
 ### Frontend — `frontend/`
 
-React + TypeScript + Vite. Three.js (`@react-three/fiber`) renders the robot; the pages under `frontend/backend/app/pages/` are separate experiences sharing one component library:
+React + TypeScript + Vite. Three.js (`@react-three/fiber`) renders the robot; the pages under `frontend/src/pages/` are separate experiences sharing `frontend/src/components/`; backend calls go through `frontend/src/api/` and endpoints are set in `frontend/src/config.ts`.
 
 | Page | Purpose |
 |---|---|
 | `Welcome` | Landing screen — offers the tutorial or a skip straight to the demo |
 | `RefinedDemo` | The main child-facing demo — the one used for experiments |
-| `Tutorial` | Guided walkthrough |
-| `ProDemo`, `MoveMate` | Developer-facing / alternate demo surfaces |
-| `PoseTester`, `JointGizmo`, `RobotViewer`, `PoseVisualization` | Debug and inspection tools |
-| `SubjectSelect` | Experiment session setup |
+| `tutorial/` | Guided walkthrough, one file per screen |
+| `RockPaperScissors` | Learn gestures and play against CORAL — see [rock-paper-scissors.md](rock-paper-scissors.md) |
+| `TestFunctionality`, `PoseTester`, `SubjectSelect` | Developer tools: joint jogging, raw servo poses, re-ID tuning |
 
-Demo flow lives in `frontend/backend/app/demo/useRefinedDemoMachine.ts` — an explicit state machine (`IDLE → SUBJECT_SELECT → LISTENING → COUNTDOWN → CAPTURED → FINETUNE → NAMING → …`, with `FOLLOWING`, `LIBRARY`, `EXIT_CONFIRM`, and `ERROR` as additional stages). When reasoning about *why the demo did something*, this file is usually the answer; the backend is stateless with respect to demo progression.
+Demo flow lives in `frontend/src/demo/useRefinedDemoMachine.ts` — an explicit state machine (`IDLE → SUBJECT_SELECT → LISTENING → COUNTDOWN → CAPTURED → FINETUNE → NAMING → …`, with `FOLLOWING`, `LIBRARY`, `EXIT_CONFIRM`, and `ERROR` as additional stages). When reasoning about *why the demo did something*, this file is usually the answer; the backend is stateless with respect to demo progression.
 
-### Main server — `backend/app/server.py`, port 8000
+### Backend — `backend/app/`, port 8000
 
 The hub. A FastAPI app that owns:
 
@@ -65,18 +66,21 @@ The hub. A FastAPI app that owns:
 - **Motion planning** — the LLM turns a motion description into waypoints of named primitives, guided by [`backend/app/llm/prompts/router.md`](../backend/app/llm/prompts/router.md).
 - **Safety** — self-collision clamping and a fall check on every dispatch path.
 - **The simulator** — MuJoCo, in-process.
-- **Pose library** — saving, listing, and replaying named poses.
+- **Text-to-speech** — OpenAI TTS ([`services/tts.py`](../backend/app/services/tts.py)); every spoken reply goes out as an `audio_response` frame over `/ws`, and `POST /speak` serves pages outside the chat pipeline.
+- **Pose library** — saving, listing, and replaying named poses, stored in Postgres ([`data/pose_db.py`](../backend/app/data/pose_db.py)).
 
-Prompts are Markdown files in `backend/app/llm/prompts/` rather than string literals, so they can be edited without touching Python. The model is set in one place, [`backend/app/llm/config.py`](../backend/app/llm/config.py).
+Code layout: `main.py` (app factory, lifespan, entry points), `api/routes/` (HTTP and WebSocket endpoints), `services/` (chat, intent, motion dispatch, follow mode, TTS, transcription), `llm/` (classifier, primitives, prompts), `schemas/` (Pydantic models), `config.py` (all settings).
+
+Prompts are Markdown files in `backend/app/llm/prompts/` rather than string literals, so they can be edited without touching Python. The model is set in one place, `LLM_MODEL` in [`backend/app/config.py`](../backend/app/config.py).
 
 ### Vision server — `backend/app/vision/`, port 8001
 
 Separate process, separate port, because it owns the webcam and runs a continuous loop that shouldn't compete with request handling.
 
-- `pose_estimator.py` — MediaPipe landmarks plus the capture state machine (`idle → countdown → collecting → fitting → frozen`), including the 3-second countdown and 3-second collection window.
+- `pose_estimator.py` — MediaPipe landmarks plus the capture state machine (`idle → countdown → collecting → frozen`), including the 3-second countdown and 3-second collection window.
 - `pose_to_robot.py` — the retargeting core. Converts MediaPipe world landmarks into robot joint targets in a **torso-local frame**, so shoulder pitch and roll are decoupled from each other and from global torso rotation. Legs use a separate pelvis frame so bending at the waist doesn't swing the robot's legs.
-- `pose_classifier.py` — MobileNetV3 checkpoint classifying the observed pose.
-- `smpl_fit.py` / `smpl_loader.py` — optional per-user body-shape calibration, so the same pose maps to the same joint angles across adults and children. Degrades silently if the SMPL weights aren't installed.
+- `leg_modes.py` — selectable leg strategies for `/map-features` (legs stand still unless `CORAL_ENABLE_LEG_TRACKING=true`).
+- `subject_selector.py` — multi-person re-identification: the child who raises a hand is the one followed.
 - `frame_broadcaster.py` — streams frames to the frontend.
 
 **Shadow convention:** the child's true right side drives the robot's right side, so the robot copies the child directly rather than mirroring them like a partner facing them. This falls out of two flips that cancel each other: `pose_estimator.py` flips the camera frame before MediaPipe runs (so the on-screen preview reads like a reflection), which swaps MediaPipe's own left/right landmark labels relative to the child's true sides, and `pose_to_robot.py` swaps those labels back when mapping to robot joints. Tracing either file in isolation looks like a mirror mapping — this is the single most common source of confusion when reading the code.
@@ -102,10 +106,6 @@ They differ in unit conversion, not structure; see [code-flow.md](code-flow.md) 
 A self-collision clamp and a fall check, both applied before dispatch on every path that moves the robot.
 
 This layer exists because neither source of poses is body-aware: retargeting maps a human's geometry without knowing what the robot can do to itself, and the LLM generates joint targets from language. Everything upstream is therefore free to propose poses that would be unsafe, and this is what makes executing them acceptable. Details in [code-flow.md](code-flow.md).
-
-### Speaker — `backend/app/speaker/`, port 5002
-
-pyttsx3 text-to-speech, played back through `sounddevice`/`soundfile` rather than pyttsx3's own playback (which segfaults on some platforms). Scripted lines live in `scripts.py`, requested by identifier so spoken copy stays in one place rather than scattered through the UI. A `qwen-tts` dependency and a standalone harness under `tests/qwen3-tts-test/` exist for an in-progress evaluation of a neural TTS replacement, but `speaker_server.py` does not use it yet.
 
 ---
 
@@ -159,6 +159,6 @@ Both converge at the safety layer. That convergence is deliberate — it means t
 | Understand intent routing | [intent-classifier.md](intent-classifier.md) |
 | Work with the physical robot | [hardware.md](hardware.md) |
 | Reproduce an experiment | [scenarios/](scenarios/) |
-| Change what the robot says | `backend/app/speaker/scripts.py`, `backend/app/llm/prompts/` |
+| Change what the robot says | `backend/app/llm/prompts/`, `backend/app/services/intent.py` (system replies) |
 | Change how poses map to joints | `backend/app/vision/pose_to_robot.py` |
-| Change the demo's flow | `frontend/backend/app/demo/useRefinedDemoMachine.ts` |
+| Change the demo's flow | `frontend/src/demo/useRefinedDemoMachine.ts` |

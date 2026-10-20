@@ -4,151 +4,115 @@ Multimodal AI dialogue agent for child-robot instruction grounding — Hiwonder 
 
 ## Overview
 
-CORAL is a voice-driven demo system that lets a child interact with the AiNex robot through speech. 
+CORAL is a voice-driven demo that lets a child interact with the AiNex robot
+through speech: the robot listens, works out what the child wants, and either
+talks back (OpenAI TTS) or moves — copying a pose the child strikes, or
+following a spoken instruction. Simulation (MuJoCo, shown in the browser) is
+the default, so no robot is needed.
 
-The Mac runs the frontend, LLM server, vision, and TTS. The Pi (inside an `ainex` Docker container with ROS Noetic) controls the physical robot servos.
+The laptop runs everything except the servos:
 
+| Service | Where | Port |
+|---------|-------|------|
+| Frontend (React, served by nginx) | Docker | 5173 |
+| Backend (FastAPI: LLM, Whisper, TTS, MuJoCo, motion safety) | Docker | 8000 |
+| Postgres (saved poses) | Docker | 5432 |
+| Vision server (webcam, MediaPipe) | Host — Docker on macOS can't reach a webcam | 8001 |
+
+A Raspberry Pi on the robot (ROS Noetic, inside its `ainex` Docker container)
+only drives the servos. See [docs/overview.md](docs/overview.md) for the
+architecture and [docs/hardware.md](docs/hardware.md) for the physical robot.
 
 ## Prerequisites
 
-**Laptop**
+- [Docker](https://docs.docker.com/get-docker/) with Compose (Docker Desktop on macOS)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python 3.12+) — for the vision server
+- An OpenAI API key
 
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js 22+
-- OpenAI API key
-
-**Pi**
-
-- ROS Noetic inside the `ainex` Docker container
-- `catkin_tools` (`pip install catkin-tools`)
-
-The pose classifier now runs on the Mac (via the vision server), not on the Pi — the Pi side has no PyTorch dependency. See the note under "Pi Setup" below.
-
-## Mac Setup
-
-### 1. Install Python dependencies
+## Quick start
 
 ```bash
-uv sync
-```
-
-### 2. Install frontend dependencies
-
-```bash
-cd frontend && npm install && cd ..
-```
-
-### 3. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Fill in your keys:
-
-```
-OPENAI_API_KEY=sk-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
-```
-
-Only `OPENAI_API_KEY` is required. Leave the Langfuse keys blank and tracing disables itself.
-
-## Pi Setup (one-time)
-
-SSH into the Pi and open the Docker container:
-
-```bash
-ssh pi@raspberrypi.local
-docker exec -it ainex bash
-su - ubuntu
-```
-
-## Running
-
-### Laptop (four terminals)
-
-All four are required — the demo pages wait on the vision and speaker
-servers, so a missing one looks like the demo hanging rather than a clean
-error.
-
-```bash
-```
-# run code without physical robot
+git clone <this repo> && cd coral-voice-ai-agent-reu
+cp .env.example .env        # then set OPENAI_API_KEY
 ./run.sh
-# run with robot
-./run.sh -live -ip {robot ip}
-# if you want to start the speaker
-./run.sh -speaker
-
-Open <http://localhost:5173> and click **✨ Start Demo Here**.
-
-On macOS, `uv run vision` opens the webcam from Python, so the camera permission prompt comes from your terminal app. Grant it under System Settings → Privacy & Security → Camera, then restart the vision server.
-
-To cycle the simulator through every motion in `motions.py` without the LLM or frontend:
-
-```bash
-uv run sim-test              # all motions
-uv run sim-test dab wave     # only these
 ```
 
-### Setting up wifi connection on Pi
+Open <http://localhost:5173> and click **✨ Start Demo Here**. The first run
+builds the images and downloads the Whisper model, so it takes a few minutes.
+Press Ctrl+C to stop everything.
 
 ```bash
-ssh pi@raspberrypi.local
-
-# modify wifi configurations
-nano wifi_manager/wifi_config.py
-
-# add your own wifi configurations
-# add 2 new lines with your wifi credentials
-WIFI_STA_SSID= # your wifi SSID
-WIFI_STA_PASSWORD= # your wifi password
-
-# restart the wifi service (requires sudo)
-systemctl restart wifi.service
-
-# the robot will reboot the wifi service, it will take a minute before wifi comes back on
-# after the wifi comes back, you should be able to connect to your wifi hostspot
+./run.sh                            # simulation only
+./run.sh -live                      # also drive the physical robot (ROBOT_IP from .env)
+./run.sh -live -ip 192.168.8.219    # physical robot at an explicit IP
 ```
 
-### Pi (every session)
+Logs go to `logs/stack.log` (containers) and `logs/vision.log`; each demo
+session also writes a readable transcript under `logs/clean_logs/`.
+
+On macOS the vision server opens the webcam from Python, so the camera
+permission prompt comes from your terminal app. Grant it under System Settings
+→ Privacy & Security → Camera, then rerun `./run.sh`.
+
+## Development
 
 ```bash
-ssh pi@raspberrypi.local
-docker exec -it ainex bash
-su - ubuntu
-cd ~/ros_ws/src
-pyrun vision/robot_agent.py
+uv sync                          # backend + vision dependencies
+cd frontend && npm install       # frontend dependencies
 ```
 
-Verify the Pi's server node (`nodes/server.py`) is up:
+- **Backend tests:** `docker compose up -d db && uv run python -m pytest`.
+  Tests marked `db` are skipped when Postgres isn't running.
+- **Lint:** `uv run ruff check backend`
+- **Frontend:** `cd frontend && npm run dev` (hot reload on :5173 — stop the
+  frontend container first) and `npm run build` (typecheck + build).
+- **Motion check without the LLM or frontend:** `uv run sim-test [motion ...]`
+  cycles the MuJoCo viewer through the canned motions in
+  `backend/app/robot/motions.py`.
+- **Manual harnesses** (collision sweep, leg buckets, motion playback,
+  hardware command preview) live in `backend/tools/`:
+  `uv run python backend/tools/<name>.py`.
+
+Layout: `backend/app/` (the `app` package — `api/routes`, `services`, `llm`,
+`robot`, `vision`, `collision`, `simulator`), `backend/tests/`,
+`frontend/src/` (`pages`, `components`, `api`, `audio`, `demo`, `rps`),
+`assets/ainex/` (robot model), `docs/`.
+
+## Physical robot
+
+The Pi side (wifi, starting the servo server, syncing code) is described in
+[docs/hardware.md](docs/hardware.md). Check that the Pi's servo server is up
+before `./run.sh -live`:
 
 ```bash
-curl http://192.168.8.219:9000/health
+curl http://<robot ip>:9000/health
 ```
 
-## Environment Variables
+## Environment variables
+
+Set these in `.env` (see `.env.example`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | — | Required for LLM motion planner |
-| `OPENAI_BASE_URL` | — | Points the OpenAI SDK at a compatible provider (e.g. DeepSeek); read by the SDK itself, not app code |
-| `ROBOT_MODE` | `sim` | `sim` or `robot`; set automatically by `uv run server` / `uv run robot`, or override directly |
-| `ROBOT_IP` | `192.168.8.219` | Robot's IP on your network (hardware mode only) |
-| `ROBOT_AGENT_PORT` | `9000` | Pi server port, as dialed by the Mac |
-| `AGENT_PORT` | `9000` | Port the Pi server binds to (Pi side) |
-| `SPEAKER_PORT` | `5002` | TTS speaker server port |
-| `SAY_RATE` | `220` | Speaker server's speech rate (words per minute) |
-| `VISION_BASE` | `http://localhost:8001` | Vision server URL, as dialed by the main server |
-| `CLASSIFIER_PATH` | `src/vision/models/pose_classifier.pt` | MobileNetV3 checkpoint, loaded by the Mac vision server |
-| `WHISPER_MODEL_SIZE` | `base` | faster-whisper model size (`tiny`, `base`, `small`, and `.en` variants) |
-| `INTENT_HIGH_CONFIDENCE_THRESHOLD` | `0.85` | Minimum regex-matcher confidence before skipping the LLM fallback — see [intent-classifier.md](docs/intent-classifier.md) |
-| `ENABLE_COLLISION_CHECK` | `true` | Set `false` to disable the self-collision clamp before dispatch |
-| `ENABLE_FALL_CHECK` | `true` | Set `false` to disable the fall/stability check before dispatch |
-| `FALL_HEAD_HEIGHT_FRAC` | `0.70` | Stability checker's minimum head-height fraction before a pose is considered a fall |
-| `SIM_TEST_HOLD_SECONDS` | `2.0` | Seconds to hold each motion in `uv run sim-test` |
-| `LANGFUSE_SECRET_KEY` / `LANGFUSE_PUBLIC_KEY` | — | LLM tracing (optional); unset disables tracing entirely, no error |
-| `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` (SDK default) | Langfuse endpoint; `.env.example` ships the US region (`https://us.cloud.langfuse.com`) |
-| `CORAL_NO_VIEWER` | — | Set `1` to keep the MuJoCo run on plain `python` on macOS instead of re-exec'ing under `mjpython` to open the viewer window (headless/CI runs) |
+| `OPENAI_API_KEY` | — | Required: intent classification, motion planning, chat, TTS |
+| `OPENAI_BASE_URL` | — | Point the OpenAI SDK at a compatible provider (read by the SDK) |
+| `LLM_MODEL` | `gpt-5.4-mini` | Chat-completions model |
+| `ROBOT_IP` | `192.168.8.219` | Physical robot's IP (hardware mode) |
+| `ROBOT_AGENT_PORT` | `9000` | Pi servo server port |
+| `WHISPER_MODEL_SIZE` | `base` | faster-whisper size (`tiny`, `base`, `small`, and `.en` variants) |
+| `TTS_ENABLED` | `auto` | `auto` speaks when an OpenAI key is set; `false` disables speech |
+| `TTS_VOICE` / `TTS_MODEL` / `TTS_SPEED` | `coral` / `tts-1-hd` / `1.05` | OpenAI TTS settings |
+| `INTENT_HIGH_CONFIDENCE_THRESHOLD` | `0.85` | Regex-matcher confidence needed to skip the LLM — see [intent-classifier.md](docs/intent-classifier.md) |
+| `ENABLE_COLLISION_CHECK` | `true` | Self-collision clamp before every dispatch |
+| `ENABLE_FALL_CHECK` | `true` | Fall/stability check before every dispatch |
+| `FALL_HEAD_HEIGHT_FRAC` | `0.70` | Head-height fraction below which a pose counts as a fall |
+| `CORAL_ENABLE_LEG_TRACKING` | `false` | Experimental leg retargeting in follow/capture |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_PORT` | `coral` / `coral` / `coral` / `5432` | Compose database |
+| `DATABASE_URL` | `postgresql://coral:coral@localhost:5432/coral` | Set automatically in Docker; used as-is by tests and native runs |
+| `LANGFUSE_SECRET_KEY` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_BASE_URL` | — | Optional LLM tracing; unset disables it |
+| `CORAL_MUJOCO_WINDOW` | `false` | Open the native MuJoCo window (native runs only, not in Docker) |
+| `SIM_TEST_HOLD_SECONDS` | `2.0` | Seconds each motion is held in `uv run sim-test` |
+
+The frontend reads `VITE_SERVER_BASE`, `VITE_ACTION_WS`, `VITE_SIM_WS`,
+`VITE_VISION_BASE` and `VITE_ROBOT_HOST` at build time (`frontend/src/config.ts`);
+the defaults match `./run.sh`.
