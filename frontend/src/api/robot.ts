@@ -65,24 +65,42 @@ export async function resetPose(): Promise<void> {
   await post(`${SERVER_BASE}/reset`, 'reset')
 }
 
-// Apply a raw {joint: hardware_pulse} pose to the sim (testing tool). Pulses are
-// the hardware units authored in motions.py; the server converts them to sim
-// radians. `skipCollisionCheck` applies the pose exactly as authored, bypassing
-// the collision shadow-roll (joint limits still clamp).
+export interface SetPoseResult {
+  /** 'blocked' when the fall check refused the pose (nothing moved). */
+  status: 'done' | 'blocked'
+  applied: string[]
+  skipped: string[]
+  safety: MoveSafety
+}
+
+// Apply a raw {joint: hardware_pulse} pose to the sim (never the robot). Pulses
+// are the hardware units authored in motions.py; the server converts them to
+// sim radians. `durationMs` > 0 glides there over that time (0 = instant).
+// `skipCollisionCheck` bypasses the collision/fall gate (joint limits still clamp).
 export async function setPose(
   pulses: Record<string, number>,
-  skipCollisionCheck = false,
-): Promise<{ applied: string[]; skipped: string[] }> {
-  const data = await postJSON<{ applied?: string[]; skipped?: string[] }>(
+  { durationMs = 0, skipCollisionCheck = false }: { durationMs?: number; skipCollisionCheck?: boolean } = {},
+): Promise<SetPoseResult> {
+  const data = await postJSON<{
+    status: 'done' | 'blocked'
+    applied?: string[]
+    skipped?: string[]
+    safety?: unknown
+  }>(
     `${SERVER_BASE}/set-pose`,
-    { pulses, skip_collision_check: skipCollisionCheck },
+    { pulses, duration_ms: durationMs, skip_collision_check: skipCollisionCheck },
     'set-pose',
   )
-  return { applied: data.applied ?? [], skipped: data.skipped ?? [] }
+  return {
+    status: data.status,
+    applied: data.applied ?? [],
+    skipped: data.skipped ?? [],
+    safety: parseSafety(data.safety) ?? SAFE_MOVE,
+  }
 }
 
 /** joint name → Hiwonder servo id (mirrors the backend's SERVO_ID_MAP). */
-export const SERVO_ID: Record<string, number> = {
+const SERVO_ID: Record<string, number> = {
   l_ank_roll: 1, r_ank_roll: 2,
   l_ank_pitch: 3, r_ank_pitch: 4,
   l_knee: 5, r_knee: 6,

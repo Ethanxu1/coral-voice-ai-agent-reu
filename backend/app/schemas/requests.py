@@ -1,6 +1,8 @@
 """Pydantic request models for the Coral API."""
 
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, Field
 
 
 class ServoMove(BaseModel):
@@ -14,12 +16,14 @@ class MoveRequest(BaseModel):
 
 
 class SetPoseRequest(BaseModel):
-    """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
+    """A raw pose as {joint_name: hardware_pulse} (the motions.py format)."""
 
-    pulses: dict[str, int]
+    pulses: dict[str, Annotated[int, Field(ge=0, le=1000)]]
     # Pose Tester's "collision check off" mode: apply the pose exactly as
-    # authored, skipping the collision shadow-roll (JOINT_LIMITS still clamp).
+    # authored, skipping the collision/fall gate (joint limits still clamp).
     skip_collision_check: bool = False
+    # 0 applies instantly; otherwise the sim glides there over this many ms.
+    duration_ms: int = Field(default=0, ge=0, le=10000)
 
 
 class IntentRequest(BaseModel):

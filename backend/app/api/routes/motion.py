@@ -106,45 +106,43 @@ async def demo_move(request: MoveRequest) -> dict[str, Any]:
 
 @router.post("/set-pose")
 async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
-    """Apply a raw {joint: hardware_pulse} pose to the sim (testing tool).
+    """Apply a raw {joint: hardware_pulse} pose to the sim (Pose Tester, RPS).
 
-    Accepts the exact pulse dicts authored in motions.py. Each pulse is a
-    *hardware* servo unit, so it's converted to sim radians with
-    hardware_units_to_rad. The combined target is then shadow-rolled through the
-    collision checker (same as /move) before set_joint_position applies it.
-    Sim only; unknown joints are reported back.
+    Pulses are *hardware* servo units (the motions.py format), converted to sim
+    radians with hardware_units_to_rad. Unless `skip_collision_check`, the pose
+    goes through the same collision/fall gate as /move first, and the verdict is
+    returned. With `duration_ms` > 0 the sim glides there over that time;
+    0 applies it instantly. Sim only: never reaches the physical robot.
     """
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
-    applied: list[str] = []
-    skipped: list[str] = []
+    skipped = [joint for joint in req.pulses if joint not in SERVO_ID_MAP]
+    targets = {
+        joint: hardware_units_to_rad(pulse, joint)
+        for joint, pulse in req.pulses.items()
+        if joint in SERVO_ID_MAP
+    }
 
-    target_joints: dict[str, float] = {}
-    for joint, pulse in req.pulses.items():
-        if joint not in SERVO_ID_MAP:
-            skipped.append(joint)
-            continue
-        try:
-            target_joints[joint] = hardware_units_to_rad(int(pulse), joint)
-        except Exception as e:  # bad pulse value — skip, keep going
-            logger.debug(f"/set-pose: skip joint {joint}: {e}")
-            skipped.append(joint)
-
+    safety: dict[str, Any] = {"fall_blocked": False, "collision_clamped": False,
+                              "safe_fraction": 1.0, "bad_pairs": []}
     if not req.skip_collision_check:
-        target_joints, _safety = collision_checked_targets(
-            state.simulator, target_joints, "/set-pose"
+        targets, safety = await asyncio.to_thread(
+            collision_checked_targets, state.simulator, targets, "/set-pose"
         )
+    if safety["fall_blocked"]:
+        return {"status": "blocked", "applied": [], "skipped": skipped, "safety": safety}
 
-    for joint, rad in target_joints.items():
-        try:
+    if req.duration_ms > 0:
+        await dispatch_servo_commands(
+            joints_to_servo_commands(targets, req.duration_ms), sim_only=True
+        )
+    else:
+        for joint, rad in targets.items():
             state.simulator.set_joint_position(joint, rad)
-            applied.append(joint)
-        except Exception as e:  # unknown sim joint — skip, keep going
-            logger.debug(f"/set-pose: skip joint {joint}: {e}")
-            skipped.append(joint)
 
-    return {"status": "done", "applied": applied, "skipped": skipped}
+    applied = [joint for joint in req.pulses if joint in targets]
+    return {"status": "done", "applied": applied, "skipped": skipped, "safety": safety}
 
 
 @router.post("/reset")

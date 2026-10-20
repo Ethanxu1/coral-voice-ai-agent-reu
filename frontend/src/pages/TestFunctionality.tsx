@@ -5,6 +5,7 @@ import { resetPose } from '../api/robot'
 import { ACTION_WS, SERVER_BASE, VISION_BASE } from '../config'
 import { LiveStream } from '../components/LiveStream'
 import './TestFunctionality.css'
+import { JOINT_GROUPS as JOINT_GROUPS_BY_PART } from '../robot/joints'
 
 const JOINT_GROUPS: {
   title: string
@@ -68,25 +69,6 @@ function radToServoUnits(rad: number): number {
   return Math.max(0, Math.min(1000, units))
 }
 
-const STATE_GROUPS: { title: string; joints: string[] }[] = [
-  { title: 'Head', joints: ['head_pan', 'head_tilt'] },
-  {
-    title: 'Left Arm',
-    joints: ['l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'],
-  },
-  {
-    title: 'Right Arm',
-    joints: ['r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper'],
-  },
-  {
-    title: 'Left Leg',
-    joints: ['l_hip_yaw', 'l_hip_roll', 'l_hip_pitch', 'l_knee', 'l_ank_pitch', 'l_ank_roll'],
-  },
-  {
-    title: 'Right Leg',
-    joints: ['r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll'],
-  },
-]
 
 export default function TestFunctionality() {
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
@@ -230,7 +212,7 @@ export default function TestFunctionality() {
               {Object.keys(joints).length === 0 ? (
                 <div className="tf-empty">No joint state yet</div>
               ) : (
-                STATE_GROUPS.map((group) => (
+                JOINT_GROUPS_BY_PART.map((group) => (
                   <div key={group.title} className="tf-state-group">
                     <div className="tf-state-group-title">{group.title}</div>
                     {group.joints.map((name) => {
