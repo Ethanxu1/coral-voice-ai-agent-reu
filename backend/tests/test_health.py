@@ -49,3 +49,17 @@ def test_health_returns_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_sim_health_ok_while_physics_runs(client):
+    response = client.get("/sim/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_sim_health_unavailable_without_simulator(client, monkeypatch):
+    from app.state import state
+
+    monkeypatch.setattr(state, "simulator", None)
+    response = client.get("/sim/health")
+    assert response.status_code == 503

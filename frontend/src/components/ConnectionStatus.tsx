@@ -8,8 +8,11 @@ interface ServiceStatus {
   url: string
 }
 
+// Each light polls `${url}/health`. Sim is the MuJoCo simulator inside the
+// backend: Server can be up while the simulator isn't running.
 const SERVICES: ServiceStatus[] = [
   { name: 'Server', ok: null, url: SERVER_BASE },
+  { name: 'Sim', ok: null, url: `${SERVER_BASE}/sim` },
   { name: 'Vision', ok: null, url: VISION_BASE },
 ]
 
