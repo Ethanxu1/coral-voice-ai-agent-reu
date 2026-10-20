@@ -9,6 +9,8 @@ from app.api.routes import websocket as ws_routes
 from app.main import create_app
 from app.services import tts as tts_module
 
+pytestmark = pytest.mark.db
+
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):

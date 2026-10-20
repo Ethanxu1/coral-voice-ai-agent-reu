@@ -28,12 +28,11 @@ from app.config import (
     ENABLE_FALL_CHECK,
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
-    REPO_ROOT,
     ROBOT_AGENT_PORT,
     ROBOT_IP,
     ROBOT_MODE,
 )
-from app.data.pose_db import clear_all_poses
+from app.data.pose_db import clear_all_poses, init_db
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.sim_controller import SimController
 from app.services.follow import FollowController
@@ -83,16 +82,6 @@ def _run_startup_validation() -> None:
     else:
         logger.info("TTS disabled.")
 
-    db_parent = REPO_ROOT / "data"
-    try:
-        db_parent.mkdir(parents=True, exist_ok=True)
-        if not os.access(db_parent, os.W_OK):
-            logger.warning(
-                f"Pose DB directory is not writable: {db_parent}. "
-                "Saved poses will not persist across sessions."
-            )
-    except Exception as exc:
-        logger.warning(f"Could not verify pose DB directory: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +93,7 @@ async def lifespan(app: FastAPI):
 
     state.robot_mode = os.environ.get("ROBOT_MODE", ROBOT_MODE)
 
+    init_db()
     clear_all_poses()
     logger.info("Pose database cleared for new session.")
 
@@ -233,9 +223,9 @@ def _reexec_under_mjpython_if_needed(want_window: bool = True) -> None:
 # Console entry points
 # ---------------------------------------------------------------------------
 def main():
-    """Entry point for simulation mode (default — starts MuJoCo)."""
+    """Entry point for the server; ROBOT_MODE (default "sim") picks sim or hardware."""
     _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
-    logger.info("Starting Coral AI Agent server (sim mode)...")
+    logger.info(f"Starting Coral AI Agent server (mode={os.environ.get('ROBOT_MODE', ROBOT_MODE)})...")
     uvicorn.run(
         "app.main:app",
         host=CORAL_HOST,

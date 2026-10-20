@@ -18,6 +18,7 @@ dependencies = [
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
     "httpx>=0.27.0",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +58,7 @@ sources = ["backend"]
 # hardware/sim harnesses live in backend/tools/, outside the test tree.
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
+markers = ["db: needs the Postgres from docker-compose (skipped when unreachable)"]
 
 [dependency-groups]
 dev = [

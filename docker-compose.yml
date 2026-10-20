@@ -1,32 +1,68 @@
-# Coral stack for local production smoke tests.
-# Runs the backend headless (no MuJoCo window). The frontend should be served
-# separately, e.g. `cd frontend && npm run dev` or a static nginx container.
-version: "3.8"
+# CORAL stack: Postgres, the backend (sim or hardware mode), and the built
+# frontend. The vision server runs on the host (it needs the webcam, which
+# Docker on macOS cannot reach) — ./run.sh starts it alongside this stack and,
+# on Linux, adds docker-compose.linux.yml.
 
 services:
-  coral-backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: coral-backend
-    ports:
-      - "8000:8000"
+  db:
+    image: postgres:16-alpine
     environment:
-      # Copy local env into the container. Secrets live in your .env file,
-      # not in this compose definition.
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
-      - ENABLE_COLLISION_CHECK=${ENABLE_COLLISION_CHECK:-true}
-      - ENABLE_FALL_CHECK=${ENABLE_FALL_CHECK:-true}
-      # Headless inside Docker.
-      - CORAL_NO_VIEWER=1
-      # Containers must bind on all interfaces to be reachable from the host.
-      - CORAL_HOST=0.0.0.0
+      POSTGRES_USER: ${POSTGRES_USER:-coral}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coral}
+      POSTGRES_DB: ${POSTGRES_DB:-coral}
+    ports:
+      # Localhost only: lets tests and psql on the host reach the database.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  backend:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD:-coral}@db:5432/${POSTGRES_DB:-coral}
+      ROBOT_MODE: ${ROBOT_MODE:-sim}
+      ROBOT_IP: ${ROBOT_IP:-192.168.8.219}
+      # The vision server runs on the host.
+      VISION_BASE: http://host.docker.internal:8001
+      # Containers must listen on all interfaces to be reachable from the host.
+      CORAL_HOST: 0.0.0.0
+      # No display inside the container; the browser viewer is used instead.
+      CORAL_NO_VIEWER: "1"
+    extra_hosts:
+      # host.docker.internal is built in on Docker Desktop; this adds it on Linux.
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./recordings:/app/recordings
+      # Whisper model download cache, so it survives image rebuilds.
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:5173:80"
+
+volumes:
+  pgdata:
+  hf-cache:

@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.services import tts as tts_module
 
+pytestmark = pytest.mark.db
+
 
 class _FakeSpeechResponse:
     def __init__(self, content: bytes) -> None:

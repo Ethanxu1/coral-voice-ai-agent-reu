@@ -18,6 +18,8 @@ from app.services.chat import HierarchicalMemory, process_chat_message
 from app.services.recording import ConversationRecorder
 from app.state import state
 
+pytestmark = pytest.mark.db
+
 
 class _FakeSimDispatcher:
     """Captures servo commands instead of calling MuJoCo."""

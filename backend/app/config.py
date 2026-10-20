@@ -21,6 +21,11 @@ RECORDINGS_DIR = REPO_ROOT / "recordings"
 
 
 # ---------------------------------------------------------------------------
+# Database (Postgres; `docker compose up -d db` for local runs and tests)
+# ---------------------------------------------------------------------------
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://coral:coral@localhost:5432/coral")
+
+# ---------------------------------------------------------------------------
 # Robot / hardware
 # ---------------------------------------------------------------------------
 ROBOT_MODE = os.getenv("ROBOT_MODE", "sim")

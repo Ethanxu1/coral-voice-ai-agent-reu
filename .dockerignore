@@ -1,0 +1,8 @@
+# Allow-list: the backend image only needs the Python project and robot model.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!backend/app
+!assets/ainex
+**/__pycache__

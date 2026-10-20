@@ -1,132 +1,123 @@
 #!/usr/bin/env bash
-# Start the CORAL stack: main server (sim or hardware), vision server, and
-# the frontend dev server. Each process's output is
-# piped into its own file under logs/.
+# Start the CORAL stack:
+#   - Postgres, the backend (:8000) and the frontend (:5173) in Docker
+#     (docker compose), and
+#   - the vision server (:8001) on the host, because it needs the webcam and
+#     Docker on macOS cannot reach one.
+# Output goes to logs/stack.log (containers) and logs/vision.log.
 #
 # Usage:
-#   ./run.sh                          # sim mode: uv run server
-#   ./run.sh -live                    # hardware mode: uv run robot
-#   ./run.sh -live -ip 192.168.8.219  # hardware mode, explicit robot IP
+#   ./run.sh                          # simulation mode
+#   ./run.sh -live                    # also drive the physical robot (ROBOT_IP from .env)
+#   ./run.sh -live -ip 192.168.8.219  # physical robot at an explicit IP
 set -euo pipefail
-set -m  # enable job control so each background job gets its own process group
+set -m  # job control: the vision server gets its own process group
 
 LIVE=false
-ROBOT_IP=""
+ROBOT_IP_ARG=""
+
+usage() {
+    echo "Usage: $0 [-live [-ip <robot_ip>]]" >&2
+    exit 1
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -live)
-            LIVE=true
-            shift
-            ;;
+        -live) LIVE=true; shift ;;
         -ip)
-            if [[ $# -lt 2 ]]; then
-                echo "Error: -ip requires a value" >&2
-                exit 1
-            fi
-            ROBOT_IP="$2"
+            [[ $# -ge 2 ]] || { echo "Error: -ip requires a value" >&2; exit 1; }
+            ROBOT_IP_ARG="$2"
             shift 2
             ;;
-        *)
-            echo "Unknown argument: $1" >&2
-            echo "Usage: $0 [-live [-ip <robot_ip>]]" >&2
-            exit 1
-            ;;
+        *) echo "Unknown argument: $1" >&2; usage ;;
     esac
 done
 
-if [[ -n "$ROBOT_IP" && "$LIVE" != true ]]; then
+if [[ -n "$ROBOT_IP_ARG" && "$LIVE" != true ]]; then
     echo "Error: -ip is only valid together with -live" >&2
     exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 LOG_DIR="$SCRIPT_DIR/logs"
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$SCRIPT_DIR/recordings"
 
-# Ports the stack needs. Fail fast if any are already bound so the user gets a
-# clear error instead of three services silently competing.
-REQUIRED_PORTS=(8000 8001)
-if command -v ss >/dev/null 2>&1; then
-    PORT_CHECK_CMD="ss"
-elif command -v netstat >/dev/null 2>&1; then
-    PORT_CHECK_CMD="netstat"
-else
-    PORT_CHECK_CMD=""
-fi
-
-check_port() {
-    local port="$1"
-    if [[ "$PORT_CHECK_CMD" == "ss" ]]; then
-        ss -H -tln "sport = :$port" 2>/dev/null | grep -q .
-    elif [[ "$PORT_CHECK_CMD" == "netstat" ]]; then
-        netstat -an 2>/dev/null | grep -E "^[[:space:]]*tcp[[:space:]]+.*[[:space:]]0\.0\.0\.0\.$port|127\.0\.0\.1\.$port[[:space:]]+.*LISTEN" >/dev/null
-    else
-        # Fallback: try to bind to the port briefly. Non-portable but better than nothing.
-        (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null
-    fi
-}
-
-check_required_ports() {
-    local busy=()
-    for port in "${REQUIRED_PORTS[@]}"; do
-        if check_port "$port"; then
-            busy+=("$port")
-        fi
-    done
-    if [[ ${#busy[@]} -gt 0 ]]; then
-        echo "Error: required port(s) already in use: ${busy[*]}" >&2
-        echo "Stop the other process(es) first, or change the stack ports." >&2
+for cmd in docker uv; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: '$cmd' is required but not installed (see README.md)." >&2
         exit 1
     fi
-}
+done
+if [[ ! -f .env ]]; then
+    echo "Warning: no .env file; copy .env.example to .env and set OPENAI_API_KEY." >&2
+fi
 
-check_required_ports
-
-PIDS=()
-CLEANING_UP=0
-
-cleanup() {
-    if [[ "$CLEANING_UP" -ne 0 ]]; then
-        return
+# Fail fast if a port the stack needs is taken, instead of a half-started stack.
+REQUIRED_PORTS=(8000 8001 5173 "${POSTGRES_PORT:-5432}")
+port_in_use() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -H -tln "sport = :$1" 2>/dev/null | grep -q .
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+    else
+        (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
     fi
+}
+busy=()
+for port in "${REQUIRED_PORTS[@]}"; do
+    if port_in_use "$port"; then busy+=("$port"); fi
+done
+if [[ ${#busy[@]} -gt 0 ]]; then
+    echo "Error: required port(s) already in use: ${busy[*]}" >&2
+    echo "Stop the other process(es) first (an old stack: docker compose down)." >&2
+    exit 1
+fi
+
+if [[ "$LIVE" == true ]]; then
+    export ROBOT_MODE=robot
+    if [[ -n "$ROBOT_IP_ARG" ]]; then export ROBOT_IP="$ROBOT_IP_ARG"; fi
+    echo "Hardware mode (ROBOT_IP=${ROBOT_IP:-from .env})"
+else
+    export ROBOT_MODE=sim
+    echo "Simulation mode"
+fi
+
+# The backend container must reach the vision server on the host. Docker
+# Desktop (macOS) forwards host.docker.internal to the host's loopback; on Linux
+# the backend shares the host network instead (docker-compose.linux.yml).
+if [[ "$(uname -s)" == "Linux" ]]; then
+    export COMPOSE_FILE="docker-compose.yml:docker-compose.linux.yml"
+fi
+
+VISION_PID=""
+LOGS_PID=""
+CLEANING_UP=0
+cleanup() {
+    [[ "$CLEANING_UP" -ne 0 ]] && return
     CLEANING_UP=1
     echo "Stopping..."
-    for pid in "${PIDS[@]}"; do
-        # Kill the entire process group so uv/uvicorn/npm children go down too.
-        kill -- -"$pid" >/dev/null 2>&1 || true
-    done
-    sleep 0.5
-    for pid in "${PIDS[@]}"; do
-        if kill -0 "$pid" >/dev/null 2>&1; then
-            kill -9 -- -"$pid" >/dev/null 2>&1 || true
-        fi
-    done
+    if [[ -n "$VISION_PID" ]]; then
+        kill -- -"$VISION_PID" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$LOGS_PID" ]]; then
+        kill "$LOGS_PID" >/dev/null 2>&1 || true
+    fi
+    docker compose down >/dev/null 2>&1 || true
     wait >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-if [[ "$LIVE" == true ]]; then
-    if [[ -n "$ROBOT_IP" ]]; then
-        export ROBOT_IP
-        echo "Starting robot server (hardware mode, ROBOT_IP=$ROBOT_IP) -> $LOG_DIR/server.log"
-    else
-        echo "Starting robot server (hardware mode, default ROBOT_IP) -> $LOG_DIR/server.log"
-    fi
-    uv run robot > "$LOG_DIR/server.log" 2>&1 &
-else
-    echo "Starting server (sim mode) -> $LOG_DIR/server.log"
-    uv run server > "$LOG_DIR/server.log" 2>&1 &
-fi
-PIDS+=("$!")
-
-echo "Starting vision server -> $LOG_DIR/vision.log"
+echo "Starting vision server on the host -> $LOG_DIR/vision.log"
 uv run vision > "$LOG_DIR/vision.log" 2>&1 &
-PIDS+=("$!")
+VISION_PID=$!
 
-echo "Starting frontend dev server -> $LOG_DIR/frontend.log"
-(cd "$SCRIPT_DIR/frontend" && npm run dev) > "$LOG_DIR/frontend.log" 2>&1 &
-PIDS+=("$!")
+echo "Building and starting containers (first run downloads images and models)..."
+docker compose up --build --detach --wait --wait-timeout 900
+docker compose logs --follow --no-color > "$LOG_DIR/stack.log" 2>&1 &
+LOGS_PID=$!
 
-echo "All processes started (pids: ${PIDS[*]}). Tail logs in $LOG_DIR/. Press Ctrl+C to stop."
-wait
+echo
+echo "CORAL is running: http://localhost:5173"
+echo "Logs: $LOG_DIR/stack.log, $LOG_DIR/vision.log. Press Ctrl+C to stop."
+wait "$VISION_PID"
