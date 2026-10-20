@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import RobotViewer from '../components/RobotViewer'
 import { resetPose } from '../api/robot'
 import { ACTION_WS, SERVER_BASE, VISION_BASE } from '../config'
+import GravityToggle from '../components/GravityToggle'
 import { LiveStream } from '../components/LiveStream'
+import { useSimUpright } from '../hooks/useSimUpright'
 import './TestFunctionality.css'
 import { JOINT_GROUPS as JOINT_GROUPS_BY_PART } from '../robot/joints'
 
@@ -71,6 +73,8 @@ function radToServoUnits(rad: number): number {
 
 
 export default function TestFunctionality() {
+  const [gravity, setGravity] = useState(false)
+  useSimUpright(!gravity)
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
   const [joints, setJoints] = useState<Record<string, number>>({})
   const [lastCmd, setLastCmd] = useState<string | null>(null)
@@ -88,9 +92,7 @@ export default function TestFunctionality() {
         const data = JSON.parse(event.data)
         if (data.type === 'command_result') {
           let note = ''
-          if (data.fall_blocked) {
-            note = ' — blocked: would fall over'
-          } else if (data.collision_clamped) {
+          if (data.collision_clamped) {
             const pairs = Array.isArray(data.bad_pairs) ? data.bad_pairs.join(', ') : ''
             note = ` — stopped short: would collide (${pairs})`
           }
@@ -145,7 +147,10 @@ export default function TestFunctionality() {
           <div className="tf-panel tf-viewer">
             <div className="tf-panel-header">
               <span>MuJoCo viewer</span>
-              <span className={`tf-status tf-status-${wsState}`}>{wsState}</span>
+              <span className="tf-viewer-controls">
+                <GravityToggle gravity={gravity} onChange={setGravity} />
+                <span className={`tf-status tf-status-${wsState}`}>{wsState}</span>
+              </span>
             </div>
             <div className="tf-viewer-wrap">
               <RobotViewer embedded />

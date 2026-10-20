@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { movePulses, setPose, type SetPoseResult } from '../api/robot'
+import GravityToggle from '../components/GravityToggle'
 import RobotViewer from '../components/RobotViewer'
+import { useSimUpright } from '../hooks/useSimUpright'
 import { PI_BASE } from '../config'
 import { JOINT_GROUPS, STAND_PULSES, jointLabel } from '../robot/joints'
 import './PoseTester.css'
@@ -38,9 +40,6 @@ function parsePulse(raw: string): number | null {
 
 function describeSim(result: SetPoseResult): StatusLine {
   const { safety } = result
-  if (result.status === 'blocked') {
-    return { tone: 'error', text: "Sim: blocked — this pose would make the robot fall over, so nothing moved." }
-  }
   if (safety.collisionClamped) {
     return {
       tone: 'warn',
@@ -52,9 +51,13 @@ function describeSim(result: SetPoseResult): StatusLine {
 }
 
 /** Set every servo's hardware pulse and send the pose to the sim, the physical
- *  robot, or both. Sim goes through the backend's /set-pose (collision + fall
- *  checked, glides over the move time); robot goes straight to the Pi's /move. */
+ *  robot, or both. Sim goes through the backend's /set-pose (collision checked,
+ *  glides over the move time); robot goes straight to the Pi's /move. While
+ *  this page is open the sim robot is pinned upright unless Gravity is on, and
+ *  moves are never fall-blocked (so a fall is visible rather than refused). */
 export default function PoseTester() {
+  const [gravity, setGravity] = useState(false)
+  useSimUpright(!gravity)
   const [inputs, setInputs] = useState<PulseInputs>(standInputs)
   const [target, setTarget] = useState<Target>('sim')
   const [durationMs, setDurationMs] = useState(1000)
@@ -79,7 +82,7 @@ export default function PoseTester() {
     }
     if (target !== 'robot') {
       jobs.push(
-        setPose(pulses, { durationMs, skipCollisionCheck: !collisionCheck })
+        setPose(pulses, { durationMs, skipCollisionCheck: !collisionCheck, checkFall: false })
           .then((r) => { lines.push(describeSim(r)) })
           .catch(failed('Sim')),
       )
@@ -119,9 +122,10 @@ export default function PoseTester() {
           {target !== 'robot' && (
             <label>
               <input type="checkbox" checked={collisionCheck} onChange={(e) => setCollisionCheck(e.target.checked)} disabled={busy} />
-              Safety check (sim)
+              Collision check (sim)
             </label>
           )}
+          {target !== 'robot' && <GravityToggle gravity={gravity} onChange={setGravity} disabled={busy} />}
           <label className="pt-move-time">
             Move time (ms):
             <input

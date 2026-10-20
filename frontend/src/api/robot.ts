@@ -76,10 +76,16 @@ export interface SetPoseResult {
 // Apply a raw {joint: hardware_pulse} pose to the sim (never the robot). Pulses
 // are the hardware units authored in motions.py; the server converts them to
 // sim radians. `durationMs` > 0 glides there over that time (0 = instant).
-// `skipCollisionCheck` bypasses the collision/fall gate (joint limits still clamp).
+// `skipCollisionCheck` bypasses the collision/fall gate (joint limits still
+// clamp); `checkFall: false` skips only the fall check (test pages, which pin
+// the sim upright instead).
 export async function setPose(
   pulses: Record<string, number>,
-  { durationMs = 0, skipCollisionCheck = false }: { durationMs?: number; skipCollisionCheck?: boolean } = {},
+  {
+    durationMs = 0,
+    skipCollisionCheck = false,
+    checkFall = true,
+  }: { durationMs?: number; skipCollisionCheck?: boolean; checkFall?: boolean } = {},
 ): Promise<SetPoseResult> {
   const data = await postJSON<{
     status: 'done' | 'blocked'
@@ -88,7 +94,7 @@ export async function setPose(
     safety?: unknown
   }>(
     `${SERVER_BASE}/set-pose`,
-    { pulses, duration_ms: durationMs, skip_collision_check: skipCollisionCheck },
+    { pulses, duration_ms: durationMs, skip_collision_check: skipCollisionCheck, check_fall: checkFall },
     'set-pose',
   )
   return {
@@ -127,6 +133,11 @@ export async function movePulses(
     .map(([name, position]) => ({ servo_id: SERVO_ID[name], position, duration_ms: durationMs }))
   const data = await postJSON<{ count?: number } | null>(`${PI_BASE}/move`, commands, 'robot move')
   return { count: data?.count ?? commands.length }
+}
+
+// Hold the simulated robot's body upright so it can't tip or fall (sim only).
+export function setSimUpright(enabled: boolean): Promise<void> {
+  return postBestEffort(`${SERVER_BASE}/sim/upright`, { enabled })
 }
 
 // Rock-Paper-Scissors only follows the head and arms, so while it is open the
