@@ -22,10 +22,6 @@ class SetPoseRequest(BaseModel):
     skip_collision_check: bool = False
 
 
-class StateRequest(BaseModel):
-    mode: str
-
-
 class IntentRequest(BaseModel):
     text: str
     follow_active: bool = False

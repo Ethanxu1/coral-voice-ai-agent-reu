@@ -1,6 +1,5 @@
-"""Demo state endpoints."""
+"""Robot state and follow-mode settings endpoints."""
 
-from app.schemas.requests import StateRequest
 from app.services.follow import gentle_follow_enabled, set_gentle_follow
 from app.services.motion import _get_robot_state
 from app.vision.pose_to_robot import hipless_arms_enabled, set_hipless_arms
@@ -8,17 +7,6 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter()
-
-_demo_state: str = "IDLE"
-
-
-@router.post("/state")
-async def demo_set_state(req: StateRequest) -> dict[str, str]:
-    """Best-effort lock/unlock — the sim has no hard locks, so just record it."""
-    global _demo_state
-    _demo_state = req.mode
-    return {"state": _demo_state}
-
 
 @router.get("/joint_states")
 async def get_joint_states() -> dict[str, dict[str, float]]:

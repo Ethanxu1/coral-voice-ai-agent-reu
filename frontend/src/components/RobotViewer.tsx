@@ -9,7 +9,7 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid } from '@react-three/drei'
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
-import { SIM_WS } from '../demo/config'
+import { SIM_WS } from '../config'
 
 interface GeomInfo {
   mesh: string

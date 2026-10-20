@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { resetSubjectSelection, startSubjectSelection, stopSubjectSelection } from '../api/vision'
+import { VISION_BASE, VISION_POSE_WS } from '../config'
 import type { Landmark, FaceLandmark, HeadPose, StabilityStatus, DetectedSubject, SelectionState } from '../types/pose'
 
-const VISION_BASE = 'http://localhost:8001'
-const VISION_WS = 'ws://localhost:8001/ws/pose'
 
 const INITIAL_STABILITY: StabilityStatus = {
   state: 'idle',
@@ -31,7 +31,7 @@ export function usePoseWebSocket() {
       wsRef.current.close()
     }
     const gen = ++genRef.current
-    const ws = new WebSocket(VISION_WS)
+    const ws = new WebSocket(VISION_POSE_WS)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -89,17 +89,9 @@ export function usePoseWebSocket() {
     await fetch(`${VISION_BASE}/capture/stable_position/continue`, { method: 'POST' })
   }, [])
 
-  const startSelection = useCallback(async () => {
-    await fetch(`${VISION_BASE}/subject-selection/start`, { method: 'POST' })
-  }, [])
-
-  const resetSelection = useCallback(async () => {
-    await fetch(`${VISION_BASE}/subject-selection/reset`, { method: 'POST' })
-  }, [])
-
-  const stopSelection = useCallback(async () => {
-    await fetch(`${VISION_BASE}/subject-selection/stop`, { method: 'POST' })
-  }, [])
+  const startSelection = startSubjectSelection
+  const resetSelection = resetSubjectSelection
+  const stopSelection = stopSubjectSelection
 
   const fetchTuning = useCallback(async () => {
     const res = await fetch(`${VISION_BASE}/subject-selection/tuning`)

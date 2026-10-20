@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import RobotViewer from '../components/RobotViewer'
-import { getRobotBase, getRobotStream } from '../demo/robotConfig'
-import { resetPose } from '../demo/api'
-import { ACTION_WS } from '../demo/config'
+import { resetPose } from '../api/robot'
+import { ACTION_WS, SERVER_BASE, VISION_BASE } from '../config'
+import { LiveStream } from '../components/LiveStream'
 import './TestFunctionality.css'
 
 const JOINT_GROUPS: {
@@ -93,7 +93,6 @@ export default function TestFunctionality() {
   const [joints, setJoints] = useState<Record<string, number>>({})
   const [lastCmd, setLastCmd] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const cameraKeyRef = useRef(0)
 
   // WebSocket for commands
   useEffect(() => {
@@ -127,7 +126,7 @@ export default function TestFunctionality() {
     let cancelled = false
     const tick = async () => {
       try {
-        const res = await fetch(`${getRobotBase()}/joint_states`, { signal: AbortSignal.timeout(2500) })
+        const res = await fetch(`${SERVER_BASE}/joint_states`, { signal: AbortSignal.timeout(2500) })
         if (!res.ok) return
         const data = await res.json()
         if (!cancelled && data.joint_states) setJoints(data.joint_states)
@@ -174,15 +173,10 @@ export default function TestFunctionality() {
           <div className="tf-panel tf-camera">
             <div className="tf-panel-header">
               <span>Camera</span>
-              <span className="tf-camera-hint">{getRobotStream()}/video_feed</span>
+              <span className="tf-camera-hint">{VISION_BASE}/video_feed</span>
             </div>
             <div className="tf-camera-wrap">
-              <img
-                key={cameraKeyRef.current}
-                src={`${getRobotStream()}/video_feed`}
-                alt="Live camera"
-                onError={() => setTimeout(() => { cameraKeyRef.current += 1 }, 2000)}
-              />
+              <LiveStream badge={false} />
               <span className="tf-live-badge">● LIVE</span>
             </div>
           </div>

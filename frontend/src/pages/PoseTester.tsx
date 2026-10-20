@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { SERVO_ID, movePulses, setPose } from '../demo/api'
-import { useRobotConfig } from '../demo/robotConfig'
+import { movePulses, SERVO_ID, setPose } from '../api/robot'
+import { PI_BASE } from '../config'
 
 /** The 24 servo joints (matches the server SERVO_ID maps). */
 const KNOWN_JOINTS = new Set(Object.keys(SERVO_ID))
@@ -54,7 +54,6 @@ const TARGET_LABEL: Record<Target, string> = {
  *  (instant snap); robot goes through the Pi server's /move (interpolated,
  *  blocks until done). */
 export default function PoseTester() {
-  const { piHost } = useRobotConfig()
   const [text, setText] = useState(STAND_EXAMPLE)
   const [target, setTarget] = useState<Target>('sim')
   const [durationMs, setDurationMs] = useState(1000)
@@ -158,7 +157,7 @@ export default function PoseTester() {
       {target !== 'sim' && (
         <div style={{ background: '#fff3cd', color: '#664d03', padding: '8px 12px', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>
           Robot target sends pulses to the <strong>physical robot</strong> at{' '}
-          <code>{piHost}:9000</code> — make sure it's standing clear before applying.
+          <code>{PI_BASE}</code> — make sure it's standing clear before applying.
         </div>
       )}
 

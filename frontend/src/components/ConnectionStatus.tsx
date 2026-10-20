@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react'
-import { getFeaturesBase, getRobotBase } from '../demo/robotConfig'
+import { SERVER_BASE, VISION_BASE } from '../config'
 import './ConnectionStatus.css'
 
-export interface ServiceStatus {
+interface ServiceStatus {
   name: string
   ok: boolean | null
   url: string
 }
 
-export const SERVICES: ServiceStatus[] = [
-  { name: 'Server', ok: null, url: getRobotBase() },
-  { name: 'Vision', ok: null, url: getFeaturesBase() },
+const SERVICES: ServiceStatus[] = [
+  { name: 'Server', ok: null, url: SERVER_BASE },
+  { name: 'Vision', ok: null, url: VISION_BASE },
 ]
 
-export async function checkHealth(url: string): Promise<boolean> {
+async function checkHealth(url: string): Promise<boolean> {
   try {
     const res = await fetch(`${url}/health`, {
       method: 'GET',
@@ -64,6 +64,20 @@ export default function ConnectionStatus() {
           <span className="cs-name">{s.name}</span>
         </div>
       ))}
+    </div>
+  )
+}
+
+/** Compact all-services indicator for page top bars. */
+export function ConnectionHealthDot({ services }: { services: ReturnType<typeof useConnectionStatus> }) {
+  const allOk = services.every((s) => s.ok === true)
+  const anyDown = services.some((s) => s.ok === false)
+  const statusClass = allOk ? 'ok' : anyDown ? 'down' : 'pending'
+
+  return (
+    <div className="rd-health-dot" title={`Services: ${services.map((s) => `${s.name} ${s.ok === true ? 'ok' : s.ok === false ? 'down' : '…'}`).join(', ')}`}>
+      <span className={`rd-health-dot-ping rd-health-dot-${statusClass}`} />
+      <span className="rd-health-dot-label">{allOk ? 'Connected' : anyDown ? 'Reconnecting' : '…'}</span>
     </div>
   )
 }

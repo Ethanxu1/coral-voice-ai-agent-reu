@@ -1,6 +1,10 @@
 import { useState } from 'react'
-import { getRobotStream } from '../demo/robotConfig'
+import { VISION_BASE } from '../config'
 
+/**
+ * The vision server's MJPEG camera feed at the camera's native aspect ratio
+ * (no cropping), retrying every 2 s while the server is unreachable.
+ */
 export function LiveStream({
   className = '',
   style,
@@ -29,7 +33,7 @@ export function LiveStream({
     <div className={`tui-stream ${className}`} style={containerStyle}>
       <img
         key={key}
-        src={`${getRobotStream()}/video_feed`}
+        src={`${VISION_BASE}/video_feed`}
         alt="Live camera"
         onLoad={(e) => setAspectRatio(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)}
         onError={() => setTimeout(() => setKey((k) => k + 1), 2000)}
