@@ -1,0 +1,170 @@
+.pt-page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 24px;
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+}
+
+.pt-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.pt-header h2 {
+  margin: 0;
+}
+
+.pt-intro {
+  opacity: 0.7;
+  font-size: 14px;
+  margin-top: 0;
+}
+
+.pt-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.pt-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.pt-controls-label {
+  font-weight: 600;
+}
+
+.pt-move-time {
+  margin-left: auto;
+}
+
+.pt-move-time input,
+.pt-joint input {
+  width: 80px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid #4a4a5e;
+  background: #1f1f2b;
+  color: inherit;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.pt-warning {
+  background: #fff3cd;
+  color: #664d03;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.pt-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.pt-group {
+  margin: 0;
+  padding: 8px 12px 10px;
+  border: 1px solid #34344a;
+  border-radius: 8px;
+}
+
+.pt-group legend {
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #a78bfa;
+}
+
+.pt-joint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.pt-joint input.pt-changed {
+  border-color: #38bdf8;
+  background: #0c2a3a;
+}
+
+.pt-joint input.pt-invalid {
+  border-color: #f87171;
+  background: #3a1414;
+}
+
+.pt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+}
+
+.pt-error-text {
+  color: #f87171;
+  font-size: 13px;
+}
+
+.pt-status {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.pt-status-ok {
+  background: #e7f6ec;
+  color: #1e5631;
+}
+
+.pt-status-warn {
+  background: #fff3cd;
+  color: #664d03;
+}
+
+.pt-status-error {
+  background: #fde8e8;
+  color: #8a1c1c;
+}
+
+.pt-sim {
+  position: sticky;
+  top: 24px;
+}
+
+.pt-sim-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.pt-sim-view {
+  position: relative;
+  height: min(70vh, 560px);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #15151a;
+}
+
+.pt-sim-note {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 6px;
+}

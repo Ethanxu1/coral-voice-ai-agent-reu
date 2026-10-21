@@ -1,19 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChatArea, ConnectionHealthDot } from './RefinedDemo'
-import { LiveStream } from './DummyStream'
+import ChatArea from '../components/ChatArea'
+import { LiveStream } from '../components/LiveStream'
 import RobotViewer from '../components/RobotViewer'
-import { useConnectionStatus } from '../components/ConnectionStatus'
+import { ConnectionHealthDot, useConnectionStatus } from '../components/ConnectionStatus'
 import { usePoseWebSocket } from '../hooks/usePoseWebSocket'
-import {
-  killSpeech,
-  openActionSession,
-  resetPose,
-  setHiplessFollow,
-  speak,
-  stopSubjectSelection,
-} from '../demo/api'
-import type { ActionSession } from '../demo/api'
+import { type ActionSession, openActionSession } from '../api/actionSession'
+import { resetPose, setHiplessFollow } from '../api/robot'
+import { stopSubjectSelection } from '../api/vision'
+import { killSpeech, speak } from '../audio/speech'
 import type { RefinedChatMsg } from '../demo/useRefinedDemoMachine'
 import GestureFigure from '../rps/GestureFigure'
 import StandardPicture from '../rps/StandardPicture'
@@ -23,6 +18,7 @@ import { poseRobot, resetRobot } from '../rps/robotPose'
 import { BEATS, GESTURES, GESTURE_BY_ID, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
+import { sleep } from '../utils/sleep'
 
 export type RpsMode = 'learn' | 'play'
 type Outcome = 'win' | 'lose' | 'draw'
@@ -40,7 +36,6 @@ const CHIP_AGAIN = 'Play again'
 
 export const RPS_PATH = '/rock-paper-scissors'
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 
 function judge(child: GestureId, robot: GestureId): Outcome {

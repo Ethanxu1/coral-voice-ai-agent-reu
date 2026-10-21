@@ -1,9 +1,9 @@
-import { resetPose, setPose } from '../demo/api'
+import { resetPose, setPose } from '../api/robot'
 import { ROBOT_REST_PULSES } from './gestures'
+import { sleep } from '../utils/sleep'
 
 const STEPS = 10
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 let current: Record<string, number> = { ...ROBOT_REST_PULSES }
 let token = 0

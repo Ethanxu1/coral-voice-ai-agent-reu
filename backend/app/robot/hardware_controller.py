@@ -1,8 +1,8 @@
 """Hardware controller — sends servo commands to the robot over HTTP.
 
-Runs on the laptop. The physical robot must be running robot_server.py, reachable
-at ROBOT_IP:ROBOT_AGENT_PORT on the local network. The legacy /move, /stand,
-/feedback and /positions endpoints it uses are preserved by robot_server.py.
+Runs on the laptop. The physical robot must be running the Pi servo server
+(backend/app/robot/pi/nodes/server.py), reachable at ROBOT_IP:ROBOT_AGENT_PORT
+on the local network.
 
 Environment variables:
     ROBOT_IP          Robot's IP address (default: 192.168.8.219)
@@ -14,11 +14,9 @@ from loguru import logger
 
 from app.config import ROBOT_AGENT_PORT, ROBOT_IP
 
-from .hardware_angle_utils import sim_units_to_hardware_units, hardware_units_to_rad
+from .hardware_angle_utils import hardware_units_to_rad, sim_units_to_hardware_units
 from .interface import RobotController, ServoCommand, ServoFeedback
 from .servo_config import JOINT_NAME_MAP, STAND_PULSE
-
-
 
 
 class AiNexHardwareController(RobotController):

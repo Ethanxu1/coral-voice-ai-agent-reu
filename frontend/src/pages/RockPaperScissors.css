@@ -52,10 +52,6 @@
   color: #6B625D;
 }
 
-.rps-seen-first {
-  top: 60px;
-}
-
 /* ── Menu screen (pick Learn or Play) ───────────────────────────────────── */
 .rps-menu {
   flex: 1;
@@ -190,16 +186,6 @@
   font-weight: 700;
   text-align: center;
   padding: 0 20px;
-}
-
-.rps-cell-cover {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(28, 26, 34, 0.8);
 }
 
 .rps-skeleton {

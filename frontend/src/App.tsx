@@ -1,7 +1,7 @@
 import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import RefinedDemo from './pages/RefinedDemo'
 import Welcome from './pages/Welcome'
-import Tutorial from './pages/Tutorial'
+import Tutorial from './pages/tutorial/Tutorial'
 import PoseTester from './pages/PoseTester'
 import SubjectSelect from './pages/SubjectSelect'
 import TestFunctionality from './pages/TestFunctionality'
@@ -21,25 +21,23 @@ function App() {
           ✨ Start Demo Here
         </Link>
         <div className="launcher-actions">
-          <Link to="/welcome" className="launcher-btn primary">
-            ✨ Refined Demo
-          </Link>
-          <Link to="/subject-select" className="launcher-btn">
-            🔒 Subject Select
-          </Link>
-          <Link to="/pose-tester" className="launcher-btn">
-            🦿 Pose Tester
-          </Link>
           <Link to="/rock-paper-scissors" className="launcher-btn wide">
             ✊✋✌️ Rock Paper Scissors
           </Link>
         </div>
         <ConnectionStatus />
-        <div className="launcher-footer">
+        <nav className="launcher-footer" aria-label="Developer tools">
+          <span className="launcher-footer-label">Developer tools</span>
           <Link to="/test" className="launcher-footer-link">
-            Test functionality
+            Joint test
           </Link>
-        </div>
+          <Link to="/pose-tester" className="launcher-footer-link">
+            Pose tester
+          </Link>
+          <Link to="/subject-select" className="launcher-footer-link">
+            Subject select
+          </Link>
+        </nav>
       </div>
     </div>
   )

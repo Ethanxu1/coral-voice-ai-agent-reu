@@ -95,15 +95,15 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 | `frontend/src/rps/StandardPicture.tsx` | View 1: image from `public/rps/` or the stick figure |
 | `frontend/src/rps/SkeletonView.tsx` | View 4: the tracker's stick figure and the readiness message |
 | `frontend/src/App.tsx`, `App.css` | Home-page button and routes |
-| `frontend/src/demo/api.ts` | Added `setHiplessFollow()` |
-| `frontend/src/pages/RefinedDemo.tsx` | Only change: `ChatArea` and `ConnectionHealthDot` are now exported for reuse |
+| `frontend/src/api/robot.ts` | `setHiplessFollow()` |
+| `frontend/src/components/ChatArea.tsx`, `ConnectionStatus.tsx` | Chat panel and health dot, shared with the Refined Demo |
 
 ### Backend
 
 | File | Change |
 |---|---|
 | `backend/app/vision/pose_to_robot.py` | Optional hip-less mode: if the hips are not visible, the torso frame is built from the shoulders alone, assuming an upright torso |
-| `backend/app/follow_controller.py` | Optional gentle mode: slower commands, harder filtering, and a per-tick limit on how far any joint may move |
+| `backend/app/services/follow.py` | Optional gentle mode: slower commands, harder filtering, and a per-tick limit on how far any joint may move |
 | `backend/app/api/routes/state.py` | `POST /follow/hipless-arms` switches both modes on or off |
 
 Both backend modes are **off by default**, so the main demo behaves exactly as before. The Learn screen turns them on when it opens and off when it closes.
@@ -113,13 +113,13 @@ Both backend modes are **off by default**, so the main demo behaves exactly as b
 ## 4. Running it
 
 ```bash
-./run.sh -speaker
+./run.sh
 ```
 
 Open <http://localhost:5173> and click **Rock Paper Scissors**.
 
 - Simulation mode is enough. No robot is needed.
-- The speaker server is only needed for CORAL's voice.
+- CORAL's voice is OpenAI TTS from the backend (`POST /speak`), so it needs `OPENAI_API_KEY`.
 - Restart the backend after pulling these changes. The new endpoint does not exist in an already-running server, and the follow behaviour will not change until it restarts.
 - Stand so that your head, shoulders and both arms are in view. Hips are not needed.
 
@@ -133,7 +133,7 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 | Change what the robot does for a gesture | `robotPulses` in `rps/gestures.ts` (hardware servo pulses, same format as `robot/motions.py`) |
 | Make detection stricter or looser | `DETECTION` in `rps/gestures.ts`: `minSimilarity` (lower is looser), `maxDistance` (higher is looser), `margin` |
 | Use real screenshots in view 1 | Add `rock.png`, `paper.png`, `scissors.png` to `frontend/public/rps/` |
-| Change how fast the simulated robot follows | `_GENTLE_*` constants at the top of `backend/app/follow_controller.py` |
+| Change how fast the simulated robot follows | `_GENTLE_*` constants at the top of `backend/app/services/follow.py` |
 | Add another gesture | Add an entry to `GESTURES` in `rps/gestures.ts` and extend `GestureId` and `BEATS` |
 
 ### Reusing the matcher in another game
@@ -164,7 +164,7 @@ Coordinates are in shoulder widths from the middle of the shoulders, x to the ri
 7. **Robot motion in the game is simulator-only.** Poses are sent with `POST /set-pose`, which snaps joints and bypasses the collision and fall checks. `robotPose.ts` eases in small steps to avoid toppling. Running this on the physical robot would need a safer path, such as the `/move` route.
 8. **The 3D viewer sometimes stays blank in an embedded preview** until the window is resized. This was seen only in the Claude preview pane, not in Chrome.
 9. **No automated tests.** The frontend has no test runner. The matcher is a pure function and is easy to unit-test if one is added.
-10. **Voice lines go to the speaker server and are best effort.** If it is not running, the game works silently.
+10. **Voice lines are best effort.** If TTS fails (no OpenAI key, no network), the game works silently.
 
 ### Ideas for next steps
 

@@ -4,9 +4,8 @@
 // Shown regardless of sim/live mode and regardless of whether a physical
 // robot is actually connected — the backend no-ops the hardware side in sim
 // mode, but the pill still fires so a developer without a robot attached can
-// see exactly when a save or demonstrate action would reach hardware. See
-// the 2026-08-27 fix (pose save/demonstrate now always target hardware once
-// connected, independent of the sim/hardware toggle).
+// see exactly when a save or demonstrate action would reach hardware (pose
+// save/demonstrate always target hardware once connected; 2026-08-27 fix).
 //
 // Counter-based (not a plain boolean) so nested/overlapping callers — e.g.
 // the exit replay wrapping its whole loop while each individual playPose()

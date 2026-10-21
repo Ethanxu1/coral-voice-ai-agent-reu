@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { Landmark, FaceLandmark, HeadPose, CalibrationStatus, StabilityStatus, DetectedSubject, SelectionState } from '../types/pose'
+import { resetSubjectSelection, startSubjectSelection, stopSubjectSelection } from '../api/vision'
+import { VISION_BASE, VISION_POSE_WS } from '../config'
+import type { Landmark, FaceLandmark, HeadPose, StabilityStatus, DetectedSubject, SelectionState } from '../types/pose'
 
-const VISION_BASE = 'http://localhost:8001'
-const VISION_WS = 'ws://localhost:8001/ws/pose'
 
 const INITIAL_STABILITY: StabilityStatus = {
   state: 'idle',
@@ -14,11 +14,6 @@ export function usePoseWebSocket() {
   const [bodyLandmarks, setBodyLandmarks] = useState<Landmark[]>([])
   const [faceLandmarks, setFaceLandmarks] = useState<FaceLandmark[]>([])
   const [headPose, setHeadPose] = useState<HeadPose | null>(null)
-  const [calibrationStatus, setCalibrationStatus] = useState<CalibrationStatus>({
-    state: 'idle',
-    progress: 0,
-    frame_count: 0,
-  })
   const [stabilityStatus, setStabilityStatus] = useState<StabilityStatus>(INITIAL_STABILITY)
   const [isConnected, setIsConnected] = useState(false)
   const [trackingLost, setTrackingLost] = useState(false)
@@ -36,7 +31,7 @@ export function usePoseWebSocket() {
       wsRef.current.close()
     }
     const gen = ++genRef.current
-    const ws = new WebSocket(VISION_WS)
+    const ws = new WebSocket(VISION_POSE_WS)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -62,15 +57,12 @@ export function usePoseWebSocket() {
         if (data.body_landmarks?.length) setBodyLandmarks(data.body_landmarks)
         if (data.face_landmarks?.length) setFaceLandmarks(data.face_landmarks)
         setHeadPose(data.head_pose)
-        if (data.calibration) setCalibrationStatus(data.calibration)
         if (data.stability) setStabilityStatus(data.stability)
         if (data.selection_state) setSelectionState(data.selection_state)
         setSelectedSubjectId(data.selected_subject_id ?? null)
         if (data.subjects) setSubjects(data.subjects)
       } else if (data.type === 'tracking_lost') {
         setTrackingLost(true)
-      } else if (data.type === 'calibration_status') {
-        setCalibrationStatus({ state: data.state, progress: data.progress, frame_count: data.frame_count ?? 0 })
       }
     }
   }, [])
@@ -89,14 +81,6 @@ export function usePoseWebSocket() {
     }
   }, [connect])
 
-  const startCalibration = useCallback(async () => {
-    await fetch(`${VISION_BASE}/calibrate/start`, { method: 'POST' })
-  }, [])
-
-  const resetCalibration = useCallback(async () => {
-    await fetch(`${VISION_BASE}/calibrate/reset`, { method: 'POST' })
-  }, [])
-
   const captureStablePosition = useCallback(async () => {
     await fetch(`${VISION_BASE}/capture/stable_position/start`, { method: 'POST' })
   }, [])
@@ -105,17 +89,9 @@ export function usePoseWebSocket() {
     await fetch(`${VISION_BASE}/capture/stable_position/continue`, { method: 'POST' })
   }, [])
 
-  const startSelection = useCallback(async () => {
-    await fetch(`${VISION_BASE}/subject-selection/start`, { method: 'POST' })
-  }, [])
-
-  const resetSelection = useCallback(async () => {
-    await fetch(`${VISION_BASE}/subject-selection/reset`, { method: 'POST' })
-  }, [])
-
-  const stopSelection = useCallback(async () => {
-    await fetch(`${VISION_BASE}/subject-selection/stop`, { method: 'POST' })
-  }, [])
+  const startSelection = startSubjectSelection
+  const resetSelection = resetSubjectSelection
+  const stopSelection = stopSubjectSelection
 
   const fetchTuning = useCallback(async () => {
     const res = await fetch(`${VISION_BASE}/subject-selection/tuning`)
@@ -137,15 +113,12 @@ export function usePoseWebSocket() {
     bodyLandmarks,
     faceLandmarks,
     headPose,
-    calibrationStatus,
     stabilityStatus,
     isConnected,
     trackingLost,
     selectionState,
     selectedSubjectId,
     subjects,
-    startCalibration,
-    resetCalibration,
     captureStablePosition,
     continueLive,
     startSelection,

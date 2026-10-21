@@ -28,34 +28,25 @@ Facts that follow from this and cause most of the confusion:
 
 ## 2. Getting in
 
-### The helper scripts
+### The helper script
 
-Two zsh helpers live in [utils/](../utils/). Both wrap the same two-hop Mac → Pi → container path so you don't have to type it out.
+[`utils/pi.sh`](../utils/pi.sh) wraps the two-hop Mac → Pi → container path: one command from the Mac to a shell inside the container.
 
-| Script | What it does |
-|---|---|
-| [`pi.sh`](../utils/pi.sh) | One command from Mac to a shell inside the container |
-| [`dump.sh`](../utils/dump.sh) | Copies a file or directory from your local repo into the container |
-
-**One-time setup.** Both expect to be on your `PATH` under a short name:
+**One-time setup.** Put it on your `PATH` under a short name:
 
 ```bash
-sudo mv utils/pi.sh   /usr/local/bin/pi   && sudo chmod +x /usr/local/bin/pi
-sudo mv utils/dump.sh /usr/local/bin/dump && sudo chmod +x /usr/local/bin/dump
+sudo cp utils/pi.sh /usr/local/bin/pi && sudo chmod +x /usr/local/bin/pi
 ```
 
-Both also require `sshpass`, which they use to pass the Pi's password non-interactively:
+It also requires `sshpass`, which they use to pass the Pi's password non-interactively:
 
 ```bash
 brew install sshpass
 ```
 
-If Homebrew refuses to install `sshpass` from core, you'll need a third-party tap — or set up SSH keys to the Pi and strip the `sshpass` wrapper out of both scripts, which is the better long-term fix.
+If Homebrew refuses to install `sshpass` from core, you'll need a third-party tap — or set up SSH keys to the Pi and strip the `sshpass` wrapper out of the script, which is the better long-term fix.
 
-**Before first use, edit the CONFIG block at the top of each script.** They carry hard-coded values that will not be right for you:
-
-- `REPO_ROOT` in `dump.sh` points at `/Users/scottfukuda/ainex_skeleton_following` — a local path on one machine, and a *different* repo from this one. `dump` refuses any file outside it, so this must be changed before the script will do anything.
-- `PI_USER`, `PI_HOST`, and `PI_PASSWORD` are hard-coded in both.
+**Before first use, edit the CONFIG block at the top of the script:** `PI_USER`, `PI_HOST`, and `PI_PASSWORD` are hard-coded.
 
 ### Network
 
@@ -75,7 +66,7 @@ The physical router is a GL.iNet GL-BE3600(Slate 7) portable router.
 | Username | `pi` |
 | Password | `raspberrypi` |
 
-These are the Pi's login, used for SSH, for RealVNC, and by both helper scripts (`PI_USER` / `PI_PASSWORD` in their CONFIG blocks). The `ubuntu` user inside the container is reached with `su - ubuntu` and needs no password.
+These are the Pi's login, used for SSH, for RealVNC, and by the helper script (`PI_USER` / `PI_PASSWORD` in its CONFIG block). The `ubuntu` user inside the container is reached with `su - ubuntu` and needs no password.
 
 ### SSH
 
@@ -114,50 +105,7 @@ Notes:
 
 ## 3. Getting files onto the robot
 
-### `dump` (preferred)
-
-[`dump.sh`](../utils/dump.sh) does both hops in one command. Run it from inside the repo named by `REPO_ROOT` in its CONFIG block:
-
-```bash
-dump <file_or_dir>
-```
-
-It then prompts:
-
-```
-Write to: /home/ubuntu/ros_ws/src/____
-```
-
-Enter a path relative to `/home/ubuntu/ros_ws/src/` — for example `demos`. Leading and trailing slashes are stripped, and an empty answer aborts.
-
-The file lands in three places:
-
-```
-local:      <REPO_ROOT>/<relative path>
-Pi staging: /home/pi/scp/<relative path>
-container:  ainex:/home/ubuntu/ros_ws/src/<entered>/<basename>
-```
-
-Note the asymmetry: the **Pi staging copy mirrors your local directory structure**, while the **container copy is flattened** — only the basename is appended to the destination you typed. `dump demos/test.py` answered with `demos` lands at `.../src/demos/test.py`, not `.../src/demos/demos/test.py`.
-
-Example:
-
-```bash
-dump demos/test_head_servo.py     # then type: demos
-```
-
-Directories work too and are copied recursively.
-
-**What it will and won't do:**
-
-- It refuses any file outside `REPO_ROOT`, printing the expected and actual paths.
-- It **creates the staging directory on the Pi** but **not** the destination directory inside the container. If `docker cp` fails, the usual cause is that `/home/ubuntu/ros_ws/src/<what you typed>/` doesn't exist yet — the script says as much in its error. Create it inside the container first, then re-run.
-- It does **not** set the executable bit. New ROS nodes still need `chmod +x` inside the container (see §5).
-- Each run prints the three resolved paths before transferring, so check that line if a file ends up somewhere unexpected.
-
-### Manual, two steps
-
-When `dump` isn't available or you need a non-standard destination.
+### Two steps: Mac → Pi → container
 
 **Step 1 — Mac to Pi:**
 
@@ -215,14 +163,14 @@ cd ~/ros_ws && source devel/setup.bash
 roslaunch ainex_demo ainex_demo.launch
 ```
 
-This brings up `robot_server` along with the rest of the demo nodes. Confirm it is
+This brings up the servo server (`nodes/server.py`) along with the rest of the demo nodes. Confirm it is
 up from the Mac:
 
 ```bash
 curl http://192.168.8.219:9000/health
 ```
 
-See also the README's Pi run section.
+Then start the laptop side with `./run.sh -live -ip <robot ip>` (see the README).
 
 ---
 
