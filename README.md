@@ -97,7 +97,7 @@ Set these in `.env` (see `.env.example`).
 | `OPENAI_API_KEY` | — | Required: intent classification, motion planning, chat, TTS |
 | `OPENAI_BASE_URL` | — | Point the OpenAI SDK at a compatible provider (read by the SDK) |
 | `LLM_MODEL` | `gpt-5.4-mini` | Chat-completions model |
-| `ROBOT_IP` | `192.168.8.219` | Physical robot's IP (hardware mode) |
+| `ROBOT_IP` | none (required for `-live`) | Physical robot's IP (hardware mode), e.g. `192.168.8.219` |
 | `ROBOT_AGENT_PORT` | `9000` | Pi servo server port |
 | `WHISPER_MODEL_SIZE` | `base` | faster-whisper size (`tiny`, `base`, `small`, and `.en` variants) |
 | `TTS_ENABLED` | `auto` | `auto` speaks when an OpenAI key is set; `false` disables speech |

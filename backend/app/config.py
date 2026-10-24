@@ -29,7 +29,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://coral:coral@localhost:543
 # Robot / hardware
 # ---------------------------------------------------------------------------
 ROBOT_MODE = os.getenv("ROBOT_MODE", "sim")
-ROBOT_IP = os.getenv("ROBOT_IP", "192.168.8.219")
+# No default: set ROBOT_IP in .env (or `./run.sh -live -ip <addr>`). Only robot mode needs it.
+ROBOT_IP = os.getenv("ROBOT_IP") or None
 ROBOT_AGENT_PORT = int(os.getenv("ROBOT_AGENT_PORT", "9000"))
 
 # ---------------------------------------------------------------------------
