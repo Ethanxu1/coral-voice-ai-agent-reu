@@ -32,7 +32,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD:-coral}@db:5432/${POSTGRES_DB:-coral}
       ROBOT_MODE: ${ROBOT_MODE:-sim}
-      ROBOT_IP: ${ROBOT_IP:-192.168.8.219}
+      ROBOT_IP: ${ROBOT_IP:-}
       # The vision server runs on the host.
       VISION_BASE: http://host.docker.internal:8001
       # Containers must listen on all interfaces to be reachable from the host.

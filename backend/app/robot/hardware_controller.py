@@ -5,7 +5,7 @@ Runs on the laptop. The physical robot must be running the Pi servo server
 on the local network.
 
 Environment variables:
-    ROBOT_IP          Robot's IP address (default: 192.168.8.219)
+    ROBOT_IP          Robot's IP address (required, no default)
     ROBOT_AGENT_PORT  Robot agent HTTP port (default: 9000)
 """
 
@@ -24,10 +24,12 @@ class AiNexHardwareController(RobotController):
 
     def __init__(
         self,
-        robot_ip: str = ROBOT_IP,
+        robot_ip: str | None = ROBOT_IP,
         port: int = ROBOT_AGENT_PORT,
         timeout: float = 5.0,
     ):
+        if not robot_ip:
+            raise RuntimeError("ROBOT_IP is not set: add it to .env or run `./run.sh -live -ip <robot_ip>`")
         self._base = f"http://{robot_ip}:{port}"
         self._client = httpx.Client(timeout=timeout)
         logger.info(f"HardwareController → robot agent at {self._base}")

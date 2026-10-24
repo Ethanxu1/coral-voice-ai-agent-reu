@@ -53,7 +53,7 @@ If Homebrew refuses to install `sshpass` from core, you'll need a third-party ta
 The robot is on the **coroblab** wifi. Both the Mac and the Pi must be on it.
 
 - Hostname: `raspberrypi.local`
-- IP: `192.168.8.219` (also the default for `ROBOT_IP`)
+- IP: `192.168.8.219` (set it as `ROBOT_IP` in `.env`; there is no code default)
 
 Use the hostname when you can and the IP when mDNS is being unreliable.
 
@@ -251,4 +251,4 @@ the two, so it is safe, but the true mechanical floor has not been re-measured.
 
 **Keep the battery above 10V.** A full charge takes roughly one hour. To maintain the robot's optimal performance, charge it promptly once the voltage drops to **≤10V**
 
-**The Pi hostname and IP are hard-coded as defaults** in `backend/app/robot/hardware_controller.py` and the README. If the robot's address changes, override `ROBOT_IP` rather than editing the default.
+**The robot IP comes only from `ROBOT_IP`** (`.env`, or `./run.sh -live -ip`); the backend refuses to start in robot mode without it. The Pose Tester page still has its own build-time default (`VITE_ROBOT_HOST` in `frontend/src/config.ts`).
