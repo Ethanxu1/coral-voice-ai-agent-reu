@@ -16,22 +16,26 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 |---|---|---|
 | `/rock-paper-scissors` | Menu | Three cards: Learn gestures, Let's play, Make your own moves |
 | `/rock-paper-scissors/learn` | Learn | Pick a move, see how to do it, and see what the system thinks you are doing |
-| `/rock-paper-scissors/play` | Play | A three-round match laid out as in Sayali's wireframes (see below) |
+| `/rock-paper-scissors/play` | Play | A three-round match (see below) |
 | `/rock-paper-scissors/custom` | Make your own moves | The child records their own rock, paper and scissors |
 | `/rock-paper-scissors/play?moves=custom` | Play | The same match with the child's own moves |
 
 ### Play
 
-1. **Ready?** starts the match. The child pressed it at the computer, so the game first waits until both arms are in view for a second ("Step back so I can see both of your arms").
-2. Each round: the words ROCK, PAPER, SCISSORS light up one per second, then SHOOT! CORAL strikes a random move while the camera is sampled for 1.3 s.
-3. The header shows ROUND n/3, the score, a verdict banner and a cheat sheet of the three moves. Below are three panels: CORAL, the camera, and the tracker's stick figure with the similarity score.
-4. A round where no move was seen is replayed. Draws count as a round. After three rounds a summary shows the score and the winner, with Rematch.
+The layout follows the October redesign (the `rps-ui` prototype). The top bar shows the round with a pip per round (green won, red lost, grey draw), the score, Menu, End and **RPS Hints**; it stays clickable above every overlay. Left: CORAL in the simulator. Right: one card per move with its stick figure, a one-line tip and a live similarity bar (red → yellow → green, tick at the 60% match line; the card turns green when it counts), then the tracker's stick figure with the camera in its corner.
+
+1. The **Start!** popup shows the three moves and whether CORAL can see the child. Start was pressed at the computer, so the game first waits until both arms are in view for a second ("Step back!").
+2. Each round: 3, 2, 1, Shoot! in a ring over CORAL's panel, while the child's panel stays lit so they can watch their bars.
+3. The child's move is captured first ("Got it!"). If no move was seen, "I couldn't see a move" and the countdown restarts.
+4. Only then does CORAL pick: an emoji shuffle runs while its arms move, and the reveal waits until they arrive.
+5. The result shows both moves, who won and why ("Paper wraps Rock!"); the winner's panel glows. It moves on by itself after 4 s, or sooner with **Next round**. Space or Enter presses the big button on screen.
+6. After three rounds: final score, a round-by-round recap, Play again and Learn the moves.
 
 Each round's result keeps the best similarity score and the time from SHOOT! until the move was first seen (`reactionMs`). Nothing is stored yet: how game data is recorded is waiting on the PIs.
 
 ### Make your own moves
 
-The robot follows the child while they pose (same gentle follow as Learn). **Record** stays disabled until following has started. For each move the child presses **Record**, gets 3 s to step back, makes the move and holds still. The move is saved, and the next one starts by itself, when both:
+Same look as Play: CORAL copying the child on the left; on the right a card per move (figure, status, Record or Redo) and the stick figure with a hold-still ring. The robot follows the child while they pose (same gentle follow as Learn). **Record** stays disabled until following has started. For each move the child presses **Record**, gets 3 s to step back, makes the move and holds still. The move is saved, and the next one starts by itself, when both:
 
 - the child has held still for 1.5 s (no joint moves more than 0.15 shoulder widths), and
 - the robot has caught up: over the last 0.8 s no arm joint ranged more than 60 pulses (`rps/useRobotSettle.ts`). Gentle follow lags the child, and a held pose still wobbles 20-50 pulses from landmark noise, while catching up moves about 380 pulses a second, so 60 separates the two.
@@ -105,10 +109,10 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 ### The game round (`playRound` in `RpsPlay.tsx`)
 
 1. Reset the robot to stand.
-2. ROCK, PAPER, SCISSORS light up one per second.
-3. "Shoot!": the robot eases into a random gesture (see "How CORAL moves in the game") while the camera is sampled every 50 ms for 1.3 s.
-4. The child's move is the gesture seen most often in that window. In the game every frame counts as whichever gesture it is most similar to, with no minimum score or margin (it's a game, not a test); `DETECTION.minSimilarity` and `margin` only apply in Learn. A round is replayed only if the arms were never in view.
-5. Judge, update the score, show the verdict and announce it by voice.
+2. 3, 2, 1 (0.9 s each), then "Shoot!" stays up 0.9 s while the child settles.
+3. The camera is sampled every 50 ms for 0.6 s. A frame counts as the most similar gesture if that similarity is at least 60% (`MATCH` in `RpsPlay.tsx`; Learn keeps the stricter `DETECTION.minSimilarity` of 72%). The child's move is the gesture seen most often, if it was seen in at least a third of the samples; otherwise the countdown restarts.
+4. CORAL picks a random gesture and eases into it (see "How CORAL moves in the game"); the shuffle lasts at least 1.2 s and until the arms arrive.
+5. Judge, update the score, show the result and announce it by voice.
 
 ---
 
@@ -126,8 +130,10 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 | `frontend/src/rps/customMoves.ts` | The recorded custom moves (session memory) and the too-alike check |
 | `frontend/src/rps/useRobotFollow.ts` | Hook: the robot follows the child while a screen is open; retries until the server is up |
 | `frontend/src/rps/useRobotSettle.ts` | Hook: has the following robot caught up? Shared with Gesture Studio |
-| `frontend/src/rps/RpsTopbar.tsx` | Top bar shared by the screens |
-| `frontend/src/pages/RockPaperScissors.css` | Styles only for what the Refined Demo does not already have |
+| `frontend/src/rps/RpsTopbar.tsx` | Top bar of the Menu and Learn screens |
+| `frontend/src/rps/RpsBar.tsx` | Top bar of Play and Make your own moves: Menu and End always clickable |
+| `frontend/src/pages/RpsPlay.css` | The redesigned look of Play and Make your own moves, scoped under `.rpsp` |
+| `frontend/src/pages/RockPaperScissors.css` | Styles for Menu and Learn, plus pieces Gesture Studio shares |
 | `frontend/src/pose/poseSimilarity.ts` | **Generic, reusable** pose matching. No game code |
 | `frontend/src/rps/gestures.ts` | **The one place to define the gestures**: labels, teaching text, stick figure, robot pose, detection settings |
 | `frontend/src/rps/classify.ts` | Thin wrapper: `classifyGesture()` and `gestureScores()` using the generic matcher |

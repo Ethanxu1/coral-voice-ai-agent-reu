@@ -45,6 +45,7 @@ export function customSet(moves: Record<GestureId, CustomMove>): GestureSet {
   const gestures = GESTURES.map((g) => ({
     ...g,
     tagline: `Your own ${g.label} move.`,
+    tip: 'Your own move',
     steps: [],
     figure: figureFromPose(moves[g.id].pose),
     robotPulses: moves[g.id].robotPulses,

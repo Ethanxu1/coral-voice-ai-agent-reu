@@ -23,6 +23,8 @@ export interface GestureDef {
   emoji: string
   /** One line shown under the title in Learn. */
   tagline: string
+  /** A few words shown next to the live match bar in Play. */
+  tip: string
   /** Step-by-step teaching text shown in Learn. */
   steps: string[]
   /**
@@ -51,6 +53,7 @@ export const GESTURES: GestureDef[] = [
     label: 'Rock',
     emoji: '✊',
     tagline: 'Cross your arms over your chest, like a closed fist.',
+    tip: 'Cross your arms over your chest',
     steps: [
       'Stand facing the camera.',
       'Bend both elbows and bring your hands up to your chest.',
@@ -78,6 +81,7 @@ export const GESTURES: GestureDef[] = [
     label: 'Paper',
     emoji: '✋',
     tagline: 'Stretch both arms straight out to the sides, like a flat sheet.',
+    tip: 'Arms straight out, like a T',
     steps: [
       'Stand facing the camera.',
       'Lift both arms out to your sides.',
@@ -106,6 +110,7 @@ export const GESTURES: GestureDef[] = [
     label: 'Scissors',
     emoji: '✌️',
     tagline: 'Raise both arms up high in a V, like the two blades.',
+    tip: 'Both arms up high in a V',
     steps: [
       'Stand facing the camera.',
       'Lift both arms up over your head.',
@@ -207,4 +212,11 @@ export const BEATS: Record<GestureId, GestureId> = {
   rock: 'scissors',
   paper: 'rock',
   scissors: 'paper',
+}
+
+/** Why each gesture wins, said after a round. */
+export const WINS_BECAUSE: Record<GestureId, string> = {
+  rock: 'Rock smashes Scissors',
+  paper: 'Paper wraps Rock',
+  scissors: 'Scissors cut Paper',
 }

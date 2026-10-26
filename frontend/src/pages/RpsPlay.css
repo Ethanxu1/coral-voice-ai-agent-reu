@@ -1,0 +1,266 @@
+/* Rock-Paper-Scissors Play screen. Everything is scoped under .rpsp so the
+   short class names (.modal, .tile, .score…) can't leak into other pages.
+   Fonts come from RefinedDemo.css. */
+
+.rpsp {
+  --bg: #EFE8DA;
+  --panel: #FFFDF8;
+  --panel-2: #F7F3ED;
+  --ink: #2D2926;
+  --muted: #6B6560;
+  --faint: #9E9591;
+  --coral: #FF6B4A;
+  --coral-dark: #e55c3b;
+  --teal: #17BEBB;
+  --dark: #26232F;
+  --dark-2: #1C1A23;
+  --green: #2E9E5B;
+  --green-soft: #E3F4EA;
+  --amber: #F0A93A;
+  --amber-soft: #FFF3DC;
+  --red: #D9453B;
+
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Nunito', sans-serif;
+}
+.rpsp * { box-sizing: border-box; }
+.rpsp button { font-family: inherit; cursor: pointer; border: none; }
+.rpsp h1 { margin: 0; }
+
+/* ── Top bar ───────────────────────────────────────────────────────────── */
+/* The top bar stays above the backdrops, solid so it never looks disabled:
+   Menu, End and Hints work at any time. */
+.rpsp .topbar { display: flex; align-items: center; gap: 22px; padding: 14px 24px; flex-shrink: 0; position: relative; z-index: 60; background: var(--bg); }
+.rpsp .logo { font-family: 'Baloo 2', cursive; font-size: 30px; font-weight: 800; line-height: 1; }
+.rpsp .logo span { color: var(--coral); }
+.rpsp .round { display: flex; flex-direction: column; gap: 4px; padding-left: 22px; border-left: 2px solid rgba(45,41,38,.1); }
+.rpsp .round-title { font-weight: 900; font-size: 18px; line-height: 1; display: flex; align-items: center; gap: 8px; }
+.rpsp .round-title .own { font-size: 12px; font-weight: 900; color: #0d8a88; background: rgba(23,190,187,.14); padding: 3px 8px; border-radius: 99px; }
+.rpsp .pips { display: flex; gap: 6px; }
+.rpsp .pip { width: 26px; height: 8px; border-radius: 99px; background: rgba(45,41,38,.12); }
+.rpsp .pip.now { background: var(--ink); }
+.rpsp .pip.win { background: var(--green); }
+.rpsp .pip.lose { background: var(--red); }
+.rpsp .pip.draw { background: var(--faint); }
+
+.rpsp .score { display: flex; align-items: center; gap: 12px; background: var(--panel); border-radius: 18px; padding: 6px 8px 6px 16px; box-shadow: 0 2px 10px rgba(45,41,38,.06); }
+.rpsp .score .who { font-weight: 900; font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.rpsp .score .who:last-child { padding-right: 8px; }
+.rpsp .score .n { font-family: 'Baloo 2', cursive; font-size: 30px; font-weight: 800; line-height: 1; min-width: 44px; text-align: center; padding: 4px 0 0; border-radius: 12px; }
+.rpsp .score .n.you { background: rgba(23,190,187,.14); color: #0d8a88; }
+.rpsp .score .n.coral { background: rgba(255,107,74,.14); color: var(--coral-dark); }
+.rpsp .score .n.bump { animation: rpsp-bump .5s ease; }
+.rpsp .score .colon { font-weight: 900; color: var(--faint); }
+@keyframes rpsp-bump { 40% { transform: scale(1.35); } }
+
+.rpsp .spacer { flex: 1; }
+.rpsp .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 18px; font-weight: 800; font-size: 15px; background: rgba(45,41,38,.08); color: var(--ink); }
+.rpsp .btn:hover { background: rgba(45,41,38,.14); }
+.rpsp .btn.end { background: var(--red); color: #fff; }
+.rpsp .btn.end:hover { filter: brightness(1.08); }
+.rpsp .btn.hints { background: var(--amber); color: #3a2604; font-size: 16px; padding: 11px 20px; box-shadow: 0 4px 14px rgba(240,169,58,.35); }
+.rpsp .btn.hints:hover { filter: brightness(1.04); }
+.rpsp .btn .ico { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,.55); display: grid; place-items: center; font-weight: 900; font-size: 14px; }
+
+/* ── Two panels: CORAL | you ───────────────────────────────────────────── */
+.rpsp .main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1.15fr; gap: 18px; padding: 0 24px 24px; position: relative; }
+.rpsp .panel { position: relative; border-radius: 26px; overflow: hidden; display: flex; flex-direction: column; min-height: 0; transition: box-shadow .3s; }
+.rpsp .panel-head { position: absolute; top: 16px; left: 18px; right: 18px; display: flex; align-items: center; gap: 10px; z-index: 3; pointer-events: none; }
+.rpsp .tag { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; font-weight: 900; font-size: 14px; letter-spacing: .05em; text-transform: uppercase; background: rgba(0,0,0,.35); color: #fff; backdrop-filter: blur(6px); }
+.rpsp .tag i { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 8px var(--teal); }
+.rpsp .tag.soft { text-transform: none; letter-spacing: 0; font-weight: 800; }
+.rpsp .tag.ok i { background: #3FA76B; box-shadow: 0 0 8px #3FA76B; }
+.rpsp .tag.warn { background: rgba(240,169,58,.9); color: #3a2604; }
+.rpsp .tag.warn i { background: #3a2604; box-shadow: none; }
+
+.rpsp .sim { background: var(--dark); }
+.rpsp .sim.bob canvas { animation: rpsp-bob .6s ease-in-out infinite; }
+@keyframes rpsp-bob { 50% { transform: translateY(-6px); } }
+
+.rpsp .me { background: var(--panel); display: grid; grid-template-columns: 300px 1fr; grid-template-rows: minmax(0, 1fr); gap: 14px; padding: 14px; }
+.rpsp .hint-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.rpsp .hint-col-title { font-weight: 900; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 6px 6px 0; display: flex; align-items: center; gap: 8px; }
+.rpsp .hint-col-title small { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 700; color: var(--faint); font-size: 12px; }
+
+.rpsp .hint { flex: 1; min-height: 0; position: relative; border-radius: 20px; background: var(--panel-2); padding: 12px 14px; display: grid; grid-template-columns: 104px 1fr; grid-template-rows: auto auto auto; align-content: center; column-gap: 14px; align-items: center; box-shadow: inset 0 0 0 3px transparent; transition: box-shadow .2s, background .2s; overflow: hidden; }
+.rpsp .hint .fig { grid-row: 1 / 4; width: 104px; }
+.rpsp .hint .name { font-family: 'Baloo 2', cursive; font-weight: 800; font-size: 24px; line-height: 1; display: flex; align-items: baseline; gap: 8px; }
+.rpsp .hint .name .pct { margin-left: auto; font-family: 'Nunito', sans-serif; font-weight: 900; font-size: 22px; font-variant-numeric: tabular-nums; }
+.rpsp .hint .tip { font-size: 13px; font-weight: 700; color: var(--muted); line-height: 1.25; margin-top: 4px; }
+.rpsp .meter { position: relative; height: 18px; border-radius: 99px; background: rgba(45,41,38,.08); margin-top: 12px; }
+.rpsp .meter .fill { position: absolute; inset: 0 auto 0 0; border-radius: 99px; transition: width .12s linear; }
+.rpsp .meter .goal { position: absolute; top: -5px; bottom: -5px; width: 3px; border-radius: 2px; background: rgba(45,41,38,.45); }
+.rpsp .hint.match { background: var(--green-soft); box-shadow: inset 0 0 0 3px var(--green); }
+.rpsp .hint.match::after { content: '✓'; position: absolute; left: 10px; top: 10px; width: 26px; height: 26px; border-radius: 50%; background: var(--green); color: #fff; font-weight: 900; font-size: 15px; display: grid; place-items: center; }
+.rpsp .legend { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; color: var(--faint); padding: 0 6px; }
+.rpsp .legend .grad { flex: 1; height: 8px; border-radius: 99px; background: linear-gradient(90deg, hsl(0 75% 52%), hsl(50 85% 50%), hsl(120 55% 40%)); }
+
+.rpsp .skel { position: relative; border-radius: 20px; overflow: hidden; background: radial-gradient(ellipse at 50% 30%, #2c2938, var(--dark-2)); min-height: 0; }
+.rpsp .skel::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1px); background-size: 22px 22px; }
+.rpsp .skel .rps-skeleton { position: absolute; inset: 40px 10px 10px; width: calc(100% - 20px); height: calc(100% - 50px); }
+.rpsp .skel .rps-bone { stroke-width: 12; filter: drop-shadow(0 0 10px rgba(23,190,187,.8)); }
+.rpsp .skel .rps-bone.faded { filter: none; }
+.rpsp .skel .rps-head { stroke: rgba(255,255,255,.85); stroke-width: 8; }
+.rpsp .skel .rps-joint { fill: #fff; }
+.rpsp .skel .rps-joint.faded { fill: rgba(255,255,255,.25); }
+.rpsp .skel-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: rgba(255,255,255,.6); font-weight: 800; font-size: 17px; padding: 0 20px; }
+.rpsp .skel-empty b { display: block; font-family: 'Baloo 2', cursive; font-size: 26px; color: #fff; }
+
+.rpsp .cam { position: absolute; top: 14px; right: 14px; width: 30%; max-width: 240px; aspect-ratio: 4 / 3; border-radius: 14px; overflow: hidden; background: linear-gradient(160deg, #5d5a66, #3a3742); box-shadow: 0 6px 20px rgba(0,0,0,.4), 0 0 0 2px rgba(255,255,255,.18); z-index: 2; }
+.rpsp .cam .tui-stream { width: 100% !important; height: 100% !important; }
+.rpsp .cam .tui-stream img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rpsp .cam .live { position: absolute; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 900; color: #fff; background: rgba(0,0,0,.45); padding: 3px 8px; border-radius: 99px; z-index: 1; }
+.rpsp .cam .live i { width: 7px; height: 7px; border-radius: 50%; background: #FF5A5A; box-shadow: 0 0 6px #FF5A5A; }
+
+/* Played-move stamps after the reveal */
+.rpsp .played { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 10px; padding: 10px 20px 10px 12px; border-radius: 999px; background: #fff; font-weight: 900; font-size: 20px; box-shadow: 0 8px 24px rgba(0,0,0,.25); white-space: nowrap; animation: rpsp-pop .35s cubic-bezier(.3,1.6,.6,1); }
+.rpsp .played .em { font-size: 28px; }
+.rpsp .played.won { box-shadow: 0 0 0 4px #FFD54F, 0 8px 24px rgba(0,0,0,.25); }
+.rpsp .played .crown { font-size: 22px; }
+.rpsp .panel.winner { box-shadow: 0 0 0 5px #FFD54F, 0 0 40px rgba(255,213,79,.5); }
+@keyframes rpsp-pop { from { transform: translateX(-50%) scale(.6); opacity: 0; } }
+
+.rpsp .thinking { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-radius: 999px; background: #fff; font-weight: 900; font-size: 19px; box-shadow: 0 8px 24px rgba(0,0,0,.3); white-space: nowrap; }
+.rpsp .thinking .shuffle { font-size: 30px; width: 36px; text-align: center; }
+
+/* ── Overlays ──────────────────────────────────────────────────────────── */
+.rpsp .backdrop { position: fixed; inset: 0; background: rgba(38,35,47,.62); z-index: 50; display: grid; place-items: center; animation: rpsp-fade .2s; }
+@keyframes rpsp-fade { from { opacity: 0; } }
+.rpsp .raised { z-index: 60; box-shadow: 0 0 0 5px rgba(255,255,255,.9), 0 20px 60px rgba(0,0,0,.35); }
+
+.rpsp .modal { background: var(--panel); border-radius: 32px; padding: 34px 40px 36px; box-shadow: 0 30px 80px rgba(0,0,0,.35); display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; animation: rpsp-rise .3s cubic-bezier(.3,1.4,.6,1); max-width: calc(100vw - 48px); }
+@keyframes rpsp-rise { from { transform: translateY(24px) scale(.96); opacity: 0; } }
+.rpsp .modal .kicker { font-weight: 900; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; color: var(--coral); }
+.rpsp .modal h1 { font-family: 'Baloo 2', cursive; font-size: 46px; line-height: 1; font-weight: 800; }
+.rpsp .modal .sub { font-size: 18px; font-weight: 700; color: var(--muted); max-width: 640px; }
+
+.rpsp .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 210px)); gap: 16px; }
+.rpsp .tile { background: var(--panel-2); border-radius: 24px; padding: 18px 16px 16px; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; }
+.rpsp .tile .fig { width: 120px; }
+.rpsp .tile .name { font-family: 'Baloo 2', cursive; font-size: 30px; font-weight: 800; line-height: 1; }
+.rpsp .tile .tip { font-size: 14px; font-weight: 700; color: var(--muted); line-height: 1.3; }
+.rpsp .tile .em { position: absolute; top: 12px; right: 14px; font-size: 24px; }
+
+.rpsp .ready-check { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; padding: 10px 18px; border-radius: 999px; background: var(--green-soft); color: var(--green); }
+.rpsp .ready-check.warn { background: var(--amber-soft); color: #9a6410; }
+.rpsp .ready-check .dot { width: 22px; height: 22px; border-radius: 50%; background: var(--green); color: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 900; }
+.rpsp .ready-check.warn .dot { background: var(--amber); }
+
+.rpsp .start { margin-top: 4px; background: var(--coral); color: #fff; font-family: 'Baloo 2', cursive; font-size: 40px; font-weight: 800; padding: 14px 80px 8px; border-radius: 999px; box-shadow: 0 10px 0 var(--coral-dark), 0 18px 34px rgba(255,107,74,.45); animation: rpsp-pulse 1.8s ease-in-out infinite; }
+.rpsp .start:hover { filter: brightness(1.05); }
+.rpsp .start:active { transform: translateY(6px); box-shadow: 0 4px 0 var(--coral-dark); }
+@keyframes rpsp-pulse { 50% { box-shadow: 0 10px 0 var(--coral-dark), 0 18px 34px rgba(255,107,74,.45), 0 0 0 16px rgba(255,107,74,.14); } }
+.rpsp .keyhint { font-size: 13px; font-weight: 700; color: var(--faint); }
+
+/* Countdown card sits over CORAL's panel; the "you" panel stays lit above the backdrop. */
+.rpsp .count-wrap { position: absolute; inset: 0; z-index: 60; display: grid; place-items: center; pointer-events: none; }
+.rpsp .count-card { pointer-events: auto; width: 440px; padding: 30px 30px 32px; gap: 10px; }
+.rpsp .ring { position: relative; width: 230px; height: 230px; }
+.rpsp .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.rpsp .ring .track { fill: none; stroke: rgba(45,41,38,.08); stroke-width: 16; }
+.rpsp .ring .prog { fill: none; stroke: var(--coral); stroke-width: 16; stroke-linecap: round; stroke-dasharray: 628; animation: rpsp-drain var(--step, .9s) linear forwards; }
+.rpsp .ring.waiting .prog { animation: none; stroke-dashoffset: 470; }
+@keyframes rpsp-drain { to { stroke-dashoffset: 628; } }
+.rpsp .ring .num { position: absolute; inset: 0; display: grid; place-items: center; font-family: 'Baloo 2', cursive; font-size: 130px; font-weight: 800; line-height: 1; padding-top: 18px; animation: rpsp-numpop .3s cubic-bezier(.3,1.6,.6,1); }
+.rpsp .ring .num.word { font-size: 64px; color: var(--coral); }
+.rpsp .ring .num.emoji { font-size: 96px; padding-top: 0; }
+@keyframes rpsp-numpop { from { transform: scale(.4); opacity: 0; } }
+.rpsp .count-card .pointer { display: inline-flex; align-items: center; gap: 8px; font-weight: 900; font-size: 15px; color: #0d8a88; background: rgba(23,190,187,.12); padding: 8px 14px; border-radius: 999px; }
+.rpsp .count-card.amber .kicker { color: #c27c12; }
+.rpsp .count-card .again { font-weight: 900; font-size: 20px; color: #9a6410; background: var(--amber-soft); padding: 10px 18px; border-radius: 16px; }
+.rpsp .count-card.green .kicker { color: var(--green); }
+.rpsp .got { display: flex; align-items: center; gap: 16px; background: var(--green-soft); border-radius: 24px; padding: 14px 24px 14px 14px; box-shadow: inset 0 0 0 3px var(--green); }
+.rpsp .got .fig { width: 110px; }
+.rpsp .got .name { font-family: 'Baloo 2', cursive; font-size: 44px; font-weight: 800; line-height: 1; }
+.rpsp .got .em { font-size: 40px; }
+
+/* Round result card */
+.rpsp .result { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px 38px 28px; border-radius: 30px; background: var(--panel); box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: center; animation: rpsp-rise .35s cubic-bezier(.3,1.4,.6,1); min-width: 420px; }
+.rpsp .result .kicker { font-weight: 900; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.rpsp .result h1 { font-family: 'Baloo 2', cursive; font-size: 50px; line-height: 1; font-weight: 800; }
+.rpsp .result.win h1 { color: var(--green); }
+.rpsp .result.lose h1 { color: var(--coral-dark); }
+.rpsp .result .why { font-size: 19px; font-weight: 800; color: var(--muted); }
+.rpsp .vs { display: flex; align-items: center; gap: 14px; margin: 6px 0 8px; }
+.rpsp .vs .side { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 16px; border-radius: 20px; background: var(--panel-2); min-width: 130px; }
+.rpsp .vs .side.won { background: #FFF6D6; box-shadow: inset 0 0 0 3px #FFD54F; }
+.rpsp .vs .side .em { font-size: 40px; line-height: 1.1; }
+.rpsp .vs .side b { font-size: 20px; }
+.rpsp .vs .side small { font-weight: 900; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+.rpsp .vs .x { font-family: 'Baloo 2', cursive; font-size: 26px; font-weight: 800; color: var(--faint); }
+.rpsp .next { margin-top: 10px; background: var(--teal); color: #fff; font-family: 'Baloo 2', cursive; font-size: 28px; font-weight: 800; padding: 10px 40px 4px; border-radius: 999px; box-shadow: 0 7px 0 #0f9592; position: relative; overflow: hidden; }
+.rpsp .next:active { transform: translateY(4px); box-shadow: 0 3px 0 #0f9592; }
+/* Fills while the round result waits to move on by itself. */
+.rpsp .next .auto { position: absolute; left: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.6); animation: rpsp-auto var(--wait) linear forwards; }
+@keyframes rpsp-auto { from { width: 0; } to { width: 100%; } }
+
+/* Hints modal */
+.rpsp .hint-modal { width: 900px; }
+.rpsp .hint-modal .tiles { grid-template-columns: repeat(3, 1fr); width: 100%; }
+.rpsp .hint-modal .tile { align-items: stretch; text-align: left; padding: 18px 20px 20px; }
+.rpsp .hint-modal .tile .fig { width: 140px; align-self: center; }
+.rpsp .hint-modal .tile ol { margin: 0; padding-left: 20px; font-size: 15px; font-weight: 700; color: var(--muted); line-height: 1.45; }
+.rpsp .hint-modal .beats { margin-top: 4px; font-size: 14px; font-weight: 900; color: var(--green); background: var(--green-soft); border-radius: 12px; padding: 6px 10px; }
+.rpsp .cycle { display: flex; align-items: center; gap: 12px; font-weight: 900; font-size: 17px; color: var(--muted); }
+.rpsp .cycle span { font-size: 26px; }
+.rpsp .cta { background: var(--teal); color: #fff; font-weight: 900; font-size: 18px; padding: 12px 36px; border-radius: 999px; }
+
+/* Match over */
+.rpsp .final h1 { font-size: 58px; }
+.rpsp .big-score { display: flex; align-items: center; gap: 22px; font-family: 'Baloo 2', cursive; font-weight: 800; }
+.rpsp .big-score .n { font-size: 88px; line-height: 1; }
+.rpsp .big-score .n.you { color: #0d8a88; }
+.rpsp .big-score .n.coral { color: var(--coral-dark); }
+.rpsp .big-score small { display: block; font-family: 'Nunito', sans-serif; font-size: 14px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); text-align: center; }
+.rpsp .big-score .dash { font-size: 60px; color: var(--faint); }
+.rpsp .history { display: flex; flex-direction: column; gap: 8px; width: 500px; max-width: 100%; }
+.rpsp .history .row { display: grid; grid-template-columns: 80px 1fr 28px 1fr 64px; align-items: center; gap: 6px; white-space: nowrap; padding: 8px 14px; border-radius: 16px; background: var(--panel-2); font-weight: 800; }
+.rpsp .history .r { color: var(--faint); font-size: 13px; font-weight: 900; text-transform: uppercase; }
+.rpsp .history .m { font-size: 17px; text-align: left; }
+.rpsp .history .m.right { text-align: right; }
+.rpsp .history .vsx { text-align: center; color: var(--faint); }
+.rpsp .history .o { text-align: right; font-size: 13px; font-weight: 900; }
+.rpsp .history .o.win { color: var(--green); }
+.rpsp .history .o.lose { color: var(--coral-dark); }
+.rpsp .history .o.draw { color: var(--faint); }
+.rpsp .actions { display: flex; gap: 12px; }
+.rpsp .actions .ghost { background: rgba(45,41,38,.08); color: var(--ink); font-weight: 900; font-size: 18px; padding: 12px 28px; border-radius: 999px; text-decoration: none; display: inline-flex; align-items: center; }
+.rpsp .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 55; overflow: hidden; }
+.rpsp .confetti i { position: absolute; top: -20px; width: 10px; height: 16px; border-radius: 3px; animation: rpsp-fall linear forwards; }
+@keyframes rpsp-fall { to { transform: translateY(110vh) rotate(720deg); } }
+
+/* Stick figures */
+.rpsp .fig { color: var(--ink); }
+.rpsp .fig .rps-figure { width: 100%; height: auto; display: block; }
+
+/* No moves recorded yet */
+.rpsp .empty { flex: 1; display: grid; place-items: center; }
+
+/* ── Make your own moves ───────────────────────────────────────────────── */
+.rpsp .btn.play { background: var(--coral); color: #fff; font-size: 16px; padding: 11px 22px; box-shadow: 0 4px 14px rgba(255,107,74,.35); }
+.rpsp .btn.play:hover:not(:disabled) { filter: brightness(1.05); }
+.rpsp .btn.play:disabled { opacity: .4; cursor: default; box-shadow: none; }
+.rpsp .hint.active { background: rgba(23,190,187,.1); box-shadow: inset 0 0 0 3px var(--teal); }
+.rpsp .hint.clash { background: #FDE8E6; box-shadow: inset 0 0 0 3px var(--red); }
+.rpsp .hint.clash .tip { color: var(--red); }
+.rpsp .hint .name .em { font-size: 20px; }
+.rpsp .fig-empty { width: 100%; aspect-ratio: 12 / 11; display: grid; place-items: center; font-family: 'Baloo 2', cursive; font-size: 48px; font-weight: 800; color: var(--faint); border: 3px dashed rgba(45,41,38,.15); border-radius: 18px; }
+.rpsp .hint .rec { justify-self: start; margin-top: 10px; background: var(--teal); color: #fff; font-weight: 900; font-size: 15px; padding: 8px 22px; border-radius: 999px; }
+.rpsp .hint .rec.redo { background: rgba(45,41,38,.08); color: var(--ink); }
+.rpsp .hint .rec:disabled { opacity: .4; cursor: default; }
+.rpsp .rec-actions { display: flex; gap: 10px; justify-content: center; }
+
+/* Hold-still progress, over the stick figure. */
+.rpsp .hold-ring { position: absolute; left: 18px; top: 64px; width: 110px; height: 110px; z-index: 3; }
+.rpsp .hold-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.rpsp .hold-ring .track { fill: rgba(0,0,0,.4); stroke: rgba(255,255,255,.15); stroke-width: 10; }
+.rpsp .hold-ring .prog { fill: none; stroke: var(--teal); stroke-width: 10; stroke-linecap: round; stroke-dasharray: 314; transition: stroke-dashoffset .1s linear; }
+.rpsp .hold-ring.done .prog { stroke: var(--green); }
+.rpsp .hold-ring span { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-weight: 900; font-size: 24px; }
+.rpsp .status { position: absolute; left: 18px; right: 18px; bottom: 18px; z-index: 4; text-align: center; padding: 12px 18px; border-radius: 18px; background: #fff; font-weight: 900; font-size: 18px; line-height: 1.3; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.rpsp .status.warn { background: var(--amber-soft); color: #9a6410; }

@@ -7,7 +7,8 @@ import { getJointPulses, killSpeech, speak, stopSubjectSelection } from '../demo
 import { normalizePose, poseSimilarity, type PoseVector } from '../pose/poseSimilarity'
 import GestureFigure from '../rps/GestureFigure'
 import SkeletonView, { followReadiness } from '../rps/SkeletonView'
-import RpsTopbar, { RPS_PATH } from '../rps/RpsTopbar'
+import RpsBar from '../rps/RpsBar'
+import { RPS_PATH } from '../rps/RpsTopbar'
 import { getCustomMoves, saveCustomMove, tooSimilarPairs } from '../rps/customMoves'
 import { customSet } from '../rps/gestureSet'
 import { useRobotFollow } from '../rps/useRobotFollow'
@@ -15,6 +16,7 @@ import { useRobotSettle } from '../rps/useRobotSettle'
 import { DETECTION, GESTURES, GESTURE_BY_ID, ROBOT_REST_PULSES, figureFromPose, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
+import './RpsPlay.css'
 
 type Phase = 'idle' | 'grace' | 'holding' | 'saved'
 
@@ -260,90 +262,158 @@ export default function RpsCustom() {
   else if (ready) status = 'All three moves are ready!'
   else status = 'Press Record, step back, make your move and hold still.'
 
-  // Preview of the custom set so the cheat-sheet figures match what the game will show.
+  // Preview of the custom set so the figures match what the game will show.
   const preview = allDone ? customSet(moves as Required<typeof moves>) : null
+  const recorded = GESTURES.filter((g) => moves[g.id]).length
+  const currentDef = current ? GESTURE_BY_ID[current] : null
+  const visible = body.length > 0
 
   return (
-    <div className="rd-root">
-      <RpsTopbar busy={recording} />
+    <div className="rpsp">
+      <RpsBar
+        actions={
+          <button
+            className="btn play"
+            disabled={!ready || recording}
+            onClick={() => navigate(`${RPS_PATH}/play?moves=custom`)}
+          >
+            Play with my moves →
+          </button>
+        }
+      >
+        <div className="round">
+          <div className="round-title">Make your own moves</div>
+          <div className="pips">
+            {GESTURES.map((g) => (
+              <span
+                key={g.id}
+                className={`pip ${clashIds.has(g.id) ? 'lose' : moves[g.id] ? 'win' : current === g.id ? 'now' : ''}`}
+              />
+            ))}
+          </div>
+        </div>
+      </RpsBar>
 
-      <main className="rd-main">
-        <div className="rd-camera-panel rps-quad">
-          {/* 1. The three moves: record, redo, and see what was saved. */}
-          <div className="rps-cell rps-cell-standard rps-moves-cell">
-            <div className="rps-cell-title">1 · Your moves</div>
-            <div className="rps-moves">
-              {GESTURES.map((g) => {
-                const saved = moves[g.id]
-                const def = preview?.byId[g.id] ?? (saved ? { ...g, figure: figureFromPose(saved.pose) } : null)
-                return (
-                  <div
-                    key={g.id}
-                    className={`rps-move ${current === g.id ? 'active' : ''} ${clashIds.has(g.id) ? 'clash' : ''}`}
-                  >
-                    <div className="rps-move-name">
-                      {g.emoji} {g.label}
-                    </div>
-                    {def ? <GestureFigure gesture={def} /> : <div className="rps-move-empty">?</div>}
-                    <button
-                      className="rps-small-btn"
-                      disabled={!following}
-                      onClick={() => startRecording(g.id)}
-                    >
-                      {saved ? 'Redo' : 'Record'}
-                    </button>
+      <main className="main">
+        {/* CORAL copying the child: this is what CORAL will do for the move. */}
+        <section className="panel sim">
+          <div className="rd-sim-grid" />
+          <RobotViewer embedded />
+          <div className="rd-sim-vignette" />
+          <div className="panel-head">
+            <span className="tag">
+              <i />
+              CORAL · Copying you
+            </span>
+          </div>
+          {!following && <div className="thinking">Connecting to CORAL… (is the server running?)</div>}
+          {phase === 'saved' && currentDef && (
+            <div className="played won">
+              <span className="em">{currentDef.emoji}</span>Got it! That's your {currentDef.label}
+            </div>
+          )}
+          {phase === 'grace' && currentDef && (
+            <div className="count-wrap">
+              <div className="modal count-card">
+                <div className="kicker">Your own {currentDef.label}</div>
+                <div key={current} className="ring" style={{ '--step': `${GRACE_MS}ms` } as React.CSSProperties}>
+                  <svg viewBox="0 0 230 230">
+                    <circle className="track" cx="115" cy="115" r="100" />
+                    <circle className="prog" cx="115" cy="115" r="100" />
+                  </svg>
+                  <span className="num emoji">{currentDef.emoji}</span>
+                </div>
+                <h1>Step back!</h1>
+                <div className="sub">Make your own {currentDef.label} move with your arms, then hold still.</div>
+                <div className="pointer">CORAL will copy you</div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className={`panel me ${phase === 'grace' ? 'raised' : ''}`}>
+          {/* The three moves: record, redo, and see what was saved. */}
+          <div className="hint-col">
+            <div className="hint-col-title">
+              Your moves<small>{recorded} of 3 recorded</small>
+            </div>
+            {GESTURES.map((g) => {
+              const saved = moves[g.id]
+              const def = preview?.byId[g.id] ?? (saved ? { ...g, figure: figureFromPose(saved.pose) } : null)
+              const active = current === g.id && phase !== 'idle'
+              const clash = clashIds.has(g.id)
+              let note = saved ? 'Saved' : 'Not recorded yet'
+              if (active) note = phase === 'saved' ? 'Saved!' : 'Recording…'
+              else if (clash) note = 'Too much like another move'
+              return (
+                <div key={g.id} className={`hint ${active ? 'active' : clash ? 'clash' : saved ? 'match' : ''}`}>
+                  <div className="fig">{def ? <GestureFigure gesture={def} /> : <div className="fig-empty">?</div>}</div>
+                  <div className="name">
+                    {g.label}
+                    <span className="em">{g.emoji}</span>
                   </div>
-                )
-              })}
-            </div>
-            <div className="rps-moves-actions">
-              {recording && (
-                <>
-                  <button className="rps-small-btn" onClick={saveNow}>
-                    Save now
+                  <div className="tip">{note}</div>
+                  <button
+                    className={`rec ${saved ? 'redo' : ''}`}
+                    disabled={!following}
+                    onClick={() => startRecording(g.id)}
+                  >
+                    {saved ? 'Redo' : 'Record'}
                   </button>
-                  <button className="rps-small-btn" onClick={cancelRecording}>
-                    Cancel
-                  </button>
-                </>
-              )}
-              <button
-                className="rps-big-btn"
-                disabled={!ready || recording}
-                onClick={() => navigate(`${RPS_PATH}/play?moves=custom`)}
-              >
-                Play with my moves
-              </button>
+                </div>
+              )
+            })}
+            {recording && (
+              <div className="rec-actions">
+                <button className="btn" onClick={saveNow}>
+                  Save now
+                </button>
+                <button className="btn" onClick={cancelRecording}>
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* The tracker's stick figure, the camera and the hold-still progress. */}
+          <div className="skel">
+            <div className="panel-head" style={{ left: 16 }}>
+              <span className={`tag soft ${readiness.ok ? 'ok' : 'warn'}`}>
+                <i />
+                {readiness.ok ? 'I can see your head and arms' : visible ? readiness.message : 'Step in front of the camera'}
+              </span>
             </div>
-          </div>
-
-          {/* 2. The robot copying the child: this is what CORAL will do for the move. */}
-          <div className="rps-cell">
-            <div className="rd-sim-grid" />
-            <div className="rd-sim-vignette" />
-            <div className="rps-cell-title">2 · CORAL copying you</div>
-            <RobotViewer embedded />
-          </div>
-
-          {/* 3. The camera. */}
-          <div className="rps-cell rps-cell-dark">
-            <div className="rps-cell-title">3 · What the camera sees</div>
-            <LiveStream badge={false} />
-          </div>
-
-          {/* 4. The tracker's stick figure and the hold-still progress. */}
-          <div className="rps-cell rps-cell-dark">
-            <div className="rps-cell-title">4 · What I think your pose is</div>
-            <SkeletonView landmarks={body} />
+            {visible ? (
+              <SkeletonView landmarks={body} />
+            ) : (
+              <div className="skel-empty">
+                <div>
+                  <b>I can't see you yet</b>Stand where the camera can see your head and arms
+                </div>
+              </div>
+            )}
             {(phase === 'holding' || phase === 'saved') && (
-              <div className={`rps-hold ${phase === 'saved' ? 'done' : ''}`} style={{ ['--p' as string]: progress }}>
+              <div className={`hold-ring ${phase === 'saved' ? 'done' : ''}`}>
+                <svg viewBox="0 0 120 120">
+                  <circle className="track" cx="60" cy="60" r="50" />
+                  <circle className="prog" cx="60" cy="60" r="50" style={{ strokeDashoffset: 314 * (1 - progress) }} />
+                </svg>
                 <span>{phase === 'saved' ? '✓' : `${Math.round(progress * 100)}%`}</span>
               </div>
             )}
-            <div className={`rps-note ${message || clashes.length > 0 ? 'warn' : ''}`}>{status}</div>
+            <div className={`status ${message || clashes.length > 0 ? 'warn' : ''}`}>{status}</div>
+            <div className="cam">
+              <LiveStream badge={false} />
+              <span className="live">
+                <i />
+                LIVE
+              </span>
+            </div>
           </div>
-        </div>
+        </section>
       </main>
+
+      {phase === 'grace' && <div className="backdrop" />}
     </div>
   )
 }
