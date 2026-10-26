@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { LiveStream } from './DummyStream'
+import { LiveStream } from '../components/LiveStream'
 import RobotViewer from '../components/RobotViewer'
 import { usePoseWebSocket } from '../hooks/usePoseWebSocket'
-import { killSpeech, resetPose, speak, stopSubjectSelection } from '../demo/api'
+import { resetPose } from '../api/robot'
+import { stopSubjectSelection } from '../api/vision'
+import { killSpeech, speak } from '../audio/speech'
 import GestureFigure from '../rps/GestureFigure'
 import SkeletonView, { followReadiness } from '../rps/SkeletonView'
 import RpsBar from '../rps/RpsBar'
@@ -16,6 +18,7 @@ import { BEATS, GESTURES, WINS_BECAUSE, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
 import './RpsPlay.css'
+import { sleep } from '../utils/sleep'
 
 type Outcome = 'win' | 'lose' | 'draw'
 type Phase = 'ready' | 'position' | 'countdown' | 'nopose' | 'captured' | 'choosing' | 'result' | 'final'
@@ -53,8 +56,6 @@ const RESULT_MS = 4000
 /** Before the first round: give the child time to step back, then wait until both arms are in view this long. */
 const POSITION_MIN_MS = 2000
 const POSITION_STEADY_MS = 1000
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 function judge(child: GestureId, robot: GestureId): Outcome {
   if (child === robot) return 'draw'

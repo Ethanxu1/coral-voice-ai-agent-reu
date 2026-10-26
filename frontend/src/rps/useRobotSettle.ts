@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { getJointPulses } from '../demo/api'
+import { getJointPulses } from '../api/robot'
 import { ROBOT_REST_PULSES } from './gestures'
 
 /**

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePoseWebSocket } from '../hooks/usePoseWebSocket'
-import CameraFeed from '../components/pose/CameraFeed'
+import { LiveStream } from '../components/LiveStream'
 import type { TuningParamSpec } from '../types/pose'
 
 const STATUS_TEXT: Record<string, string> = {
@@ -134,7 +134,16 @@ export default function SubjectSelect() {
             Camera {selectionState === 'selecting' ? `(detected: ${subjects.length})` : ''}
           </div>
           <div style={{ aspectRatio: '4/3', background: '#111', borderRadius: 8, overflow: 'hidden' }}>
-            <CameraFeed />
+            <div style={{ position: 'relative', background: '#111', borderRadius: 8, overflow: 'hidden' }}>
+              <LiveStream badge={false} />
+              <div style={{
+                position: 'absolute', top: 8, left: 8,
+                background: 'rgba(0,0,0,0.6)', color: '#0f0', fontSize: 11,
+                padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace',
+              }}>
+                LIVE
+              </div>
+            </div>
           </div>
         </div>
 

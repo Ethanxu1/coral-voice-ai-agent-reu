@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { LiveStream } from './DummyStream'
+import { LiveStream } from '../components/LiveStream'
 import RobotViewer from '../components/RobotViewer'
 import { usePoseWebSocket } from '../hooks/usePoseWebSocket'
-import { getJointPulses, killSpeech, speak, stopSubjectSelection } from '../demo/api'
+import { getJointPulses } from '../api/robot'
+import { stopSubjectSelection } from '../api/vision'
+import { killSpeech, speak } from '../audio/speech'
 import { poseSimilarity, type PoseVector } from '../pose/poseSimilarity'
 import GestureFigure from '../rps/GestureFigure'
 import SkeletonView, { followReadiness } from '../rps/SkeletonView'
@@ -17,6 +19,7 @@ import { HOLD_MS, useHoldStill } from '../gestures/useHoldStill'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
 import './GestureStudio.css'
+import { sleep } from '../utils/sleep'
 
 type Phase = 'idle' | 'grace' | 'holding' | 'saved'
 
@@ -38,8 +41,6 @@ const ARMS_DOWN: PoseVector = {
 }
 
 const HOLD_OPTS = { minVisibility: DETECTION.minVisibility }
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 function say(text: string) {
   killSpeech()

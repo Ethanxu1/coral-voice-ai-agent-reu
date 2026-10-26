@@ -15,11 +15,12 @@ from fastapi.staticfiles import StaticFiles
 from langfuse import Langfuse
 from loguru import logger
 
-from app import resource_path
 from app.api.router import router as api_router
 from app.collision.collision_checker import CollisionChecker
 from app.collision.stability_checker import StabilityChecker
 from app.config import (
+    AINEX_MODEL_PATH,
+    ASSETS_DIR,
     CORAL_HOST,
     CORAL_MUJOCO_WINDOW,
     CORAL_NO_VIEWER,
@@ -27,13 +28,14 @@ from app.config import (
     ENABLE_FALL_CHECK,
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
+    ROBOT_AGENT_PORT,
     ROBOT_IP,
     ROBOT_MODE,
 )
-from app.data.pose_db import clear_all_poses
-from app.follow_controller import FollowController
+from app.data.pose_db import clear_all_poses, init_db
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.sim_controller import SimController
+from app.services.follow import FollowController
 from app.services.motion import _sync_sim_to_hardware, dispatch_servo_commands
 from app.services.transcription import _get_whisper_model
 from app.simulator import AiNexSimulator
@@ -64,8 +66,7 @@ def _run_startup_validation() -> None:
     """
     from app.config import OPENAI_API_KEY, TTS_IS_ENABLED
 
-    assets_dir = resource_path.repo_root() / "assets" / "ainex"
-    if not assets_dir.is_dir() or not any(assets_dir.rglob("*.xml")):
+    if not AINEX_MODEL_PATH.is_file():
         logger.warning(
             "MuJoCo AiNex assets not found under assets/ainex. "
             "The simulator and browser viewer will not work."
@@ -81,16 +82,6 @@ def _run_startup_validation() -> None:
     else:
         logger.info("TTS disabled.")
 
-    db_parent = Path(resource_path.user_data_dir())
-    try:
-        db_parent.mkdir(parents=True, exist_ok=True)
-        if not os.access(db_parent, os.W_OK):
-            logger.warning(
-                f"Pose DB directory is not writable: {db_parent}. "
-                "Saved poses will not persist across sessions."
-            )
-    except Exception as exc:
-        logger.warning(f"Could not verify pose DB directory: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +93,7 @@ async def lifespan(app: FastAPI):
 
     state.robot_mode = os.environ.get("ROBOT_MODE", ROBOT_MODE)
 
+    init_db()
     clear_all_poses()
     logger.info("Pose database cleared for new session.")
 
@@ -181,7 +173,6 @@ def create_app() -> FastAPI:
     )
 
     # Serve robot mesh assets (STL) so the browser viewer can load geometry.
-    ASSETS_DIR = resource_path.repo_root() / "assets"
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
     app.include_router(api_router)
@@ -232,9 +223,9 @@ def _reexec_under_mjpython_if_needed(want_window: bool = True) -> None:
 # Console entry points
 # ---------------------------------------------------------------------------
 def main():
-    """Entry point for simulation mode (default — starts MuJoCo)."""
+    """Entry point for the server; ROBOT_MODE (default "sim") picks sim or hardware."""
     _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
-    logger.info("Starting Coral AI Agent server (sim mode)...")
+    logger.info(f"Starting Coral AI Agent server (mode={os.environ.get('ROBOT_MODE', ROBOT_MODE)})...")
     uvicorn.run(
         "app.main:app",
         host=CORAL_HOST,
@@ -250,8 +241,7 @@ def main_robot():
     os.environ["ROBOT_MODE"] = "robot"
     _reexec_under_mjpython_if_needed(want_window=_viewer_opens_on_launch())
     logger.info(f"Starting Coral AI Agent server in ROBOT mode (target: {ROBOT_IP})")
-    logger.info("Frontend: run 'npm run dev' in the frontend/ directory")
-    logger.info(f"Make sure robot_server.py is running on the robot at {ROBOT_IP}:9000")
+    logger.info(f"Make sure the Pi servo server is running at {ROBOT_IP}:{ROBOT_AGENT_PORT}")
     uvicorn.run(
         "app.main:app",
         host=CORAL_HOST,

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ConnectionHealthDot } from '../pages/RefinedDemo'
-import { useConnectionStatus } from '../components/ConnectionStatus'
+import { ConnectionHealthDot, useConnectionStatus } from '../components/ConnectionStatus'
 import { RPS_PATH } from './RpsTopbar'
 
 /**

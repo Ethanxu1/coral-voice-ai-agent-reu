@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 
+pytestmark = pytest.mark.db
+
 
 class _MockCompletion:
     def __init__(self, content: str) -> None:

@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ConnectionHealthDot } from '../pages/RefinedDemo'
-import { useConnectionStatus } from '../components/ConnectionStatus'
+import { ConnectionHealthDot, useConnectionStatus } from '../components/ConnectionStatus'
 import { resetRobot } from './robotPose'
 
 export const RPS_PATH = '/rock-paper-scissors'

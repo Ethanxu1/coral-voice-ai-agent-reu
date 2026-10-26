@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   useRefinedDemoMachine,
   type RefinedChatMsg,
 } from '../demo/useRefinedDemoMachine'
-import { fetchIntentExamples, resetPose } from '../demo/api'
+import { fetchIntentExamples, type IntentExamples, resetPose } from '../api/robot'
 import { useHardwareDispatching } from '../demo/hardwareDispatchStatus'
-import { useConnectionStatus } from '../components/ConnectionStatus'
-import { LiveStream } from './DummyStream'
+import ChatArea from '../components/ChatArea'
+import CommandHelpModal from '../components/CommandHelpModal'
+import { ConnectionHealthDot, useConnectionStatus } from '../components/ConnectionStatus'
+import { LiveStream } from '../components/LiveStream'
 import RobotViewer from '../components/RobotViewer'
 import './RefinedDemo.css'
 
@@ -36,7 +38,7 @@ export default function RefinedDemo() {
   const [showCommands, setShowCommands] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [namingInput, setNamingInput] = useState('')
-  const [examples, setExamples] = useState<{ motion: string[]; immediate: string[]; conversation: string[] }>({
+  const [examples, setExamples] = useState<IntentExamples>({
     motion: [],
     immediate: [],
     conversation: [],
@@ -620,183 +622,11 @@ function stageBadge(
   return { label: 'Listening…', className: 'listening' }
 }
 
-/* ── Chat area ───────────────────────────────────────────────────────────────── */
-export function ChatArea({
-  messages,
-  onChip,
-  agentTyping,
-}: {
-  messages: RefinedChatMsg[]
-  onChip: (text: string) => void
-  agentTyping: boolean
-}) {
-  const bottomRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, agentTyping])
-
-  return (
-    <div className="rd-chat-area">
-      {messages.map((msg, i) => (
-        <ChatMsg key={i} msg={msg} onChip={onChip} />
-      ))}
-      {agentTyping && <TypingIndicator />}
-      <div ref={bottomRef} />
-    </div>
-  )
-}
-
-function TypingIndicator() {
-  return (
-    <div className="rd-msg agent">
-      <div className="rd-bubble rd-typing" aria-label="Agent is typing">
-        <span className="rd-typing-dot" />
-        <span className="rd-typing-dot" />
-        <span className="rd-typing-dot" />
-      </div>
-    </div>
-  )
-}
-
 function AgentLiveRegion({ messages }: { messages: RefinedChatMsg[] }) {
   const lastAgent = [...messages].reverse().find((m) => m.role === 'agent')
   return (
     <div className="sr-only" aria-live="polite" aria-atomic="true">
       {lastAgent?.text ?? ''}
-    </div>
-  )
-}
-
-export function ConnectionHealthDot({ services }: { services: ReturnType<typeof useConnectionStatus> }) {
-  const allOk = services.every((s) => s.ok === true)
-  const anyDown = services.some((s) => s.ok === false)
-  const statusClass = allOk ? 'ok' : anyDown ? 'down' : 'pending'
-
-  return (
-    <div className="rd-health-dot" title={`Services: ${services.map((s) => `${s.name} ${s.ok === true ? 'ok' : s.ok === false ? 'down' : '…'}`).join(', ')}`}>
-      <span className={`rd-health-dot-ping rd-health-dot-${statusClass}`} />
-      <span className="rd-health-dot-label">{allOk ? 'Connected' : anyDown ? 'Reconnecting' : '…'}</span>
-    </div>
-  )
-}
-
-function CommandHelpModal({
-  examples,
-  onSelect,
-  onClose,
-}: {
-  examples: { motion: string[]; immediate: string[]; conversation: string[] }
-  onSelect: (text: string) => void
-  onClose: () => void
-}) {
-  return (
-    <div className="rd-overlay" onClick={onClose}>
-      <div className="rd-overlay-card rd-command-card" onClick={(e) => e.stopPropagation()}>
-        <div className="rd-overlay-title">What can I say?</div>
-        <div className="rd-command-sections">
-          <CommandSection title="Move my body" icon="🦾" phrases={examples.motion} onSelect={onSelect} />
-          <CommandSection title="Play with poses" icon="🤸" phrases={examples.immediate} onSelect={onSelect} />
-          <CommandSection title="Chat" icon="💬" phrases={examples.conversation} onSelect={onSelect} />
-        </div>
-        <div className="rd-overlay-btns">
-          <button className="rd-overlay-btn secondary" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CommandSection({
-  title,
-  icon,
-  phrases,
-  onSelect,
-}: {
-  title: string
-  icon: string
-  phrases: string[]
-  onSelect: (text: string) => void
-}) {
-  if (!phrases.length) return null
-  return (
-    <div className="rd-command-section">
-      <div className="rd-command-section-title">
-        <span>{icon}</span> {title}
-      </div>
-      <div className="rd-command-chips">
-        {phrases.map((phrase) => (
-          <button key={phrase} className="rd-command-chip" onClick={() => onSelect(phrase)}>
-            {phrase}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function intentLabel(type: string | undefined): string {
-  switch (type) {
-    case 'motion': return 'motion'
-    case 'conversation': return 'conversation'
-    case 'clarification': return 'clarification'
-    case 'immediate': return 'system command'
-    default: return type ?? 'unknown'
-  }
-}
-
-function classifierLabel(c: 'regex' | 'llm' | undefined): string {
-  return c === 'regex' ? 'regex' : c === 'llm' ? 'LLM' : ''
-}
-
-function ChatMsg({
-  msg,
-  onChip,
-}: {
-  msg: RefinedChatMsg
-  onChip: (text: string) => void
-}) {
-  return (
-    <div className={`rd-msg ${msg.role}`}>
-      <div className="rd-bubble">
-        {msg.text}
-        {msg.audioUrl && (
-          <button
-            className="rd-audio-play-btn"
-            onClick={() => new Audio(msg.audioUrl).play()}
-            title={msg.role === 'child' ? 'Play recording' : 'Play robot voice'}
-            aria-label={msg.role === 'child' ? 'Play recording' : 'Play robot voice'}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-              <polygon points="2,1 12,7 2,13" />
-            </svg>
-          </button>
-        )}
-      </div>
-      {msg.role === 'child' && msg.intentType && (
-        <div
-          className="rd-intent-meta"
-          title={msg.intentReason || 'Intent classification metadata'}
-        >
-          <span className={`rd-intent-badge rd-intent-type-${msg.intentType}`}>
-            {intentLabel(msg.intentType)}
-          </span>
-          <span className={`rd-intent-badge rd-intent-classifier-${msg.intentClassifier}`}>
-            {classifierLabel(msg.intentClassifier)}
-          </span>
-        </div>
-      )}
-      {msg.chips && msg.chips.length > 0 && (
-        <div className="rd-chips">
-          {msg.chips.map((chip) => (
-            <button key={chip} className="rd-chip" onClick={() => onChip(chip)}>
-              {chip}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

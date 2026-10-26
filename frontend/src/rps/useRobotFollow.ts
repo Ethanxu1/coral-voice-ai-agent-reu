@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { openActionSession, resetPose, setHiplessFollow, type ActionSession } from '../demo/api'
+import { openActionSession, type ActionSession } from '../api/actionSession'
+import { resetPose, setHiplessFollow } from '../api/robot'
 import { resetRobot } from './robotPose'
+import { sleep } from '../utils/sleep'
 
 const RETRY_MS = 2000
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 /**
  * While mounted, the simulator robot follows the child (the same follow

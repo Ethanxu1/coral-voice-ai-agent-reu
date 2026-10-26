@@ -1,9 +1,9 @@
-import { getJointPulses, resetPose, setPose } from '../demo/api'
+import { getJointPulses, resetPose, setPose } from '../api/robot'
 import { ROBOT_REST_PULSES } from './gestures'
 
 /**
  * Arm speed, the same as gentle follow mode (_GENTLE_MAX_STEP_RAD in
- * backend/app/follow_controller.py): 0.08 rad every 50 ms, about 1.6 rad/s or
+ * backend/app/services/follow.py): 0.08 rad every 50 ms, about 1.6 rad/s or
  * 380 servo pulses per second. Faster swings can topple the simulated robot.
  */
 const GENTLE_PULSES_PER_S = 380
@@ -27,7 +27,7 @@ export async function poseRobot(target: Record<string, number>, minDurationMs = 
   const biggest = Math.max(0, ...Object.keys(target).map((j) => Math.abs(target[j] - (from[j] ?? target[j]))))
   const durationMs = Math.max(minDurationMs, Math.round((biggest / GENTLE_PULSES_PER_S) * 1000))
   current = { ...current, ...target }
-  await setPose(target, false, durationMs)
+  await setPose(target, { durationMs })
 }
 
 /** Snap the whole robot back to a clean stand. */

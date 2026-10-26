@@ -27,6 +27,8 @@ from .appearance_embedder import (
     AppearanceEmbedder,
     AppearanceEmbedding,
     average_appearance,
+)
+from .appearance_embedder import (
     ema_appearance as _ema_appearance,
 )
 from .face_embedder import face_bbox_from_named_landmarks

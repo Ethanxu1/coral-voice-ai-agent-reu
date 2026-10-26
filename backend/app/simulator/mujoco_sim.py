@@ -9,7 +9,7 @@ import mujoco.viewer
 import numpy as np
 from loguru import logger
 
-import app.resource_path as resource_path
+from app.config import AINEX_MODEL_PATH
 from app.validation import JOINT_LIMITS
 
 
@@ -55,13 +55,17 @@ class AiNexSimulator:
 
     STEP_SIZE = 0.2
 
+    # timestep 0.002 s × 5 steps = one 10 ms frame; the loop sleeps 10 ms per
+    # frame, so physics runs at about real time.
+    STEPS_PER_FRAME = 5
+
     # How far above its settled height to lift the floating base on reset, so the
     # robot drops and settles into a stable stand (re-stands after a fall).
     DROP_HEIGHT = 0.05
 
     def __init__(self, model_path: str | None = None):
         if model_path is None:
-            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
+            model_path = str(AINEX_MODEL_PATH)
 
         logger.info(f"Loading MuJoCo model from: {model_path}")
         self.model = mujoco.MjModel.from_xml_path(model_path)
@@ -73,6 +77,14 @@ class AiNexSimulator:
         self._lock = threading.Lock()
 
         self._apply_stand_keyframe()
+
+        # Floating-base (free joint) slices of qpos/qvel, and its upright stand
+        # pose, for holding the robot upright on the test pages.
+        root_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "root")
+        self._root_qpos = slice(int(self.model.jnt_qposadr[root_id]), int(self.model.jnt_qposadr[root_id]) + 7)
+        self._root_qvel = slice(int(self.model.jnt_dofadr[root_id]), int(self.model.jnt_dofadr[root_id]) + 6)
+        self._upright_base = self.data.qpos[self._root_qpos].copy()
+        self.upright_pinned = False
 
         self._actuator_ids: dict[str, int] = {}
         for i in range(self.model.nu):
@@ -177,6 +189,33 @@ class AiNexSimulator:
         else:
             logger.warning("'stand' keyframe not found, using default pose")
 
+    def set_upright_pinned(self, enabled: bool) -> None:
+        """Hold the robot's body at its upright stand pose so it can't tip or
+        fall (the joints still move). Enabling also stands a fallen robot up."""
+        with self._lock:
+            self.upright_pinned = enabled
+            if enabled:
+                self._hold_base_upright()
+                mujoco.mj_forward(self.model, self.data)
+        logger.info(f"Sim upright pin {'on' if enabled else 'off'}")
+
+    def _hold_base_upright(self) -> None:
+        self.data.qpos[self._root_qpos] = self._upright_base
+        self.data.qvel[self._root_qvel] = 0.0
+
+    def base_pose(self) -> np.ndarray:
+        """Floating-base pose: xyz position + wxyz orientation quaternion."""
+        with self._lock:
+            return self.data.qpos[self._root_qpos].copy()
+
+    def step(self) -> None:
+        """Advance physics by one 10 ms frame (5 × 2 ms timesteps)."""
+        with self._lock:
+            for _ in range(self.STEPS_PER_FRAME):
+                mujoco.mj_step(self.model, self.data)
+                if self.upright_pinned:
+                    self._hold_base_upright()
+
     def get_joint_position(self, joint_name: str) -> float:
         full_name = self.JOINT_NAMES.get(joint_name, joint_name)
         actuator_id = self._actuator_ids.get(full_name)
@@ -184,15 +223,6 @@ class AiNexSimulator:
             raise ValueError(f"Unknown joint: {joint_name}")
         with self._lock:
             return float(self.data.ctrl[actuator_id])
-
-    def get_physical_joint_position(self, joint_name: str) -> float:
-        """Read the actual physics position from qpos (not the ctrl target)."""
-        joint_id = self._joint_ids.get(joint_name)
-        if joint_id is None:
-            raise ValueError(f"Unknown joint: {joint_name}")
-        qpos_addr = self.model.jnt_qposadr[joint_id]
-        with self._lock:
-            return float(self.data.qpos[qpos_addr])
 
     def set_joint_position(self, joint_name: str, position: float) -> None:
         full_name = self.JOINT_NAMES.get(joint_name, joint_name)
@@ -203,10 +233,9 @@ class AiNexSimulator:
         # Clamp to the joint's MECHANICAL range (jnt_range), not the tighter
         # retargeting caps in validation.JOINT_LIMITS. Those safety caps are a
         # planning-layer concern — enforced in compute_joint_targets (live
-        # retarget/legacy leg mapping) and validate_waypoint. Classify mode's
-        # canned poses (dab/warrior2 crouches) deliberately bypass them, so the
-        # sim must render whatever it's commanded, bounded only by what the
-        # hardware can physically reach.
+        # retarget/legacy leg mapping) and validate_waypoint, so the sim renders
+        # whatever it's commanded, bounded only by what the hardware can
+        # physically reach.
         joint_id = int(self.model.actuator_trnid[actuator_id, 0])
         lo, hi = self.model.jnt_range[joint_id]
         if lo < hi:  # jnt_range is (0, 0) for unlimited joints — skip those
@@ -220,193 +249,6 @@ class AiNexSimulator:
         # leg_mode / bucket-classification lines). loguru's default level is
         # DEBUG, so TRACE is silent unless explicitly enabled (LOGURU_LEVEL=TRACE).
         logger.trace(f"Set {joint_name} to {position:.3f} rad")
-
-    def move_joint(self, joint_name: str, delta: float) -> float:
-        current = self.get_joint_position(joint_name)
-        new_pos = current + delta
-
-        if joint_name in JOINT_LIMITS:
-            new_pos = JOINT_LIMITS[joint_name].clamp(new_pos)
-
-        self.set_joint_position(joint_name, new_pos)
-        logger.info(f"Moved {joint_name}: {current:.2f} -> {new_pos:.2f}")
-        return new_pos
-
-    # === HEAD CONTROLS ===
-    def turn_head_left(self) -> None:
-        self.move_joint("head_pan", -self.STEP_SIZE)
-
-    def turn_head_right(self) -> None:
-        self.move_joint("head_pan", self.STEP_SIZE)
-
-    def tilt_head_up(self) -> None:
-        self.move_joint("head_tilt", self.STEP_SIZE)
-
-    def tilt_head_down(self) -> None:
-        self.move_joint("head_tilt", -self.STEP_SIZE)
-
-    # === LEFT ARM CONTROLS ===
-    def move_left_arm_up(self) -> None:
-        self.move_joint("l_sho_pitch", self.STEP_SIZE)
-
-    def move_left_arm_down(self) -> None:
-        self.move_joint("l_sho_pitch", -self.STEP_SIZE)
-
-    def move_left_arm_out(self) -> None:
-        self.move_joint("l_sho_roll", self.STEP_SIZE)
-
-    def move_left_arm_in(self) -> None:
-        self.move_joint("l_sho_roll", -self.STEP_SIZE)
-
-    def bend_left_elbow(self) -> None:
-        self.move_joint("l_el_yaw", -self.STEP_SIZE)
-
-    def extend_left_elbow(self) -> None:
-        self.move_joint("l_el_yaw", self.STEP_SIZE)
-
-    def rotate_left_elbow_in(self) -> None:
-        self.move_joint("l_el_pitch", -self.STEP_SIZE)
-
-    def rotate_left_elbow_out(self) -> None:
-        self.move_joint("l_el_pitch", self.STEP_SIZE)
-
-    def open_left_gripper(self) -> None:
-        self.move_joint("l_gripper", -self.STEP_SIZE)
-
-    def close_left_gripper(self) -> None:
-        self.move_joint("l_gripper", self.STEP_SIZE)
-
-    # === RIGHT ARM CONTROLS ===
-    def move_right_arm_up(self) -> None:
-        self.move_joint("r_sho_pitch", self.STEP_SIZE)
-
-    def move_right_arm_down(self) -> None:
-        self.move_joint("r_sho_pitch", -self.STEP_SIZE)
-
-    def move_right_arm_out(self) -> None:
-        self.move_joint("r_sho_roll", -self.STEP_SIZE)
-
-    def move_right_arm_in(self) -> None:
-        self.move_joint("r_sho_roll", self.STEP_SIZE)
-
-    def bend_right_elbow(self) -> None:
-        self.move_joint("r_el_yaw", self.STEP_SIZE)
-
-    def extend_right_elbow(self) -> None:
-        self.move_joint("r_el_yaw", -self.STEP_SIZE)
-
-    def rotate_right_elbow_in(self) -> None:
-        self.move_joint("r_el_pitch", -self.STEP_SIZE)
-
-    def rotate_right_elbow_out(self) -> None:
-        self.move_joint("r_el_pitch", self.STEP_SIZE)
-
-    def open_right_gripper(self) -> None:
-        self.move_joint("r_gripper", self.STEP_SIZE)
-
-    def close_right_gripper(self) -> None:
-        self.move_joint("r_gripper", -self.STEP_SIZE)
-
-    # === LEFT LEG CONTROLS ===
-    def move_left_hip_forward(self) -> None:
-        self.move_joint("l_hip_pitch", -self.STEP_SIZE)
-
-    def move_left_hip_backward(self) -> None:
-        self.move_joint("l_hip_pitch", self.STEP_SIZE)
-
-    def move_left_hip_out(self) -> None:
-        self.move_joint("l_hip_roll", -self.STEP_SIZE)
-
-    def move_left_hip_in(self) -> None:
-        self.move_joint("l_hip_roll", self.STEP_SIZE)
-
-    def rotate_left_hip_in(self) -> None:
-        self.move_joint("l_hip_yaw", self.STEP_SIZE)
-
-    def rotate_left_hip_out(self) -> None:
-        self.move_joint("l_hip_yaw", -self.STEP_SIZE)
-
-    def bend_left_knee(self) -> None:
-        self.move_joint("l_knee", self.STEP_SIZE)
-
-    def extend_left_knee(self) -> None:
-        self.move_joint("l_knee", -self.STEP_SIZE)
-
-    def move_left_ankle_up(self) -> None:
-        self.move_joint("l_ank_pitch", self.STEP_SIZE)
-
-    def move_left_ankle_down(self) -> None:
-        self.move_joint("l_ank_pitch", -self.STEP_SIZE)
-
-    def roll_left_ankle_in(self) -> None:
-        self.move_joint("l_ank_roll", -self.STEP_SIZE)
-
-    def roll_left_ankle_out(self) -> None:
-        self.move_joint("l_ank_roll", self.STEP_SIZE)
-
-    # === RIGHT LEG CONTROLS ===
-    def move_right_hip_forward(self) -> None:
-        self.move_joint("r_hip_pitch", self.STEP_SIZE)
-
-    def move_right_hip_backward(self) -> None:
-        self.move_joint("r_hip_pitch", -self.STEP_SIZE)
-
-    def move_right_hip_out(self) -> None:
-        self.move_joint("r_hip_roll", self.STEP_SIZE)
-
-    def move_right_hip_in(self) -> None:
-        self.move_joint("r_hip_roll", -self.STEP_SIZE)
-
-    def rotate_right_hip_in(self) -> None:
-        self.move_joint("r_hip_yaw", -self.STEP_SIZE)
-
-    def rotate_right_hip_out(self) -> None:
-        self.move_joint("r_hip_yaw", self.STEP_SIZE)
-
-    def bend_right_knee(self) -> None:
-        self.move_joint("r_knee", -self.STEP_SIZE)
-
-    def extend_right_knee(self) -> None:
-        self.move_joint("r_knee", self.STEP_SIZE)
-
-    def move_right_ankle_up(self) -> None:
-        self.move_joint("r_ank_pitch", -self.STEP_SIZE)
-
-    def move_right_ankle_down(self) -> None:
-        self.move_joint("r_ank_pitch", self.STEP_SIZE)
-
-    def roll_right_ankle_in(self) -> None:
-        self.move_joint("r_ank_roll", self.STEP_SIZE)
-
-    def roll_right_ankle_out(self) -> None:
-        self.move_joint("r_ank_roll", -self.STEP_SIZE)
-
-    # === PRESET POSES ===
-    def wave(self) -> None:
-        """Wave with right arm."""
-        self.set_joint_position("r_sho_pitch", 0.8)
-        self.set_joint_position("r_sho_roll", 0.5)
-        self.set_joint_position("r_el_yaw", 1.0)
-        logger.info("Executing wave pose")
-
-    def point_forward(self) -> None:
-        """Point forward with right arm."""
-        self.set_joint_position("r_sho_pitch", 0.8)
-        self.set_joint_position("r_sho_roll", 1.4)
-        self.set_joint_position("r_el_yaw", 0.0)
-        logger.info("Executing point forward pose")
-
-    def look_around(self) -> None:
-        self.set_joint_position("head_pan", -0.5)
-        logger.info("Executing look around pose")
-
-    def nod_yes(self) -> None:
-        self.set_joint_position("head_tilt", 0.3)
-        logger.info("Executing nod yes pose")
-
-    def shake_no(self) -> None:
-        self.set_joint_position("head_pan", -0.4)
-        logger.info("Executing shake no pose")
 
     def reset_pose(self) -> None:
         """Re-stand the robot: place it upright slightly above the floor in the
@@ -424,16 +266,6 @@ class AiNexSimulator:
                     states[short_name] = float(self.data.ctrl[actuator_id])
         return states
 
-    def get_joint_limits(self) -> dict[str, tuple[float, float]]:
-        limits = {}
-        for short_name, full_name in self.JOINT_NAMES.items():
-            actuator_id = self._actuator_ids.get(full_name)
-            if actuator_id is not None:
-                ctrlrange = self.model.actuator_ctrlrange[actuator_id]
-                limits[short_name] = (float(ctrlrange[0]), float(ctrlrange[1]))
-        return limits
-
-    # === BROWSER VIEWER STREAMING ===
     def get_render_geom_info(self) -> list[dict]:
         """Static per-geom metadata (mesh file name + color) for the browser viewer.
 
@@ -447,7 +279,7 @@ class AiNexSimulator:
         """Static per-joint metadata for the browser viewer's manual mode.
 
         Per joint (short name): rotation limits in sim radians (from
-        validation.JOINT_LIMITS, the same source move_joint clamps with, falling
+        validation.JOINT_LIMITS, the same source /test jogs clamp with, falling
         back to the model's mechanical range) and the render-geom indices that
         belong to it (matching get_geom_poses() order), so the client can map
         hovered/clicked meshes to joints.
@@ -547,9 +379,6 @@ class AiNexSimulator:
     def _run(
         self, on_close: Callable[[], None] | None = None, open_window: bool = True
     ) -> None:
-        # timestep 0.002s × 5 steps = 0.01s sim per 0.01s sleep ≈ real-time.
-        steps_per_frame = 5
-
         # Open the native window before the stepping loop, unlocked and on this
         # same thread — matching the original working code and coordinating with
         # mjpython's main thread without holding self._lock across it (avoids any
@@ -569,9 +398,8 @@ class AiNexSimulator:
         logger.info("Starting MuJoCo physics loop")
         try:
             while self._running:
+                self.step()
                 with self._lock:
-                    for _ in range(steps_per_frame):
-                        mujoco.mj_step(self.model, self.data)
                     if viewer is not None:
                         if viewer.is_running():
                             viewer.sync()
@@ -599,85 +427,86 @@ class AiNexSimulator:
 
 
 # Command mapping for LLM integration
-COMMAND_MAP = {
+# /test page jog buttons: command → (joint, direction). Each press targets the
+# joint STEP_SIZE radians further in that direction.
+JOG_COMMANDS: dict[str, tuple[str, int]] = {
     # Head
-    "head_left": "turn_head_left",
-    "head_right": "turn_head_right",
-    "head_up": "tilt_head_up",
-    "head_down": "tilt_head_down",
+    "head_left": ("head_pan", -1),
+    "head_right": ("head_pan", +1),
+    "head_up": ("head_tilt", +1),
+    "head_down": ("head_tilt", -1),
     # Left arm
-    "left_arm_up": "move_left_arm_up",
-    "left_arm_down": "move_left_arm_down",
-    "left_arm_out": "move_left_arm_out",
-    "left_arm_in": "move_left_arm_in",
-    "left_elbow_bend": "bend_left_elbow",
-    "left_elbow_extend": "extend_left_elbow",
-    "left_elbow_rotate_in": "rotate_left_elbow_in",
-    "left_elbow_rotate_out": "rotate_left_elbow_out",
-    "left_gripper_open": "open_left_gripper",
-    "left_gripper_close": "close_left_gripper",
+    "left_arm_up": ("l_sho_pitch", +1),
+    "left_arm_down": ("l_sho_pitch", -1),
+    "left_arm_out": ("l_sho_roll", +1),
+    "left_arm_in": ("l_sho_roll", -1),
+    "left_elbow_bend": ("l_el_yaw", -1),
+    "left_elbow_extend": ("l_el_yaw", +1),
+    "left_elbow_rotate_in": ("l_el_pitch", -1),
+    "left_elbow_rotate_out": ("l_el_pitch", +1),
+    "left_gripper_open": ("l_gripper", -1),
+    "left_gripper_close": ("l_gripper", +1),
     # Right arm
-    "right_arm_up": "move_right_arm_up",
-    "right_arm_down": "move_right_arm_down",
-    "right_arm_out": "move_right_arm_out",
-    "right_arm_in": "move_right_arm_in",
-    "right_elbow_bend": "bend_right_elbow",
-    "right_elbow_extend": "extend_right_elbow",
-    "right_elbow_rotate_in": "rotate_right_elbow_in",
-    "right_elbow_rotate_out": "rotate_right_elbow_out",
-    "right_gripper_open": "open_right_gripper",
-    "right_gripper_close": "close_right_gripper",
+    "right_arm_up": ("r_sho_pitch", +1),
+    "right_arm_down": ("r_sho_pitch", -1),
+    "right_arm_out": ("r_sho_roll", -1),
+    "right_arm_in": ("r_sho_roll", +1),
+    "right_elbow_bend": ("r_el_yaw", +1),
+    "right_elbow_extend": ("r_el_yaw", -1),
+    "right_elbow_rotate_in": ("r_el_pitch", -1),
+    "right_elbow_rotate_out": ("r_el_pitch", +1),
+    "right_gripper_open": ("r_gripper", +1),
+    "right_gripper_close": ("r_gripper", -1),
     # Left leg
-    "left_hip_forward": "move_left_hip_forward",
-    "left_hip_backward": "move_left_hip_backward",
-    "left_hip_out": "move_left_hip_out",
-    "left_hip_in": "move_left_hip_in",
-    "left_hip_rotate_in": "rotate_left_hip_in",
-    "left_hip_rotate_out": "rotate_left_hip_out",
-    "left_knee_bend": "bend_left_knee",
-    "left_knee_extend": "extend_left_knee",
-    "left_ankle_up": "move_left_ankle_up",
-    "left_ankle_down": "move_left_ankle_down",
-    "left_ankle_roll_in": "roll_left_ankle_in",
-    "left_ankle_roll_out": "roll_left_ankle_out",
+    "left_hip_forward": ("l_hip_pitch", -1),
+    "left_hip_backward": ("l_hip_pitch", +1),
+    "left_hip_out": ("l_hip_roll", -1),
+    "left_hip_in": ("l_hip_roll", +1),
+    "left_hip_rotate_in": ("l_hip_yaw", +1),
+    "left_hip_rotate_out": ("l_hip_yaw", -1),
+    "left_knee_bend": ("l_knee", +1),
+    "left_knee_extend": ("l_knee", -1),
+    "left_ankle_up": ("l_ank_pitch", +1),
+    "left_ankle_down": ("l_ank_pitch", -1),
+    "left_ankle_roll_in": ("l_ank_roll", -1),
+    "left_ankle_roll_out": ("l_ank_roll", +1),
     # Right leg
-    "right_hip_forward": "move_right_hip_forward",
-    "right_hip_backward": "move_right_hip_backward",
-    "right_hip_out": "move_right_hip_out",
-    "right_hip_in": "move_right_hip_in",
-    "right_hip_rotate_in": "rotate_right_hip_in",
-    "right_hip_rotate_out": "rotate_right_hip_out",
-    "right_knee_bend": "bend_right_knee",
-    "right_knee_extend": "extend_right_knee",
-    "right_ankle_up": "move_right_ankle_up",
-    "right_ankle_down": "move_right_ankle_down",
-    "right_ankle_roll_in": "roll_right_ankle_in",
-    "right_ankle_roll_out": "roll_right_ankle_out",
-    # Preset poses
-    "wave": "wave",
-    "point": "point_forward",
-    "look_around": "look_around",
-    "nod": "nod_yes",
-    "shake": "shake_no",
-    "reset": "reset_pose",
+    "right_hip_forward": ("r_hip_pitch", +1),
+    "right_hip_backward": ("r_hip_pitch", -1),
+    "right_hip_out": ("r_hip_roll", +1),
+    "right_hip_in": ("r_hip_roll", -1),
+    "right_hip_rotate_in": ("r_hip_yaw", -1),
+    "right_hip_rotate_out": ("r_hip_yaw", +1),
+    "right_knee_bend": ("r_knee", -1),
+    "right_knee_extend": ("r_knee", +1),
+    "right_ankle_up": ("r_ank_pitch", -1),
+    "right_ankle_down": ("r_ank_pitch", +1),
+    "right_ankle_roll_in": ("r_ank_roll", +1),
+    "right_ankle_roll_out": ("r_ank_roll", -1),
 }
 
 
-def execute_command(simulator: AiNexSimulator, command: str) -> bool:
-    method_name = COMMAND_MAP.get(command.lower().strip())
-    if method_name is None:
-        logger.warning(f"Unknown command: {command}")
-        return False
-
-    method = getattr(simulator, method_name, None)
-    if method is None:
-        logger.error(f"Method not found: {method_name}")
-        return False
-
-    method()
-    return True
+# /test page preset buttons: command → joint targets (radians).
+PRESET_POSES: dict[str, dict[str, float]] = {
+    "wave": {"r_sho_pitch": 0.8, "r_sho_roll": 0.5, "r_el_yaw": 1.0},
+    "point": {"r_sho_pitch": 0.8, "r_sho_roll": 1.4, "r_el_yaw": 0.0},
+    "look_around": {"head_pan": -0.5},
+    "nod": {"head_tilt": 0.3},
+    "shake": {"head_pan": -0.4},
+}
 
 
-# Backwards compatibility aliases
-ApolloSimulator = AiNexSimulator
-G1Simulator = AiNexSimulator
+def command_targets(simulator: AiNexSimulator, command: str) -> dict[str, float] | None:
+    """Joint targets (radians) for a /test page jog or preset button, or None if
+    the command is unknown. Doesn't move the sim — the caller safety-checks and
+    dispatches the targets like any other motion."""
+    command = command.lower().strip()
+    if command in JOG_COMMANDS:
+        joint, direction = JOG_COMMANDS[command]
+        target = simulator.get_joint_position(joint) + direction * simulator.STEP_SIZE
+        if joint in JOINT_LIMITS:
+            target = JOINT_LIMITS[joint].clamp(target)
+        return {joint: target}
+    if command in PRESET_POSES:
+        return dict(PRESET_POSES[command])
+    return None

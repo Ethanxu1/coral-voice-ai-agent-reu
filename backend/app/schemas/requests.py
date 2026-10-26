@@ -1,14 +1,8 @@
 """Pydantic request models for the Coral API."""
 
-from pydantic import BaseModel
+from typing import Annotated
 
-
-class ChatMessage(BaseModel):
-    """Chat message structure."""
-
-    role: str  # "user" or "assistant"
-    content: str
-    commands: list[str] | None = None
+from pydantic import BaseModel, Field
 
 
 class ServoMove(BaseModel):
@@ -22,19 +16,16 @@ class MoveRequest(BaseModel):
 
 
 class SetPoseRequest(BaseModel):
-    """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
+    """A raw pose as {joint_name: hardware_pulse} (the motions.py format)."""
 
-    pulses: dict[str, int]
+    pulses: dict[str, Annotated[int, Field(ge=0, le=1000)]]
     # Pose Tester's "collision check off" mode: apply the pose exactly as
-    # authored, skipping the collision shadow-roll (JOINT_LIMITS still clamp).
+    # authored, skipping the collision/fall gate (joint limits still clamp).
     skip_collision_check: bool = False
-    # When set, move there smoothly over this many ms (servo interpolation, the
-    # same path follow mode uses) instead of snapping the joints instantly.
-    duration_ms: int | None = None
-
-
-class StateRequest(BaseModel):
-    mode: str
+    # False skips only the fall check (Pose Tester, which pins the sim upright).
+    check_fall: bool = True
+    # 0 applies instantly; otherwise the sim glides there over this many ms.
+    duration_ms: int = Field(default=0, ge=0, le=10000)
 
 
 class IntentRequest(BaseModel):

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import RobotViewer from '../components/RobotViewer'
-import { getJointPulses, stopSubjectSelection } from '../demo/api'
+import { getJointPulses } from '../api/robot'
+import { stopSubjectSelection } from '../api/vision'
 import GestureFigure from '../rps/GestureFigure'
 import { poseRobot, resetRobot } from '../rps/robotPose'
 import { figureFromPose } from '../rps/gestures'
@@ -29,6 +30,7 @@ import {
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
 import './GestureStudio.css'
+import { sleep } from '../utils/sleep'
 
 /** Pulses one click of the − / + buttons moves a joint (about 1 degree). */
 const NUDGE = 5
@@ -41,8 +43,6 @@ const DEBOUNCE_MS = 80
 const SETTLE_MS = 400
 /** A joint further than this from its target didn't get there (joint limit or self-collision). */
 const REACH_TOLERANCE = 40
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 const samePulses = (a: Record<string, number>, b: Record<string, number>) =>
   ARM_JOINT_IDS.every((j) => a[j] === b[j])

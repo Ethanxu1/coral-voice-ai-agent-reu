@@ -22,7 +22,7 @@
 
 import { useSyncExternalStore } from 'react'
 import { JOINT_INDEX, type JointName, type PoseVector } from '../pose/poseSimilarity'
-import { SERVO_ID } from '../demo/api'
+import { SERVO_ID } from '../api/robot'
 import { ARM_JOINT_IDS } from './armJoints'
 
 export interface Gesture {

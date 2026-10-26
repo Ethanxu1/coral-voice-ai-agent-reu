@@ -1,6 +1,7 @@
 """Environment-driven settings for the Coral AI agent."""
 
 import os
+from pathlib import Path
 
 # Load environment variables from .env files before any settings are read.
 from dotenv import load_dotenv
@@ -9,16 +10,38 @@ load_dotenv()
 
 
 # ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+# This file is backend/app/config.py, so the repo root is two levels up.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ASSETS_DIR = REPO_ROOT / "assets"
+AINEX_MODEL_PATH = ASSETS_DIR / "ainex" / "ainex.xml"
+LOGS_DIR = REPO_ROOT / "logs"
+RECORDINGS_DIR = REPO_ROOT / "recordings"
+
+
+# ---------------------------------------------------------------------------
+# Database (Postgres; `docker compose up -d db` for local runs and tests)
+# ---------------------------------------------------------------------------
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://coral:coral@localhost:5432/coral")
+
+# ---------------------------------------------------------------------------
 # Robot / hardware
 # ---------------------------------------------------------------------------
 ROBOT_MODE = os.getenv("ROBOT_MODE", "sim")
-ROBOT_IP = os.getenv("ROBOT_IP", "192.168.8.219")
+# No default: set ROBOT_IP in .env (or `./run.sh -live -ip <addr>`). Only robot mode needs it.
+ROBOT_IP = os.getenv("ROBOT_IP") or None
 ROBOT_AGENT_PORT = int(os.getenv("ROBOT_AGENT_PORT", "9000"))
 
 # ---------------------------------------------------------------------------
 # Vision server
 # ---------------------------------------------------------------------------
 VISION_BASE = os.getenv("VISION_BASE", "http://localhost:8001")
+
+# ---------------------------------------------------------------------------
+# LLM (intent classification, motion planning, chat)
+# ---------------------------------------------------------------------------
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5.4-mini")
 
 # ---------------------------------------------------------------------------
 # Speech-to-text
@@ -89,7 +112,6 @@ ENABLE_LEG_TRACKING = os.getenv("CORAL_ENABLE_LEG_TRACKING", "false").lower() in
 # ---------------------------------------------------------------------------
 # Server binding
 # ---------------------------------------------------------------------------
-# Default to localhost for school/Electron deployments so the backend is not
-# exposed on the classroom network. Docker/containerized runs should set
-# CORAL_HOST=0.0.0.0 explicitly.
+# Default to localhost so the backend is not exposed on the classroom network.
+# Containerized runs set CORAL_HOST=0.0.0.0 (see docker-compose.yml).
 CORAL_HOST = os.getenv("CORAL_HOST", "127.0.0.1")

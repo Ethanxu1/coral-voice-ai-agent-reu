@@ -142,19 +142,18 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 | `frontend/src/rps/StandardPicture.tsx` | View 1: image from `public/rps/` or the stick figure |
 | `frontend/src/rps/SkeletonView.tsx` | View 4: the tracker's stick figure and the readiness message |
 | `frontend/src/App.tsx`, `App.css` | Home-page button and routes |
-| `frontend/src/demo/api.ts` | Added `setHiplessFollow()`, `getJointPulses()`, and an optional `durationMs` for `setPose()` |
+| `frontend/src/api/robot.ts` | `setHiplessFollow()`, `getJointPulses()`; `SERVO_ID` is exported for Gesture Studio |
+| `frontend/src/components/ChatArea.tsx`, `ConnectionStatus.tsx` | Chat panel and health dot, shared with the Refined Demo |
 | `frontend/src/pages/Gesture*.tsx`, `frontend/src/gestures/` | Gesture Studio (see above) |
-| `frontend/src/pages/RefinedDemo.tsx` | Only change: `ChatArea` and `ConnectionHealthDot` are now exported for reuse |
 
 ### Backend
 
 | File | Change |
 |---|---|
 | `backend/app/vision/pose_to_robot.py` | Optional hip-less mode: if the hips are not visible, the torso frame is built from the shoulders alone, assuming an upright torso |
-| `backend/app/follow_controller.py` | Optional gentle mode: slower commands, harder filtering, and a per-tick limit on how far any joint may move |
+| `backend/app/services/follow.py` | Optional gentle mode: slower commands, harder filtering, and a per-tick limit on how far any joint may move |
 | `backend/app/api/routes/state.py` | `POST /follow/hipless-arms` switches both modes on or off; `GET /joint_states/pulses` returns the robot's pose in servo pulses |
-| `backend/app/api/routes/motion.py`, `schemas/requests.py` | `POST /set-pose` takes an optional `duration_ms`: ease there through the servo dispatcher instead of snapping. Without it, unchanged |
-| `backend/app/follow_controller.py`, `api/routes/websocket.py`, `services/intent.py` | Follow remembers which WebSocket started it, and only that connection's disconnect stops it. Before, any connection closing (a stale tab, a hot reload) stopped a newer page's follow |
+| `backend/app/services/follow.py`, `api/routes/websocket.py`, `services/intent.py` | Follow remembers which WebSocket started it, and only that connection's disconnect stops it. Before, any connection closing (a stale tab, a hot reload) stopped a newer page's follow |
 
 Both backend modes are **off by default**, so the main demo behaves exactly as before. The Learn screen turns them on when it opens and off when it closes.
 
@@ -163,14 +162,14 @@ Both backend modes are **off by default**, so the main demo behaves exactly as b
 ## 4. Running it
 
 ```bash
-./run.sh -speaker
+./run.sh
 ```
 
 Open <http://localhost:5173> and click **Rock Paper Scissors**.
 
 - Simulation mode is enough. No robot is needed.
-- The speaker server is only needed for CORAL's voice.
-- Restart the backend after pulling these changes. The new endpoints and options do not exist in an already-running server, and the follow behaviour will not change until it restarts.
+- CORAL's voice is OpenAI TTS from the backend (`POST /speak`), so it needs `OPENAI_API_KEY`.
+- Restart the backend after pulling these changes. The new endpoints do not exist in an already-running server, and the follow behaviour will not change until it restarts.
 - After a frontend hot reload, refresh the page so custom moves and follow sessions start clean.
 - Stand so that your head, shoulders and both arms are in view. Hips are not needed.
 
@@ -187,7 +186,7 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 | Change how long to hold when recording | `STILL_MS`, `STILL_TOLERANCE`, `MAX_HOLD_MS` in `pages/RpsCustom.tsx`; `HOLD_MS` in `gestures/useHoldStill.ts` for Gesture Studio |
 | Change when the robot counts as caught up | `SETTLE_PULSES`, `SETTLE_MS` in `rps/useRobotSettle.ts` |
 | Use real screenshots in view 1 | Add `rock.png`, `paper.png`, `scissors.png` to `frontend/public/rps/` |
-| Change how fast the simulated robot follows | `_GENTLE_*` constants at the top of `backend/app/follow_controller.py` |
+| Change how fast the simulated robot follows | `_GENTLE_*` constants at the top of `backend/app/services/follow.py` |
 | Add another gesture | Add an entry to `GESTURES` in `rps/gestures.ts` and extend `GestureId` and `BEATS` |
 
 ### Reusing the matcher in another game
@@ -215,14 +214,14 @@ Coordinates are in shoulder widths from the middle of the shoulders, x to the ri
 4. **Gentle follow mode** was checked in the simulator and the speed was judged good, with no toppling. It has **not** been tried on the physical robot, so re-check the `_GENTLE_*` values before using it there.
 5. **Hip-less mode assumes an upright torso.** If the child leans a lot, the arm angles will be off.
 6. **The follow settings are global state in the main server process**, switched by `POST /follow/hipless-arms`. Two Learn screens open at once, or a crash that skips the cleanup request, can leave them on. Restarting the backend resets them. There is also only one follower: the newest page to ask for it owns it.
-7. **Robot motion in the game is simulator-only.** `/set-pose` with `duration_ms` dispatches `sim_only` and skips the fall check (it does run the collision check). Running this on the physical robot would need the `/move` route or similar.
+7. **Robot motion in the game is simulator-only.** `POST /set-pose` with `duration_ms` glides there in the sim only, after the collision and fall checks; a pose the fall check blocks simply doesn't move (`poseRobot` doesn't report it). Running this on the physical robot would need the `/move` route or similar.
 8. **Each round starts with `/reset`**, which drops the robot straight into the stand pose rather than easing there. It has looked fine in the simulator.
 9. **`poseRobot` calls are not cancellable.** Two overlapping calls interpolate the same joints at once until the older finishes. The game never overlaps them; Gesture Studio's fine-tuning can, briefly.
 10. **The robot-caught-up limits** (60 pulses over 0.8 s) were set from one adult sitting at a desk. Check them with children standing.
 11. **Nothing is stored yet**: no student ID, no per-round log, no screen recording, no pre-training quiz. Sayali asked to wait for the PIs (meeting on 2026-10-13). Each round already computes `similarity` and `reactionMs` for when logging is added.
 12. **The 3D viewer sometimes stays blank in an embedded preview** until the window is resized. This was seen only in the Claude preview pane, not in Chrome.
 13. **No automated tests.** The frontend has no test runner. The matcher is a pure function and is easy to unit-test if one is added.
-14. **Voice lines go to the speaker server and are best effort.** If it is not running, the game works silently.
+14. **Voice lines are best effort.** If TTS fails (no OpenAI key, no network), the game works silently.
 
 ### Ideas for next steps
 

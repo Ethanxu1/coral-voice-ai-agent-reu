@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ConnectionHealthDot } from '../pages/RefinedDemo'
-import { useConnectionStatus } from '../components/ConnectionStatus'
+import { ConnectionHealthDot, useConnectionStatus } from '../components/ConnectionStatus'
 import { resetRobot } from '../rps/robotPose'
 
 export const GESTURES_PATH = '/gestures'

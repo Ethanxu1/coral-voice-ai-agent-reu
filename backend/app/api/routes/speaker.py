@@ -1,17 +1,14 @@
-"""TTS endpoint for the main CORAL backend.
+"""TTS endpoint: returns OpenAI speech audio for a text string.
 
-Returns MP3 audio for a given text string. This endpoint is separate from
-the legacy speaker server (port 5002) so callers can get OpenAI TTS audio
-without requiring a second service.
+Used by pages that speak outside the /ws chat pipeline (Rock Paper Scissors).
 """
 
 from __future__ import annotations
 
+from app.services.tts import generate_speech, tts_enabled
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
-
-from app.services.tts import generate_speech, tts_enabled
 
 router = APIRouter()
 
