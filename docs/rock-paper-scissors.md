@@ -31,6 +31,8 @@ The layout follows the October redesign (the `rps-ui` prototype). The top bar sh
 5. The result shows both moves, who won and why ("Paper wraps Rock!"); the winner's panel glows. It moves on by itself after 4 s, or sooner with **Next round**. Space or Enter presses the big button on screen.
 6. After three rounds: final score, a round-by-round recap, Play again and Learn the moves.
 
+Screenshots of every step are in [`docs/images/rps/`](images/rps/): [ready](images/rps/01-ready.jpg), [countdown](images/rps/02-countdown.jpg), [no move seen](images/rps/03-no-move.jpg), [got it](images/rps/04-got-it.jpg), [CORAL chooses](images/rps/05-coral-chooses.jpg), [result](images/rps/06-result.jpg), [hints](images/rps/07-hints.jpg), [match over](images/rps/08-final.jpg), and Make your own moves ([cards](images/rps/09-custom-moves.jpg), [step back](images/rps/10-custom-step-back.jpg)).
+
 Each round's result keeps the best similarity score and the time from SHOOT! until the move was first seen (`reactionMs`). Nothing is stored yet: how game data is recorded is waiting on the PIs.
 
 ### Make your own moves
