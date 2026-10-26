@@ -77,7 +77,8 @@ def test_walk_marches_in_place_with_safe_settings_and_never_turns(walking):
     assert first.z_move_amplitude == walking.STEP_HEIGHT_M[1]
     assert first.arm_swing_gain == pytest.approx(math.radians(walking.ARM_SWING_DEG))
     assert first.period_times == 0
-    assert got == {"step_height": walking.STEP_HEIGHT_M[1], "x_trim_m": walking.X_TRIM_M}
+    assert got == {"step_height": walking.STEP_HEIGHT_M[1], "x_trim_m": walking.X_TRIM_M,
+                   "direction": 0, "travel_m": 0.0}
     assert engine.published[1].angle_move_amplitude == 0
     assert w.legs_busy
 
@@ -164,11 +165,18 @@ def test_walk_endpoint_starts_and_stops(pi_server):
     assert engine.commands == ["start", "stop"]
 
 
-def test_walk_endpoint_has_no_way_to_step_forward(pi_server):
+def test_walk_endpoint_steps_only_by_direction_never_by_raw_distance(pi_server):
+    """2026-10-26: forward/backward walking added (website buttons), sent as
+    a direction (-1, 0, +1). A raw step length or a turn can't be sent."""
+    import walking as w
+
     server, client, _, engine = pi_server
     client.post("/walk", json={"forward": 0.02, "turn": 8})
     assert engine.published[-1].x_move_amplitude == server_trim(server)
-    assert engine.published[-1].angle_move_amplitude == 0      # no way to turn either
+    assert engine.published[-1].angle_move_amplitude == 0
+    r = client.post("/walk", json={"direction": 1})
+    assert r.json()["direction"] == 1
+    assert engine.published[-1].x_move_amplitude == pytest.approx(w.X_TRIM_M + w.WALK_STEP_M)
 
 
 def server_trim(server):
@@ -239,8 +247,10 @@ def test_controller_walk_posts_walk_and_stop(monkeypatch):
 
     ctl = _controller(monkeypatch, handler)
     ctl.walk(True)
+    ctl.walk(True, direction=-1)
     ctl.walk(False)
-    assert seen[-2] == ("/walk", {})
+    assert seen[-3] == ("/walk", {"direction": 0})
+    assert seen[-2] == ("/walk", {"direction": -1})
     assert seen[-1][0] == "/walk/stop"
 
 
@@ -261,10 +271,10 @@ def test_set_robot_walking_starts_and_stops_the_robot(monkeypatch):
 
     seen = []
     monkeypatch.setattr(state, "hardware_dispatcher", types.SimpleNamespace(
-        walk=lambda walking: seen.append(walking)))
-    asyncio.run(motion.set_robot_walking(True))
+        walk=lambda walking, direction=0: seen.append((walking, direction))))
+    asyncio.run(motion.set_robot_walking(True, 1))
     asyncio.run(motion.set_robot_walking(False))
-    assert seen == [True, False]
+    assert seen == [(True, 1), (False, 0)]
 
 
 
@@ -510,3 +520,161 @@ def test_a_move_counts_as_body_motion(pi_server):
     server, client, _, _ = pi_server
     client.post("/move", json=[{"servo_id": 13, "position": 700, "duration_ms": 100}])
     assert server._walker._body_moved_at is not None
+
+
+
+# ── Forward / backward walking (2026-10-26, website buttons) ─────────────────
+# The robot can't see the desk edge, so it tracks how far it has walked from
+# its start and stops stepping at MAX_TRAVEL_M either way (it keeps marching
+# in place).
+
+
+def test_direction_sets_a_small_fixed_step(walking):
+    w, engine, _ = _walker(walking, [0.0])
+    w.walk(direction=1)
+    assert engine.published[-1].x_move_amplitude == pytest.approx(walking.X_TRIM_M + walking.WALK_STEP_M)
+    w.walk(direction=-1)
+    assert engine.published[-1].x_move_amplitude == pytest.approx(walking.X_TRIM_M - walking.WALK_STEP_M)
+    w.walk(direction=5)                           # anything else is clamped to +-1
+    assert engine.published[-1].x_move_amplitude == pytest.approx(walking.X_TRIM_M + walking.WALK_STEP_M)
+    assert walking.WALK_STEP_M <= 0.02            # Hiwonder's tested limit
+
+
+def test_walking_forward_stops_at_the_travel_limit_but_back_still_works(walking):
+    now = [0.0]
+    w, engine = _held_walker(walking, now, [0.0])
+    w.walk(direction=1)
+    for i in range(int(20 / 0.02)):              # keep asking to go forward
+        now[0] += 0.02
+        w.sense()
+        if i % 15 == 0:
+            w.walk(direction=1)
+    assert w.travel_m == pytest.approx(walking.MAX_TRAVEL_M, abs=0.01)
+    w.walk(direction=1)
+    assert engine.published[-1].x_move_amplitude == pytest.approx(walking.X_TRIM_M)   # in place
+    w.walk(direction=-1)
+    assert engine.published[-1].x_move_amplitude < walking.X_TRIM_M                  # back is fine
+    assert walking.MAX_TRAVEL_M == 0.20
+
+
+def test_travel_counts_only_commanded_steps_not_the_creep_trim(walking):
+    now = [0.0]
+    w, _ = _held_walker(walking, now, [0.0])
+    w.walk()
+    _run(w, now, 5.0)
+    assert w.travel_m == 0.0
+
+
+def test_travel_is_kept_across_marches_and_reset_after_a_long_pause(walking):
+    now = [0.0]
+    w, engine = _held_walker(walking, now, [0.0])
+    w.walk(direction=1)
+    _run(w, now, 1.0)
+    walked = w.travel_m
+    assert walked > 0
+    w.stop()
+    now[0] += 3.0
+    w.walk()
+    assert w.travel_m == pytest.approx(walked)
+    w.stop()
+    now[0] += walking.HEADING_KEEP_S + 1
+    w.walk()
+    assert w.travel_m == 0.0
+
+
+def test_walk_status_reports_travel(pi_server):
+    server, client, _, _ = pi_server
+    client.post("/walk", json={"direction": 1})
+    assert "travel_m" in client.get("/walk/status").json()
+
+
+
+def test_walking_uses_the_settings_that_walked_stably_on_the_robot(walking):
+    """2026-10-26: with 2 cm steps and 30 deg arm swing, walking forward was
+    very wobbly. coral_walk_test.py walked stably on the robot (2026-10-12)
+    with 1 cm steps and the arms still -- so stepping uses those; marching
+    in place keeps its arm swing."""
+    w, engine, _ = _walker(walking, [0.0])
+    w.walk(direction=1)
+    assert walking.WALK_STEP_M == 0.01
+    assert engine.published[-1].arm_swing_gain == 0
+    w.walk(direction=0)
+    assert engine.published[-1].arm_swing_gain == pytest.approx(math.radians(walking.ARM_SWING_DEG))
+
+
+def test_walking_uses_a_slower_careful_gait_and_marching_keeps_its_own(walking):
+    """2026-10-26: still wobbly 'like it might fall' with 1 cm steps and arms
+    still. While stepping: slower cycle (Hiwonder's slowest preset), more of
+    each step on both feet, lower foot lift. Marching in place, which is
+    stable, keeps its settings."""
+    w, engine, _ = _walker(walking, [0.0])
+    w.walk(direction=1)
+    p = engine.published[-1]
+    assert p.period_time == walking.WALK_PERIOD_MS == 600
+    assert p.dsp_ratio == walking.WALK_DSP_RATIO == 0.3
+    assert p.z_move_amplitude == walking.WALK_STEP_HEIGHT_M == 0.015
+    w.walk(direction=0)
+    p = engine.published[-1]
+    assert (p.period_time, p.dsp_ratio, p.z_move_amplitude) == (walking.PERIOD_MS, walking.DSP_RATIO, 0.02)
+
+
+def test_travel_estimate_follows_the_slower_walking_cycle(walking):
+    assert walking.STEPS_PER_S == pytest.approx(1000.0 / walking.WALK_PERIOD_MS)
+
+
+def test_walking_sways_the_hips_less_than_marching(walking):
+    """2026-10-26: walking 'kinda rocks side to side' -- the engine's
+    side-to-side hip sway overshooting. Less sway while stepping only."""
+    w, engine, _ = _walker(walking, [0.0])
+    w.walk(direction=-1)
+    assert engine.published[-1].y_swap_amplitude == walking.WALK_Y_SWAP_M == 0.015
+    w.walk(direction=0)
+    assert engine.published[-1].y_swap_amplitude == walking.Y_SWAP_M == 0.02
+
+
+# ── 2026-10-26: repeated clicks -> marching in place / random turning ───────
+
+
+def test_at_the_travel_limit_it_keeps_the_careful_gait_no_jolt(walking):
+    """Hitting the limit mid-walk used to flip straight back to the marching
+    gait (faster cycle, more sway, arm swing) -- a jolt."""
+    w, engine, _ = _walker(walking, [0.0])
+    w.walk(direction=1)
+    w._lock.acquire(); w.travel_m = walking.MAX_TRAVEL_M; w._lock.release()
+    w.walk(direction=1)
+    p = engine.published[-1]
+    assert p.x_move_amplitude == pytest.approx(walking.X_TRIM_M)       # no longer stepping
+    assert (p.period_time, p.dsp_ratio, p.arm_swing_gain) == (
+        walking.WALK_PERIOD_MS, walking.WALK_DSP_RATIO, 0.0)           # but the same calm gait
+
+
+def test_steering_while_walking_ignores_the_rocking_and_is_gentle(walking):
+    now, rate = [0.0], [0.0]
+    w, engine = _held_walker(walking, now, rate)
+    w.walk(direction=1)
+    rate[0] = -2.0
+    _run(w, now, 1.0)                                   # 2 deg off: rocking-sized
+    w.walk(direction=1)
+    assert engine.published[-1].angle_move_amplitude == 0
+    _run(w, now, 4.0)                                   # now 10 deg off
+    w.walk(direction=1)
+    assert 0 < engine.published[-1].angle_move_amplitude <= walking.WALK_HOLD_MAX_DEG == 2.0
+
+
+def test_each_walk_starts_without_leftover_steering(walking):
+    now, rate = [0.0], [0.0]
+    w, engine = _held_walker(walking, now, rate)
+    w.walk()
+    w._lock.acquire(); w._integral = 20.0; w._lock.release()   # left from the last walk
+    w.stop()
+    now[0] += 3.0
+    w.walk()
+    assert w._integral == 0.0
+    assert engine.published[-1].angle_move_amplitude == 0
+
+
+def test_status_reports_the_travel_limit(pi_server):
+    import walking as wk
+
+    server, client, _, _ = pi_server
+    assert client.get("/walk/status").json()["max_travel_m"] == wk.MAX_TRAVEL_M

@@ -4,12 +4,35 @@ import {
   useRefinedDemoMachine,
   type RefinedChatMsg,
 } from '../demo/useRefinedDemoMachine'
-import { fetchIntentExamples, resetPose } from '../demo/api'
+import { fetchIntentExamples, resetPose, walkStep, walkStop } from '../demo/api'
 import { useHardwareDispatching } from '../demo/hardwareDispatchStatus'
 import { useConnectionStatus } from '../components/ConnectionStatus'
 import { LiveStream } from './DummyStream'
 import RobotViewer from '../components/RobotViewer'
 import './RefinedDemo.css'
+
+// Walk the real robot forward/backward a short way, or stop it.
+function WalkControls() {
+  const [message, setMessage] = useState<string | null>(null)
+  const walk = async (direction: 1 | -1) => {
+    setMessage(null)
+    const { error, note } = await walkStep(direction)
+    const walking = direction > 0 ? 'Walking forward…' : 'Walking backward…'
+    setMessage(error ?? (note ? `${walking} ${note}` : walking))
+  }
+  const stop = async () => {
+    await walkStop()
+    setMessage('Stopped')
+  }
+  return (
+    <div className="rd-walk-controls" aria-label="Walk the robot">
+      <button type="button" onClick={() => void walk(1)}>Walk forward</button>
+      <button type="button" onClick={() => void walk(-1)}>Walk backward</button>
+      <button type="button" className="rd-walk-stop" onClick={() => void stop()}>Stop</button>
+      {message && <div className="rd-walk-message" role="status">{message}</div>}
+    </div>
+  )
+}
 
 export default function RefinedDemo() {
   const location = useLocation()
@@ -251,6 +274,8 @@ export default function RefinedDemo() {
               Safety check…
             </div>
           )}
+
+          <WalkControls />
 
           {hardwareDispatching && (
             <div className="rd-hardware-badge">

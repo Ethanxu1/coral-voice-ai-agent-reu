@@ -70,18 +70,29 @@ class AiNexHardwareController(RobotController):
         response = self._client.post(f"{self._base}/move", json=payload)
         response.raise_for_status()
 
-    def walk(self, walking: bool) -> None:
-        """Start/renew (True) or stop (False) the robot's march in place. A
-        march lasts only while this keeps being called with True
-        (pi/nodes/walking.py). A 409 (legs settling, or the march time
-        limit) is not an error: the next renewal retries.
+    def walk(self, walking: bool, direction: int = 0) -> None:
+        """Start/renew (True) or stop (False) the robot's march: in place, or
+        forward (+1) / backward (-1). A march lasts only while this keeps
+        being called with True (pi/nodes/walking.py). A 409 (legs settling,
+        or the march time limit) is not an error: the next renewal retries.
         """
         if not walking:
             self._client.post(f"{self._base}/walk/stop", timeout=2.0).raise_for_status()
             return
-        r = self._client.post(f"{self._base}/walk", json={}, timeout=1.0)
+        r = self._client.post(f"{self._base}/walk", json={"direction": direction}, timeout=1.0)
         if r.status_code != 409:
             r.raise_for_status()
+
+    def walk_status(self) -> dict:
+        """The robot's /walk/status (travel_m, max_travel_m, ...); {} if it
+        can't be read."""
+        try:
+            r = self._client.get(f"{self._base}/walk/status", timeout=1.0)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            logger.debug(f"Walk status read failed: {e}")
+            return {}
 
     def read_feedback(self, servo_ids: list[int]) -> list[ServoFeedback]:
         """Request servo feedback from robot agent (temperature + voltage)."""

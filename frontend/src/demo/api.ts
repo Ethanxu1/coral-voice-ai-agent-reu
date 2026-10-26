@@ -217,6 +217,35 @@ export async function setHiplessFollow(enabled: boolean): Promise<void> {
   }
 }
 
+// Walk buttons: the real robot walks forward (1) or backward (-1) for a couple
+// of seconds (backend app/services/walk_buttons.py; the robot itself won't go
+// more than 10 cm from where it started). Returns an error message to show,
+// or null on success.
+/** A walk click's outcome: an error, or the robot's travel note (how far it
+ * has walked, or that it is at its travel limit). */
+export async function walkStep(direction: 1 | -1): Promise<{ error?: string; note?: string }> {
+  try {
+    const response = await fetch(`${getRobotBase()}/walk/step`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction }),
+    })
+    const body = await response.json().catch(() => null)
+    if (response.ok) return typeof body?.note === 'string' ? { note: body.note } : {}
+    return { error: typeof body?.detail === 'string' ? body.detail : `Walk failed (${response.status})` }
+  } catch {
+    return { error: 'Backend unreachable' }
+  }
+}
+
+export async function walkStop(): Promise<void> {
+  try {
+    await fetch(`${getRobotBase()}/walk/stop`, { method: 'POST' })
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function setRobotState(mode: string): Promise<void> {
   // Best-effort lock/unlock — never let a state toggle abort the demo.
   try {

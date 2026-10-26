@@ -213,13 +213,20 @@ async def dispatch_servo_commands(
         state.hardware_in_sync = send_to_hardware
 
 
-async def set_robot_walking(walking: bool) -> None:
-    """Start/renew (True) or stop (False) the real robot's march in place.
-    Follow mode's marching (app/follow_marching.py) only calls this when
-    follow drives the real robot; the sim has no walking engine."""
+async def set_robot_walking(walking: bool, direction: int = 0) -> None:
+    """Start/renew (True) or stop (False) the real robot's march: in place,
+    or forward (+1) / backward (-1). Used by follow mode's marching (in
+    place) and the website's walk buttons; the sim has no walking engine."""
     if state.hardware_dispatcher is None:
         state.hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
-    await asyncio.to_thread(state.hardware_dispatcher.walk, walking)
+    await asyncio.to_thread(state.hardware_dispatcher.walk, walking, direction)
+
+
+async def robot_walk_status() -> dict:
+    """The real robot's walk status ({} if unreachable)."""
+    if state.hardware_dispatcher is None:
+        state.hardware_dispatcher = await asyncio.to_thread(AiNexHardwareController)
+    return await asyncio.to_thread(state.hardware_dispatcher.walk_status)
 
 
 async def _execute_on_hardware_if_connected(

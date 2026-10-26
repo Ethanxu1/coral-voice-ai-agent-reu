@@ -9,10 +9,12 @@ Endpoints
     POST /move    execute raw servo commands (blocks until the body finishes).
                   While the robot marches, leg and arm servos are dropped (the
                   walking engine moves them, arms swinging with the steps).
-    POST /walk    march in place with Hiwonder's walking engine
-                  {step_height m}; must be renewed within
-                  walking.KEEPALIVE_TIMEOUT_S or it stops. Never steps or
-                  turns (only the gyro heading hold, against drift).
+    POST /walk    march with Hiwonder's walking engine {step_height m,
+                  direction +1/0/-1}; must be renewed within
+                  walking.KEEPALIVE_TIMEOUT_S or it stops. Steps forward or
+                  back only by `direction`, 1 cm per step, at most
+                  walking.MAX_TRAVEL_M from the start; never turns (only the
+                  gyro heading hold, against drift).
     POST /walk/stop  stop marching; legs ease back to stand
     GET  /walk/status  {available, state, yaw_deg}
     GET  /imu     raw Board().get_imu() floats (accel g, gyro deg/s, mag), read-only
@@ -254,6 +256,7 @@ async def move(moves: List[ServoMove]):
 
 class WalkRequest(BaseModel):
     step_height: float = 0.02
+    direction: int = 0   # +1 forward, -1 backward, 0 in place
 
 
 @app.post("/walk")
@@ -266,7 +269,7 @@ def walk(req: WalkRequest):
     from walking import WalkerBusy
 
     try:
-        settings = _walker.walk(req.step_height)
+        settings = _walker.walk(req.step_height, req.direction)
     except WalkerBusy as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"walking": True, **settings}
@@ -281,9 +284,13 @@ def walk_stop():
 
 @app.get("/walk/status")
 def walk_status():
+    from walking import MAX_TRAVEL_M
+
     if _walker is None:
         return {"available": False, "state": "idle", "yaw_deg": None}
     return {"available": True, "state": _walker.state, "yaw_deg": round(_walker.yaw_deg, 1),
+            "travel_m": round(_walker.travel_m, 3),
+            "max_travel_m": MAX_TRAVEL_M,
             "last_stop_s": _walker.last_stop_s}
 
 

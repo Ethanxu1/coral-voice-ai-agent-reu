@@ -56,6 +56,38 @@ MAX_WALK_S = 20.0
 # short/long /walk loops after any change.
 X_TRIM_M = -0.002
 MAX_TRIM_M = 0.005
+# Walking forward/backward (2026-10-26, website buttons): a direction of +1
+# or -1 adds WALK_STEP_M per step. The robot can't see the desk edge, so it
+# estimates how far it has walked from its start (travel_m, from the
+# commanded steps -- an overestimate is the safe side) and stops stepping at
+# MAX_TRAVEL_M either way; it keeps marching in place there. Reset like the
+# heading, after HEADING_KEEP_S standing.
+# 1 cm steps, arms still while stepping: what coral_walk_test.py walked
+# stably with on the robot (2026-10-12). 2 cm steps with 30 deg arm swing
+# were very wobbly (2026-10-26). The button walks 4 s so it shows.
+WALK_STEP_M = 0.01
+MAX_TRAVEL_M = 0.20
+# Careful gait while stepping forward/back (2026-10-26: still wobbly "like
+# it might fall" with 1 cm steps and arms still): Hiwonder's slowest cycle,
+# more of each step on both feet, lower foot lift. Marching in place keeps
+# PERIOD_MS / DSP_RATIO / its step height -- it is stable.
+WALK_PERIOD_MS = 600
+WALK_DSP_RATIO = 0.3
+WALK_STEP_HEIGHT_M = 0.015
+# Side-to-side hip sway while stepping. At 2 cm (and the slower cycle) it
+# "kinda rocks side to side" (2026-10-26) -- overshoot; less sway. If it
+# instead starts leaning toward the lifted foot, this is too small.
+WALK_Y_SWAP_M = 0.015
+# Heading hold while stepping: walking rocks the body, and chasing every
+# rock turned the robot about at random over repeated clicks (2026-10-26).
+# Errors within WALK_HOLD_DEADBAND_DEG are ignored, the correction is capped
+# at WALK_HOLD_MAX_DEG per step, and it has no integral term.
+WALK_HOLD_DEADBAND_DEG = 3.0
+WALK_HOLD_MAX_DEG = 2.0
+# Engine step cycles per second while stepping, one WALK_STEP_M per cycle,
+# for the travel estimate. NOT measured yet: time a 4 s click and measure
+# the distance, then compare with 4 s x STEPS_PER_S x WALK_STEP_M.
+STEPS_PER_S = 1000.0 / WALK_PERIOD_MS
 # Heading hold. Marching in place the robot turned ~30-45 deg to its right
 # in 16 s (2026-10-12), with or without arm swing -- its own drift, which
 # changes with surface and battery, so a fixed trim can't follow it. The
@@ -214,6 +246,9 @@ class Walker:
         self._bias: Optional[float] = None
         self._last_sense: Optional[float] = None
         self._body_moved_at: Optional[float] = None
+        self.travel_m = 0.0          # estimated distance walked from the start, + = forward
+        self._stepping_gait = False
+        self._step_m = 0.0           # forward step being commanded now (no trim)
         self._integral = 0.0
         self._last_hold: Optional[float] = None
         self._idle_since: Optional[float] = None
@@ -237,31 +272,47 @@ class Walker:
         with self._lock:
             self._body_moved_at = self._clock()
 
-    def walk(self, step_height: float = 0.02) -> dict:
-        """Start marching in place, or renew a march in progress."""
+    def walk(self, step_height: float = 0.02, direction: int = 0) -> dict:
+        """Start marching (in place, or forward/backward with direction
+        +1/-1), or renew a march in progress."""
         settings = {
             "step_height": _clamp(step_height, *STEP_HEIGHT_M),
             # Reported so a /walk reply shows which correction is deployed.
             "x_trim_m": _clamp(X_TRIM_M, -MAX_TRIM_M, MAX_TRIM_M),
         }
+        direction = (direction > 0) - (direction < 0)
+        # The gait follows what was ASKED, not whether the travel limit lets
+        # it step: flipping to the marching gait mid-walk was a jolt.
+        self._stepping_gait = direction != 0
         with self._lock:
             if self.state == "settling":
                 raise WalkerBusy("legs are settling back to stand")
             if self._capped:
                 raise WalkerBusy("march time limit reached; stop before marching again")
             p = self._engine.get_params()
-            p.period_time = PERIOD_MS
-            p.dsp_ratio = DSP_RATIO
-            p.y_swap_amplitude = Y_SWAP_M
-            # Never step (the robot may be on a desk) beyond a tiny creep trim.
-            p.x_move_amplitude = settings["x_trim_m"]
             p.y_move_amplitude = 0.0
             if self.state == "idle" and (self._idle_since is None
                                          or self._clock() - self._idle_since > HEADING_KEEP_S):
-                self.yaw_deg = self._target = self._integral = 0.0
+                self.yaw_deg = self._target = 0.0
+                self.travel_m = 0.0
+            if self.state == "idle":
+                self._integral = 0.0         # no steering left over from the last walk
+            if direction * self.travel_m >= MAX_TRAVEL_M:
+                direction = 0            # at the travel limit that way: march in place
+            self._step_m = direction * WALK_STEP_M
+            settings["direction"] = direction
+            settings["travel_m"] = round(self.travel_m, 3)
+            # Only the requested direction's small step, plus the creep trim.
+            p.x_move_amplitude = settings["x_trim_m"] + self._step_m
+            stepping = self._stepping_gait
+            p.period_time = WALK_PERIOD_MS if stepping else PERIOD_MS
+            p.dsp_ratio = WALK_DSP_RATIO if stepping else DSP_RATIO
+            p.y_swap_amplitude = WALK_Y_SWAP_M if stepping else Y_SWAP_M
             p.angle_move_amplitude = _clamp(self._hold(), -TURN_MAX_DEG, TURN_MAX_DEG)
-            p.z_move_amplitude = settings["step_height"]
-            p.arm_swing_gain = math.radians(ARM_SWING_DEG)
+            p.z_move_amplitude = (min(settings["step_height"], WALK_STEP_HEIGHT_M)
+                                  if stepping else settings["step_height"])
+            # Arms swing only when marching in place; still while stepping.
+            p.arm_swing_gain = 0.0 if stepping else math.radians(ARM_SWING_DEG)
             p.period_times = 0         # walk until stopped
             self._engine.set_params(p)
             if self.state == "idle":
@@ -280,6 +331,11 @@ class Walker:
         if self._yaw_rate is None:
             return 0.0
         error = self._target - self.yaw_deg
+        if self._stepping_gait:
+            beyond = abs(error) - WALK_HOLD_DEADBAND_DEG
+            if beyond <= 0:
+                return 0.0
+            return math.copysign(min(WALK_HOLD_MAX_DEG, HOLD_GAIN * beyond), error)
         limit = HOLD_MAX_DEG / HOLD_INTEGRAL_GAIN
         self._integral = _clamp(self._integral + error * dt, -limit, limit)
         return _clamp(HOLD_GAIN * error + HOLD_INTEGRAL_GAIN * self._integral,
@@ -291,6 +347,9 @@ class Walker:
         now = self._clock()
         dt = 0.0 if self._last_sense is None else min(MAX_SENSE_DT_S, now - self._last_sense)
         self._last_sense = now
+        with self._lock:
+            if self.state == "walking":
+                self.travel_m += self._step_m * STEPS_PER_S * dt
         if self._yaw_rate is None:
             return
         rate = self._yaw_rate()
@@ -315,6 +374,7 @@ class Walker:
                 return
             self._engine.command("stop")
             self.state = "settling"
+            self._step_m = 0.0
         self._spawn(self._settle)
 
     def _settle(self) -> None:

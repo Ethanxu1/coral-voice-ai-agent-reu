@@ -1699,3 +1699,36 @@ a:focus-visible {
   color: #6B625D;
   line-height: 1.4;
 }
+
+/* Walk buttons (real robot only) */
+.rd-walk-controls {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  z-index: 6;
+}
+.rd-walk-controls button {
+  background: rgba(38, 35, 47, 0.85);
+  backdrop-filter: blur(6px);
+  border: 2px solid #4F8EF7;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.rd-walk-controls button.rd-walk-stop {
+  border-color: #E4572E;
+}
+.rd-walk-message {
+  color: #fff;
+  background: rgba(38, 35, 47, 0.85);
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
