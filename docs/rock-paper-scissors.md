@@ -6,6 +6,13 @@ This document covers what exists, how it works, how to run and change it, and wh
 
 For setup and running the stack, see the [README](../README.md). For the overall system, see [overview.md](overview.md).
 
+## Status (2026-10-27)
+
+- All the work is on branch `rps-redesign-ui`, in [PR #12](https://github.com/Ethanxu1/coral-voice-ai-agent-reu/pull/12) into `development`. It is waiting for review.
+- Done: Learn, a three-round Play match, Make your own moves, and Gesture Studio, all on the redesigned UI. The game was played end to end in the simulator.
+- On hold until the PIs decide: the pre-training quiz, the student ID, data logging and screen recording (item 11 below).
+- Not checked yet: `./run.sh` on an Intel Mac or on Linux since the Apple-chip change (see "Running it"), and anything on the physical robot.
+
 ---
 
 ## 1. What it does
@@ -24,16 +31,16 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 
 The layout follows the October redesign (the `rps-ui` prototype). The top bar shows the round with a pip per round (green won, red lost, grey draw), the score, Menu, End and **RPS Hints**; it stays clickable above every overlay. Left: CORAL in the simulator. Right: one card per move with its stick figure, a one-line tip and a live similarity bar (red → yellow → green, tick at the 60% match line; the card turns green when it counts), then the tracker's stick figure with the camera in its corner.
 
-1. The **Start!** popup shows the three moves and whether CORAL can see the child. Start was pressed at the computer, so the game first waits until both arms are in view for a second ("Step back!").
+1. The **Start** popup shows the three moves and whether CORAL can see the child. Start was pressed at the computer, so the game first waits until both arms are in view for a second ("Step back").
 2. Each round: 3, 2, 1 in a ring over CORAL's panel, while the child's panel stays lit so they can watch their bars.
 3. At **Shoot** CORAL picks its move at random and starts moving straight away, at the same time as the child. The card shrinks to a strip at the top of CORAL's panel and the overlay lifts, so the robot is in view.
 4. Meanwhile the camera reads the child's move ("Got it"). If no move was seen, "I couldn't see a move", CORAL goes back to standing and the countdown restarts. The result waits until CORAL's arms have arrived.
-5. The result shows both moves, who won and why ("Paper wraps Rock!"); the winner's panel glows. It moves on by itself after 4 s, or sooner with **Next round**. Space or Enter presses the big button on screen.
+5. The result shows both moves, who won and why ("Paper wraps Rock"); the winner's panel glows. It moves on by itself after 4 s, or sooner with **Next round**. Space or Enter presses the big button on screen.
 6. After three rounds: final score, a round-by-round recap, Play again and Learn the moves.
 
 Screenshots of every step are in [`docs/images/rps/`](images/rps/): [ready](images/rps/01-ready.jpg), [countdown](images/rps/02-countdown.jpg), [no move seen](images/rps/03-no-move.jpg), [Shoot, CORAL moving](images/rps/04-shoot.jpg), [got it](images/rps/05-got-it.jpg), [result](images/rps/06-result.jpg), [hints](images/rps/07-hints.jpg), [match over](images/rps/08-final.jpg), and Make your own moves ([cards](images/rps/09-custom-moves.jpg), [step back](images/rps/10-custom-step-back.jpg)).
 
-Each round's result keeps the best similarity score and the time from SHOOT! until the move was first seen (`reactionMs`). Nothing is stored yet: how game data is recorded is waiting on the PIs.
+Each round's result keeps the best similarity score and the time from Shoot until the move was first seen (`reactionMs`). Nothing is stored yet: how game data is recorded is waiting on the PIs.
 
 ### Make your own moves
 
@@ -116,6 +123,8 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 4. "Got it" shows for at least 1.3 s and until CORAL's arms have arrived. After a miss, CORAL is reset to stand once its move has finished, well before the next Shoot.
 5. Judge, update the score, show the result and announce it by voice.
 
+CORAL speaks in the first person and stays kind when it wins ("I win this round. Good try."). The screen shows "CORAL wins this round". The spoken lines are `SPOKEN_ROUND_TEXT` and the on-screen lines are `ROUND_TEXT` in `RpsPlay.tsx`. Text in the game has no exclamation marks: with them the TTS voice sounded harsh.
+
 ---
 
 ## 3. File map
@@ -139,7 +148,7 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 | `frontend/src/pose/poseSimilarity.ts` | **Generic, reusable** pose matching. No game code |
 | `frontend/src/rps/gestures.ts` | **The one place to define the gestures**: labels, teaching text, stick figure, robot pose, detection settings |
 | `frontend/src/rps/classify.ts` | Thin wrapper: `classifyGesture()` and `gestureScores()` using the generic matcher |
-| `frontend/src/rps/robotPose.ts` | Moves the simulator robot's arms to a pose at gentle-follow speed |
+| `frontend/src/rps/robotPose.ts` | Moves the simulator robot's arms to a pose at gentle-follow speed. Pass `from` when the start pose is known, to skip reading it |
 | `frontend/src/rps/GestureFigure.tsx` | Draws a gesture's stick figure |
 | `frontend/src/rps/StandardPicture.tsx` | View 1: image from `public/rps/` or the stick figure |
 | `frontend/src/rps/SkeletonView.tsx` | View 4: the tracker's stick figure and the readiness message |
@@ -147,6 +156,8 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 | `frontend/src/api/robot.ts` | `setHiplessFollow()`, `getJointPulses()`; `SERVO_ID` is exported for Gesture Studio |
 | `frontend/src/components/ChatArea.tsx`, `ConnectionStatus.tsx` | Chat panel and health dot, shared with the Refined Demo |
 | `frontend/src/pages/Gesture*.tsx`, `frontend/src/gestures/` | Gesture Studio (see above) |
+| `frontend/src/components/RobotViewer.tsx` | The 3D sim viewer (shared). It normalizes streamed quaternions, see known issue 15 |
+| `run.sh` | Starts the stack. On Apple-chip Macs it runs the backend on the host (from Kristika Sedai's branch) |
 
 ### Backend
 
@@ -169,6 +180,9 @@ Both backend modes are **off by default**, so the main demo behaves exactly as b
 
 Open <http://localhost:5173> and click **Rock Paper Scissors**.
 
+- Start Docker first (Docker Desktop on a Mac). If it isn't running, `run.sh` stops with `failed to connect to the docker API ... docker.sock: no such file or directory`.
+- On an Apple-chip Mac, `run.sh` runs the backend on the host with `uv run server`, logging to `logs/backend.log`. Postgres and the frontend stay in Docker. The reason: mediapipe has no Linux-ARM wheel, so the backend image only builds for Intel, and under emulation MuJoCo returns wrong-length quaternions (known issue 15). On other machines the backend stays in Docker.
+- Ctrl+C stops everything, including the host backend and the vision server.
 - Simulation mode is enough. No robot is needed.
 - CORAL's voice is OpenAI TTS from the backend (`POST /speak`), so it needs `OPENAI_API_KEY`.
 - Restart the backend after pulling these changes. The new endpoints do not exist in an already-running server, and the follow behaviour will not change until it restarts.
@@ -224,6 +238,9 @@ Coordinates are in shoulder widths from the middle of the shoulders, x to the ri
 12. **The 3D viewer sometimes stays blank in an embedded preview** until the window is resized. This was seen only in the Claude preview pane, not in Chrome.
 13. **No automated tests.** The frontend has no test runner. The matcher is a pure function and is easy to unit-test if one is added.
 14. **Voice lines are best effort.** If TTS fails (no OpenAI key, no network), the game works silently.
+15. **The backend in Docker on an Apple-chip Mac gets rotations wrong.** That image is Intel-only and runs under emulation, where MuJoCo 3.6's `mju_mat2Quat` returns quaternions with the right direction but the wrong length for some large rotations (a 120° turn about Y came out with length 2.0). three.js reads that as scale, so the robot showed huge stretched grey slabs. `RobotViewer.tsx` now normalizes every quaternion, and `run.sh` avoids emulation by running the backend on the host. The bad values come from the per-frame conversion in `mujoco_sim.py` (`mju_mat2Quat` on `geom_xmat`), so any other client of `/ws/sim` on an emulated backend would also need to normalize.
+16. **`run.sh` is untested on an Intel Mac and on Linux** since the Apple-chip change. Those paths should be unchanged (the whole stack in Docker), but nobody has run them.
+17. **Kristika's branch `rps-redesign-ui-robot-test`** also has `tests/test_hardware_controller_positions.py`, which was left out: its import path is wrong (`robot.hardware_controller`), and with that fixed 2 of its 4 tests fail because the hardware-controller fix it tests isn't in the code. Ask her whether that fix is coming.
 
 ### Ideas for next steps
 
