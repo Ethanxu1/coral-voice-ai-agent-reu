@@ -51,7 +51,10 @@ function RobotMeshes({
       if (!m) continue
       const o = i * FLOATS_PER_GEOM
       m.position.set(poses[o], poses[o + 1], poses[o + 2])
-      m.quaternion.set(poses[o + 4], poses[o + 5], poses[o + 6], poses[o + 3])
+      // Normalize: under x86 emulation (the Docker backend on Apple silicon) MuJoCo's
+      // mju_mat2Quat returns the right rotation with the wrong length, and three.js
+      // turns a non-unit quaternion into a scaled, stretched mesh.
+      m.quaternion.set(poses[o + 4], poses[o + 5], poses[o + 6], poses[o + 3]).normalize()
     }
   })
 
