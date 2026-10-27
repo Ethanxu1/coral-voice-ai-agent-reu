@@ -1,0 +1,33 @@
+/* Walk screen: reuses the Rock Paper Scissors menu cards (.rps-menu-card) as buttons. */
+.walk-card {
+  font: inherit;
+  cursor: pointer;
+}
+
+.walk-card.forward:hover {
+  border-color: #17BEBB;
+}
+
+.walk-card.backward:hover {
+  border-color: #4F8EF7;
+}
+
+.walk-stop {
+  margin-top: 24px;
+  padding: 12px 40px;
+  border: none;
+  border-radius: 999px;
+  background: #E4572E;
+  color: #fff;
+  font-family: 'Baloo 2', cursive;
+  font-size: 22px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.walk-message {
+  margin-top: 12px;
+  color: #6B625D;
+  font-size: 16px;
+  text-align: center;
+}
