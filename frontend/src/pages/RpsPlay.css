@@ -125,8 +125,6 @@
 .rpsp .panel.winner { box-shadow: 0 0 0 5px #FFD54F, 0 0 40px rgba(255,213,79,.5); }
 @keyframes rpsp-pop { from { transform: translateX(-50%) scale(.6); opacity: 0; } }
 
-.rpsp .thinking { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-radius: 999px; background: #fff; font-weight: 900; font-size: 19px; box-shadow: 0 8px 24px rgba(0,0,0,.3); white-space: nowrap; }
-.rpsp .thinking .shuffle { font-size: 30px; width: 36px; text-align: center; }
 
 /* ── Overlays ──────────────────────────────────────────────────────────── */
 .rpsp .backdrop { position: fixed; inset: 0; background: rgba(38,35,47,.62); z-index: 50; display: grid; place-items: center; animation: rpsp-fade .2s; }
@@ -174,10 +172,15 @@
 .rpsp .count-card.amber .kicker { color: #c27c12; }
 .rpsp .count-card .again { font-weight: 900; font-size: 20px; color: #9a6410; background: var(--amber-soft); padding: 10px 18px; border-radius: 16px; }
 .rpsp .count-card.green .kicker { color: var(--green); }
-.rpsp .got { display: flex; align-items: center; gap: 16px; background: var(--green-soft); border-radius: 24px; padding: 14px 24px 14px 14px; box-shadow: inset 0 0 0 3px var(--green); }
-.rpsp .got .fig { width: 110px; }
-.rpsp .got .name { font-family: 'Baloo 2', cursive; font-size: 44px; font-weight: 800; line-height: 1; }
-.rpsp .got .em { font-size: 40px; }
+/* From "Shoot" CORAL is moving: the card becomes a strip at the top of its panel so the robot stays in view. */
+.rpsp .count-wrap.top { place-items: start center; padding-top: 70px; }
+.rpsp .count-card.compact { width: auto; flex-direction: row; align-items: center; gap: 16px; padding: 12px 30px 10px; border-radius: 999px; }
+.rpsp .count-card.compact .kicker { padding-bottom: 4px; }
+.rpsp .count-card.compact .word { font-family: 'Baloo 2', cursive; font-size: 52px; font-weight: 800; line-height: 1; color: var(--coral); animation: rpsp-numpop .3s cubic-bezier(.3,1.6,.6,1); }
+.rpsp .count-card.compact.green { box-shadow: 0 0 0 4px var(--green), 0 30px 80px rgba(0,0,0,.35); }
+.rpsp .count-card.compact.green .word { color: var(--ink); }
+.rpsp .count-card.compact .em { font-size: 40px; line-height: 1; }
+.rpsp .count-card.compact .sub { font-size: 16px; padding-bottom: 4px; }
 
 /* Round result card */
 .rpsp .result { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px 38px 28px; border-radius: 30px; background: var(--panel); box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: center; animation: rpsp-rise .35s cubic-bezier(.3,1.4,.6,1); min-width: 420px; }

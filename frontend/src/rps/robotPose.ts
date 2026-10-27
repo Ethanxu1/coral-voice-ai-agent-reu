@@ -21,9 +21,15 @@ let current: Record<string, number> = { ...ROBOT_REST_PULSES }
  *
  * The duration is worked out from where the robot actually is (read from the
  * server), since follow mode or other code may have moved it since the last call.
+ * A caller that already knows the starting pose can pass it as `from` to skip that
+ * read and start the move sooner.
  */
-export async function poseRobot(target: Record<string, number>, minDurationMs = 400): Promise<void> {
-  const from = await getJointPulses().catch(() => current)
+export async function poseRobot(
+  target: Record<string, number>,
+  minDurationMs = 400,
+  from?: Record<string, number>,
+): Promise<void> {
+  from ??= await getJointPulses().catch(() => current)
   const biggest = Math.max(0, ...Object.keys(target).map((j) => Math.abs(target[j] - (from[j] ?? target[j]))))
   const durationMs = Math.max(minDurationMs, Math.round((biggest / GENTLE_PULSES_PER_S) * 1000))
   current = { ...current, ...target }

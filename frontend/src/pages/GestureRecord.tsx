@@ -125,7 +125,7 @@ export default function GestureRecord() {
       setName('')
       setMessage(note ?? `Saved "${gesture.name}".`)
       setWarning(note !== null)
-      say(`Got it! Saved ${gesture.name}.`)
+      say(`Got it. Saved ${gesture.name}.`)
       await sleep(SAVED_MS)
       if (run !== runIdRef.current) return
       setPhase('idle')

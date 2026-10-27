@@ -128,7 +128,7 @@ export default function RpsCustom() {
     setMessage(null)
     framesRef.current = []
     stillSinceRef.current = null
-    say(`Show me your ${GESTURE_BY_ID[id].label}! Step back, make your move, and hold still.`)
+    say(`Show me your ${GESTURE_BY_ID[id].label}. Step back, make your move, and hold still.`)
     await sleep(GRACE_MS)
     if (run !== runIdRef.current) return
     setPhase('holding')
@@ -139,7 +139,7 @@ export default function RpsCustom() {
       framesRef.current = []
       stillSinceRef.current = null
       if (poseSimilarity(pose, ARMS_DOWN, { cameraMayBeMirrored: true }) >= REST_SIMILARITY) {
-        setMessage('That looks like arms down. Make a move with your arms, then hold still!')
+        setMessage('That looks like arms down. Make a move with your arms, then hold still.')
         setProgress(0)
         return
       }
@@ -168,7 +168,7 @@ export default function RpsCustom() {
       saveCustomMove(id, { pose, robotPulses })
       setMoves(next)
       setProgress(1)
-      say(`Got it! That's your ${GESTURE_BY_ID[id].label}.`)
+      say(`Got it. That's your ${GESTURE_BY_ID[id].label}.`)
 
       await sleep(NEXT_MOVE_MS)
       if (run !== runIdRef.current) return
@@ -182,7 +182,7 @@ export default function RpsCustom() {
         say(
           clash.length > 0
             ? 'Two of your moves look too alike. Please record one of them again.'
-            : 'All three moves are ready! Come back to the computer and press Play.',
+            : 'All three moves are ready. Come back to the computer and press Play.',
         )
       }
     },
@@ -257,10 +257,10 @@ export default function RpsCustom() {
   else if (phase === 'grace' && current) status = `Get into position and make your ${GESTURE_BY_ID[current].label}…`
   else if (phase === 'holding')
     status = !readiness.ok ? readiness.message : waitingForRobot ? 'Keep holding… CORAL is still catching up.' : 'Hold still…'
-  else if (phase === 'saved' && current) status = `Got it! That's your ${GESTURE_BY_ID[current].label}.`
+  else if (phase === 'saved' && current) status = `Got it. That's your ${GESTURE_BY_ID[current].label}.`
   else if (clashes.length > 0)
     status = `${clashes.map((c) => `${GESTURE_BY_ID[c.a].label} and ${GESTURE_BY_ID[c.b].label}`).join(', ')} look too alike. Record one of them again.`
-  else if (ready) status = 'All three moves are ready!'
+  else if (ready) status = 'All three moves are ready.'
   else status = 'Press Record, step back, make your move and hold still.'
 
   // Preview of the custom set so the figures match what the game will show.
@@ -310,7 +310,7 @@ export default function RpsCustom() {
           {!following && <div className="thinking">Connecting to CORAL… (is the server running?)</div>}
           {phase === 'saved' && currentDef && (
             <div className="played won">
-              <span className="em">{currentDef.emoji}</span>Got it! That's your {currentDef.label}
+              <span className="em">{currentDef.emoji}</span>Got it. That's your {currentDef.label}
             </div>
           )}
           {phase === 'grace' && currentDef && (
@@ -324,7 +324,7 @@ export default function RpsCustom() {
                   </svg>
                   <span className="num emoji">{currentDef.emoji}</span>
                 </div>
-                <h1>Step back!</h1>
+                <h1>Step back</h1>
                 <div className="sub">Make your own {currentDef.label} move with your arms, then hold still.</div>
                 <div className="pointer">CORAL will copy you</div>
               </div>
@@ -344,7 +344,7 @@ export default function RpsCustom() {
               const active = current === g.id && phase !== 'idle'
               const clash = clashIds.has(g.id)
               let note = saved ? 'Saved' : 'Not recorded yet'
-              if (active) note = phase === 'saved' ? 'Saved!' : 'Recording…'
+              if (active) note = phase === 'saved' ? 'Saved' : 'Recording…'
               else if (clash) note = 'Too much like another move'
               return (
                 <div key={g.id} className={`hint ${active ? 'active' : clash ? 'clash' : saved ? 'match' : ''}`}>

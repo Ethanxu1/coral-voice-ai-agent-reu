@@ -25,13 +25,13 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 The layout follows the October redesign (the `rps-ui` prototype). The top bar shows the round with a pip per round (green won, red lost, grey draw), the score, Menu, End and **RPS Hints**; it stays clickable above every overlay. Left: CORAL in the simulator. Right: one card per move with its stick figure, a one-line tip and a live similarity bar (red → yellow → green, tick at the 60% match line; the card turns green when it counts), then the tracker's stick figure with the camera in its corner.
 
 1. The **Start!** popup shows the three moves and whether CORAL can see the child. Start was pressed at the computer, so the game first waits until both arms are in view for a second ("Step back!").
-2. Each round: 3, 2, 1, Shoot! in a ring over CORAL's panel, while the child's panel stays lit so they can watch their bars.
-3. The child's move is captured first ("Got it!"). If no move was seen, "I couldn't see a move" and the countdown restarts.
-4. Only then does CORAL pick: an emoji shuffle runs while its arms move, and the reveal waits until they arrive.
+2. Each round: 3, 2, 1 in a ring over CORAL's panel, while the child's panel stays lit so they can watch their bars.
+3. At **Shoot** CORAL picks its move at random and starts moving straight away, at the same time as the child. The card shrinks to a strip at the top of CORAL's panel and the overlay lifts, so the robot is in view.
+4. Meanwhile the camera reads the child's move ("Got it"). If no move was seen, "I couldn't see a move", CORAL goes back to standing and the countdown restarts. The result waits until CORAL's arms have arrived.
 5. The result shows both moves, who won and why ("Paper wraps Rock!"); the winner's panel glows. It moves on by itself after 4 s, or sooner with **Next round**. Space or Enter presses the big button on screen.
 6. After three rounds: final score, a round-by-round recap, Play again and Learn the moves.
 
-Screenshots of every step are in [`docs/images/rps/`](images/rps/): [ready](images/rps/01-ready.jpg), [countdown](images/rps/02-countdown.jpg), [no move seen](images/rps/03-no-move.jpg), [got it](images/rps/04-got-it.jpg), [CORAL chooses](images/rps/05-coral-chooses.jpg), [result](images/rps/06-result.jpg), [hints](images/rps/07-hints.jpg), [match over](images/rps/08-final.jpg), and Make your own moves ([cards](images/rps/09-custom-moves.jpg), [step back](images/rps/10-custom-step-back.jpg)).
+Screenshots of every step are in [`docs/images/rps/`](images/rps/): [ready](images/rps/01-ready.jpg), [countdown](images/rps/02-countdown.jpg), [no move seen](images/rps/03-no-move.jpg), [Shoot, CORAL moving](images/rps/04-shoot.jpg), [got it](images/rps/05-got-it.jpg), [result](images/rps/06-result.jpg), [hints](images/rps/07-hints.jpg), [match over](images/rps/08-final.jpg), and Make your own moves ([cards](images/rps/09-custom-moves.jpg), [step back](images/rps/10-custom-step-back.jpg)).
 
 Each round's result keeps the best similarity score and the time from SHOOT! until the move was first seen (`reactionMs`). Nothing is stored yet: how game data is recorded is waiting on the PIs.
 
@@ -111,9 +111,9 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 ### The game round (`playRound` in `RpsPlay.tsx`)
 
 1. Reset the robot to stand.
-2. 3, 2, 1 (0.9 s each), then "Shoot!" stays up 0.9 s while the child settles.
+2. 3, 2, 1 (0.9 s each), then "Shoot" stays up 0.9 s while the child settles. At Shoot CORAL picks a random gesture and starts easing into it (see "How CORAL moves in the game"), starting from the stand pose so it doesn't have to read the robot first; its arms visibly move about 0.2 s later.
 3. The camera is sampled every 50 ms for 0.6 s. A frame counts as the most similar gesture if that similarity is at least 60% (`MATCH` in `RpsPlay.tsx`; Learn keeps the stricter `DETECTION.minSimilarity` of 72%). The child's move is the gesture seen most often, if it was seen in at least a third of the samples; otherwise the countdown restarts.
-4. CORAL picks a random gesture and eases into it (see "How CORAL moves in the game"); the shuffle lasts at least 1.2 s and until the arms arrive.
+4. "Got it" shows for at least 1.3 s and until CORAL's arms have arrived. After a miss, CORAL is reset to stand once its move has finished, well before the next Shoot.
 5. Judge, update the score, show the result and announce it by voice.
 
 ---

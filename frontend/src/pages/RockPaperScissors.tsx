@@ -56,7 +56,7 @@ export default function RockPaperScissorsLearn() {
     (id: GestureId) => {
       const g = GESTURE_BY_ID[id]
       setLesson(id)
-      say(`${g.label}! ${g.tagline}`, [
+      say(`${g.label}. ${g.tagline}`, [
         ...GESTURES.filter((x) => x.id !== id).map((x) => x.label),
         CHIP_PLAY,
       ])
@@ -77,7 +77,7 @@ export default function RockPaperScissorsLearn() {
   // Greet once on entry.
   useEffect(() => {
     stopSubjectSelection()
-    say('Pick a move and I will show you how to do it. Then try it in front of the camera!', [
+    say('Pick a move and I will show you how to do it. Then try it in front of the camera.', [
       ...GESTURES.map((g) => g.label),
       CHIP_PLAY,
     ])
@@ -96,7 +96,7 @@ export default function RockPaperScissorsLearn() {
     if (!lesson || detected !== lesson || cheeredRef.current === lesson) return
     const t = setTimeout(() => {
       cheeredRef.current = lesson
-      say(`That's it, that's ${GESTURE_BY_ID[lesson].label}! Great job!`, undefined, `Great job! That's ${GESTURE_BY_ID[lesson].label}!`)
+      say(`That's it, that's ${GESTURE_BY_ID[lesson].label}. Great job.`, undefined, `Great job. That's ${GESTURE_BY_ID[lesson].label}.`)
     }, MATCH_HOLD_MS)
     return () => clearTimeout(t)
   }, [lesson, detected, say])
@@ -154,7 +154,7 @@ export default function RockPaperScissorsLearn() {
             {lessonDef && (
               <div className={`rps-match ${lessonMatched ? 'ok' : ''}`}>
                 {lessonMatched
-                  ? `✓ That's ${lessonDef.label}!`
+                  ? `✓ That's ${lessonDef.label}`
                   : detected
                   ? `I see ${GESTURE_BY_ID[detected].label} — try ${lessonDef.label}`
                   : `I don't see ${lessonDef.label} yet`}
