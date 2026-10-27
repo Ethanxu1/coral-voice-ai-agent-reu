@@ -14,6 +14,7 @@ import { gestureScores } from '../rps/classify'
 import { customGestureSet } from '../rps/customMoves'
 import { STANDARD_SET, type GestureSet } from '../rps/gestureSet'
 import { poseRobot, resetRobot } from '../rps/robotPose'
+import { useSmoothedScores } from '../rps/useSmoothedScores'
 import { BEATS, GESTURES, ROBOT_REST_PULSES, WINS_BECAUSE, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
@@ -29,7 +30,7 @@ interface RoundResult {
   outcome: Outcome
   /** Best similarity (0-1) of the child's pose to the move they made, during the capture window. */
   similarity: number
-  /** Time from "Shoot!" until the camera first saw that move, in ms. Kept for data logging later. */
+  /** Time from "Shoot" until the camera first saw that move, in ms. Kept for data logging later. */
   reactionMs: number
 }
 
@@ -37,11 +38,16 @@ const ROUNDS = 3
 const COUNT_STEPS = ['3', '2', '1', 'Shoot']
 const STEP_MS = 900
 /**
+ * CORAL starts its move at this step. A full arm swing takes about 1.7 s, so
+ * starting at Shoot left the child waiting with nothing happening.
+ */
+const THROW_AT = '2'
+/**
  * A move counts once its similarity reaches this. Lower than DETECTION.minSimilarity
  * (used by Learn), since it's a game: a roughly right pose should be enough.
  */
 const MATCH = 0.6
-/** After "Shoot!", the move seen most often in this window is the child's move… */
+/** After "Shoot", the move seen most often in this window is the child's move… */
 const CAPTURE_MS = 600
 const SAMPLE_EVERY_MS = 50
 /** …as long as it was seen in at least this share of the samples. */
@@ -50,7 +56,7 @@ const NOPOSE_MS = 1800
 /** "Got it" shows for at least this long, and until CORAL's arms have arrived. */
 const CAPTURED_MS = 1300
 /** The round result moves on by itself after this, or sooner with the Next button. */
-const RESULT_MS = 4000
+const RESULT_MS = 6000
 /** Before the first round: give the child time to step back, then wait until both arms are in view this long. */
 const POSITION_MIN_MS = 2000
 const POSITION_STEADY_MS = 1000
@@ -82,7 +88,7 @@ function say(text: string) {
     .catch(() => {})
 }
 
-/** Play screen: three rounds against CORAL. CORAL picks its move only after it has seen the child's. */
+/** Play screen: three rounds against CORAL. CORAL picks its move at random, before it has seen the child's. */
 export default function RpsPlay() {
   const [params] = useSearchParams()
   const wantsCustom = params.get('moves') === 'custom'
@@ -122,6 +128,8 @@ function Game({ set }: { set: GestureSet }) {
     const top = GESTURES.reduce((a, g) => (scores[g.id] > scores[a] ? g.id : a), GESTURES[0].id)
     return scores[top] >= MATCH ? top : null
   }, [scores])
+  // What the bars show: smoothed, so a child sees their arms' effect rather than camera noise.
+  const { shown, matched } = useSmoothedScores(scores, MATCH)
   const readiness = followReadiness(body)
 
   // The game loop samples the camera outside React's render cycle.
@@ -159,12 +167,12 @@ function Game({ set }: { set: GestureSet }) {
 
   /**
    * Countdown and capture until the camera sees a move. Null if cancelled.
-   * `onShoot` runs at every "Shoot", and `onMiss` when no move was seen and the countdown restarts.
+   * `onThrow` runs at every THROW_AT step, and `onMiss` when no move was seen and the countdown restarts.
    */
   const captureMove = useCallback(
     async (
       cancelled: () => boolean,
-      onShoot: () => void,
+      onThrow: () => void,
       onMiss: () => void,
     ): Promise<Pick<RoundResult, 'child' | 'similarity' | 'reactionMs'> | null> => {
       for (;;) {
@@ -172,11 +180,11 @@ function Game({ set }: { set: GestureSet }) {
           if (cancelled()) return null
           setCount(step)
           setPhase('countdown')
+          if (step === THROW_AT) onThrow()
           if (step !== 'Shoot') await sleep(STEP_MS)
         }
-        onShoot()
 
-        // "Shoot!" stays up while the child settles, then the camera votes over a short window.
+        // "Shoot" stays up while the child settles, then the camera votes over a short window.
         const votes: Record<GestureId, number> = { rock: 0, paper: 0, scissors: 0 }
         const best: Record<GestureId, number> = { rock: 0, paper: 0, scissors: 0 }
         const firstSeen: Partial<Record<GestureId, number>> = {}
@@ -214,8 +222,8 @@ function Game({ set }: { set: GestureSet }) {
       await resetRobot().catch((e) => console.warn('robot reset failed', e))
       setYouMove(null)
 
-      // CORAL throws at "Shoot", at the same time as the child: it picks at random
-      // and starts moving while the camera is still reading the child's move.
+      // CORAL picks at random and starts moving during the countdown (THROW_AT), so its
+      // arms arrive about when the child shoots instead of seconds after.
       // Moves are chained so a restart's reset never cuts into a move still easing in.
       let robot = set.gestures[0].id
       let moving: Promise<unknown> = Promise.resolve()
@@ -305,8 +313,9 @@ function Game({ set }: { set: GestureSet }) {
   const last = phase === 'result' ? results[results.length - 1] : null
   const visible = body.length > 0
   const overCoral = phase === 'position' || phase === 'countdown' || phase === 'nopose' || phase === 'captured'
-  // From "Shoot" CORAL is moving, so its panel is uncovered and the card shrinks to a strip at the top.
-  const showCoral = phase === 'captured' || (phase === 'countdown' && count === 'Shoot')
+  // From THROW_AT CORAL is moving, so its panel is uncovered and the card shrinks to a strip at the top.
+  const showCoral =
+    phase === 'captured' || (phase === 'countdown' && COUNT_STEPS.indexOf(count) >= COUNT_STEPS.indexOf(THROW_AT))
 
   return (
     <div className="rpsp">
@@ -359,7 +368,7 @@ function Game({ set }: { set: GestureSet }) {
           )}
           {overCoral && (
             <div className={`count-wrap ${showCoral ? 'top' : ''}`}>
-              <CountCard phase={phase} count={count} round={round} ready={readiness.ok} move={youMove} set={set} />
+              <CountCard phase={phase} count={count} compact={showCoral} round={round} ready={readiness.ok} move={youMove} set={set} />
             </div>
           )}
         </section>
@@ -370,21 +379,21 @@ function Game({ set }: { set: GestureSet }) {
               Your move<small>green = CORAL sees it</small>
             </div>
             {set.gestures.map((g) => {
-              const s = scores ? scores[g.id] : 0
+              const s = shown ? shown[g.id] : 0
               return (
-                <div key={g.id} className={`hint ${detected === g.id ? 'match' : ''}`}>
+                <div key={g.id} className={`hint ${matched === g.id ? 'match' : ''}`}>
                   <div className="fig">
                     <GestureFigure gesture={g} />
                   </div>
                   <div className="name">
                     {g.label}
-                    <span className="pct" style={{ color: scores ? scoreColor(s) : 'var(--faint)' }}>
-                      {scores ? `${Math.round(s * 100)}%` : '–'}
+                    <span className="pct" style={{ color: shown ? scoreColor(s) : 'var(--faint)' }}>
+                      {shown ? `${Math.round(s * 100)}%` : '–'}
                     </span>
                   </div>
                   <div className="tip">{g.tip}</div>
                   <div className="meter">
-                    <div className="fill" style={{ width: `${Math.max(scores ? 3 : 0, s * 100)}%`, background: scoreColor(s) }} />
+                    <div className="fill" style={{ width: `${Math.max(shown ? 3 : 0, s * 100)}%`, background: scoreColor(s) }} />
                     <div className="goal" style={{ left: `${MATCH * 100}%` }} />
                   </div>
                 </div>
@@ -509,6 +518,7 @@ function MoveTiles({ set }: { set: GestureSet }) {
 function CountCard({
   phase,
   count,
+  compact,
   round,
   ready,
   move,
@@ -516,6 +526,8 @@ function CountCard({
 }: {
   phase: Phase
   count: string
+  /** CORAL is moving: show a strip at the top of its panel instead of the big ring. */
+  compact: boolean
   round: number
   ready: boolean
   move: GestureId | null
@@ -552,12 +564,12 @@ function CountCard({
     )
   }
   const word = count === 'Shoot'
-  if (word) {
+  if (compact) {
     return (
       <div className="modal count-card compact">
         <span className="kicker">Round {round}</span>
-        <span className="word">Shoot</span>
-        <span className="sub">Hold it still…</span>
+        <span key={count} className="word count">{count}</span>
+        <span className="sub">{word ? 'Hold it still…' : 'Get your arms ready'}</span>
       </div>
     )
   }
