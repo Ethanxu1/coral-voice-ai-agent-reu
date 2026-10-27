@@ -71,6 +71,9 @@ class FollowController:
         self._dispatch = dispatch_fn
         self._task: Optional[asyncio.Task] = None
         self._capture_task: Optional[asyncio.Task] = None
+        # The connection that last asked to follow. Only its disconnect stops
+        # following, so a stale page closing can't stop a newer page's follow.
+        self.owner: object | None = None
 
     @property
     def is_following(self) -> bool:
@@ -85,7 +88,9 @@ class FollowController:
         status_fn: StatusFn,
         sim_only: bool | None = None,
         clean_logger: CleanLogger | None = None,
+        owner: object | None = None,
     ) -> None:
+        self.owner = owner
         if self.is_following:
             return
         # Reset any frozen stability capture so the vision stream goes live again.
@@ -107,6 +112,7 @@ class FollowController:
     ) -> None:
         task = self._task
         self._task = None
+        self.owner = None
         if task is not None and not task.done():
             task.cancel()
             try:

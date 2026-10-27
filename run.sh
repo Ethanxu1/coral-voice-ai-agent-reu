@@ -4,7 +4,9 @@
 #     (docker compose), and
 #   - the vision server (:8001) on the host, because it needs the webcam and
 #     Docker on macOS cannot reach one.
-# Output goes to logs/stack.log (containers) and logs/vision.log.
+# On Apple-chip Macs the backend runs on the host too (see NATIVE_BACKEND).
+# Output goes to logs/stack.log (containers), logs/vision.log and, for a
+# host backend, logs/backend.log.
 #
 # Usage:
 #   ./run.sh                          # simulation mode
@@ -90,7 +92,19 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     export COMPOSE_FILE="docker-compose.yml:docker-compose.linux.yml"
 fi
 
+# mediapipe has no Linux-ARM wheel, so the backend image can't be built
+# natively on an Apple-chip Mac, and the Intel image under emulation gets
+# MuJoCo's rotation maths wrong (the sim robot renders stretched). Run the
+# backend on the host there; Postgres and the frontend stay in Docker.
+NATIVE_BACKEND=false
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    NATIVE_BACKEND=true
+    export DATABASE_URL="postgresql://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD:-coral}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-coral}"
+fi
+BACKEND_READY_TIMEOUT_S=300
+
 VISION_PID=""
+BACKEND_PID=""
 LOGS_PID=""
 CLEANING_UP=0
 cleanup() {
@@ -99,6 +113,9 @@ cleanup() {
     echo "Stopping..."
     if [[ -n "$VISION_PID" ]]; then
         kill -- -"$VISION_PID" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$BACKEND_PID" ]]; then
+        kill -- -"$BACKEND_PID" >/dev/null 2>&1 || true
     fi
     if [[ -n "$LOGS_PID" ]]; then
         kill "$LOGS_PID" >/dev/null 2>&1 || true
@@ -113,11 +130,28 @@ uv run vision > "$LOG_DIR/vision.log" 2>&1 &
 VISION_PID=$!
 
 echo "Building and starting containers (first run downloads images and models)..."
-docker compose up --build --detach --wait --wait-timeout 900
+if [[ "$NATIVE_BACKEND" == true ]]; then
+    docker compose up --build --detach --wait --wait-timeout 900 --no-deps db frontend
+    echo "Apple-chip Mac: starting the backend on the host -> $LOG_DIR/backend.log"
+    uv run server > "$LOG_DIR/backend.log" 2>&1 &
+    BACKEND_PID=$!
+    deadline=$((SECONDS + BACKEND_READY_TIMEOUT_S))
+    until curl -fs http://localhost:8000/health >/dev/null 2>&1; do
+        if ! kill -0 "$BACKEND_PID" 2>/dev/null || (( SECONDS > deadline )); then
+            echo "Error: the backend didn't start; see $LOG_DIR/backend.log" >&2
+            exit 1
+        fi
+        sleep 1
+    done
+else
+    docker compose up --build --detach --wait --wait-timeout 900
+fi
 docker compose logs --follow --no-color > "$LOG_DIR/stack.log" 2>&1 &
 LOGS_PID=$!
 
 echo
 echo "CORAL is running: http://localhost:5173"
-echo "Logs: $LOG_DIR/stack.log, $LOG_DIR/vision.log. Press Ctrl+C to stop."
-wait "$VISION_PID"
+echo "Logs: $LOG_DIR/stack.log, $LOG_DIR/vision.log${BACKEND_PID:+, $LOG_DIR/backend.log}. Press Ctrl+C to stop."
+while kill -0 "$VISION_PID" 2>/dev/null && { [[ -z "$BACKEND_PID" ]] || kill -0 "$BACKEND_PID" 2>/dev/null; }; do
+    sleep 1
+done

@@ -375,7 +375,7 @@ async def try_handle_system_intent(
 
     if intent == "follow_start":
         await state.follow_controller.start_follow(
-            status_fn, sim_only=sim_only, clean_logger=clean_logger
+            status_fn, sim_only=sim_only, clean_logger=clean_logger, owner=websocket
         )
         response = "Following your movements — say stop when done."
         await send_chat_response_with_audio(

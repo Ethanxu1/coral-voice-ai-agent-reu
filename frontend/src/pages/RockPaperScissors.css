@@ -1,22 +1,6 @@
 /* Rock-Paper-Scissors reuses the Refined Demo shell (rd-* classes in
    RefinedDemo.css). Only the pieces that demo doesn't have live here. */
 
-.rps-score-badge {
-  top: 60px;
-}
-
-.rps-seen-badge {
-  top: 104px;
-  border-color: rgba(255, 255, 255, 0.35);
-}
-
-.rps-shoot-badge {
-  bottom: 28px;
-  font-size: 22px;
-  padding: 10px 28px;
-  background: #FF6B4A;
-}
-
 /* Lesson card at the top of the right panel: stick-figure picture + steps. */
 .rps-lesson-card {
   display: flex;
@@ -78,7 +62,7 @@
 
 .rps-menu-cards {
   display: grid;
-  grid-template-columns: repeat(2, minmax(240px, 340px));
+  grid-template-columns: repeat(3, minmax(220px, 300px));
   gap: 24px;
 }
 
@@ -109,6 +93,10 @@
   border-color: #FF6B4A;
 }
 
+.rps-menu-card.custom:hover {
+  border-color: #F5B700;
+}
+
 .rps-menu-emoji {
   font-size: 56px;
 }
@@ -125,7 +113,7 @@
   font-size: 15px;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .rps-menu-cards {
     grid-template-columns: 1fr;
   }
@@ -298,4 +286,90 @@
 .rps-scores .hit {
   background: #2E7D32;
   color: #fff;
+}
+
+/* ── Shared buttons ─────────────────────────────────────────────────────── */
+.rps-big-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 40px;
+  border: none;
+  border-radius: 999px;
+  background: #8BC34A;
+  color: #fff;
+  font-family: 'Baloo 2', cursive;
+  font-size: 26px;
+  font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(45, 41, 38, 0.18);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.rps-big-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: #7CB342;
+}
+
+.rps-big-btn:disabled {
+  background: #B9B2AE;
+  cursor: default;
+  box-shadow: none;
+}
+
+.rps-big-btn.ghost {
+  background: rgba(45, 41, 38, 0.08);
+  color: #2D2926;
+  box-shadow: none;
+}
+
+.rps-small-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 999px;
+  background: #2D2926;
+  color: #fff;
+  font-family: 'Nunito', sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.rps-small-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Hold-still progress ring. --p is 0..1. */
+.rps-hold {
+  position: absolute;
+  top: 46px;
+  right: 12px;
+  z-index: 3;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: conic-gradient(#8BC34A calc(var(--p) * 360deg), rgba(255, 255, 255, 0.15) 0);
+}
+
+.rps-hold span {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1C1A22;
+  color: #fff;
+  font-weight: 900;
+  font-size: 15px;
+}
+
+.rps-hold.done span {
+  background: #8BC34A;
+  font-size: 26px;
 }

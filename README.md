@@ -15,7 +15,7 @@ The laptop runs everything except the servos:
 | Service | Where | Port |
 |---------|-------|------|
 | Frontend (React, served by nginx) | Docker | 5173 |
-| Backend (FastAPI: LLM, Whisper, TTS, MuJoCo, motion safety) | Docker | 8000 |
+| Backend (FastAPI: LLM, Whisper, TTS, MuJoCo, motion safety) | Docker (host on Apple-chip Macs, see below) | 8000 |
 | Postgres (saved poses) | Docker | 5432 |
 | Vision server (webcam, MediaPipe) | Host — Docker on macOS can't reach a webcam | 8001 |
 
@@ -49,6 +49,12 @@ Press Ctrl+C to stop everything.
 
 Logs go to `logs/stack.log` (containers) and `logs/vision.log`; each demo
 session also writes a readable transcript under `logs/clean_logs/`.
+
+On an Apple-chip Mac, `./run.sh` runs the backend on the host (`uv run server`,
+logging to `logs/backend.log`) and keeps only Postgres and the frontend in
+Docker. MediaPipe has no Linux-ARM build, so the backend image can't be built
+natively there, and the Intel image under emulation gets MuJoCo's rotation
+maths wrong (the simulated robot renders stretched).
 
 On macOS the vision server opens the webcam from Python, so the camera
 permission prompt comes from your terminal app. Grant it under System Settings

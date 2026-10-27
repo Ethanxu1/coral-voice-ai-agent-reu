@@ -106,7 +106,7 @@ export async function setPose(
 }
 
 /** joint name → Hiwonder servo id (mirrors the backend's SERVO_ID_MAP). */
-const SERVO_ID: Record<string, number> = {
+export const SERVO_ID: Record<string, number> = {
   l_ank_roll: 1, r_ank_roll: 2,
   l_ank_pitch: 3, r_ank_pitch: 4,
   l_knee: 5, r_knee: 6,
@@ -133,6 +133,14 @@ export async function movePulses(
     .map(([name, position]) => ({ servo_id: SERVO_ID[name], position, duration_ms: durationMs }))
   const data = await postJSON<{ count?: number } | null>(`${PI_BASE}/move`, commands, 'robot move')
   return { count: data?.count ?? commands.length }
+}
+
+// The robot's current pose as {joint: hardware_pulse}, the units setPose takes.
+export async function getJointPulses(): Promise<Record<string, number>> {
+  const res = await fetch(`${SERVER_BASE}/joint_states/pulses`)
+  if (!res.ok) throw new Error(`joint_states failed: ${res.status}`)
+  const data = await res.json()
+  return data.pulses ?? {}
 }
 
 // Hold the simulated robot's body upright so it can't tip or fall (sim only).
