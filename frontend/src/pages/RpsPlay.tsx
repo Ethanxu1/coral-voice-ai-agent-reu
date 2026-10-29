@@ -4,7 +4,6 @@ import RobotViewer from '../components/RobotViewer'
 import { usePoseWebSocket } from '../hooks/usePoseWebSocket'
 import { resetPose } from '../api/robot'
 import { stopSubjectSelection } from '../api/vision'
-import { killSpeech, speak } from '../audio/speech'
 import { bodyFit, offEdges, type Fit } from '../rps/bodyFit'
 import CoralBeam from '../rps/CoralBeam'
 import CoralEye from '../rps/CoralEye'
@@ -16,8 +15,9 @@ import { gestureScores } from '../rps/classify'
 import { customGestureSet } from '../rps/customMoves'
 import { STANDARD_SET, type GestureSet } from '../rps/gestureSet'
 import { poseRobot, resetRobot } from '../rps/robotPose'
-import { sfx } from '../rps/sounds'
+import { setSoundsMuted, sfx } from '../rps/sounds'
 import { useSmoothedScores } from '../rps/useSmoothedScores'
+import { preloadVoice, sayLine, setVoiceMuted, stopVoice, VOICE_LINES, type LineId } from '../rps/voice'
 import { BEATS, GESTURES, ROBOT_REST_PULSES, WINS_BECAUSE, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
@@ -61,7 +61,7 @@ const CAPTURED_MS = 1300
 /** CORAL holds its move this long in the reveal before it reacts. */
 const REACT_AFTER_MS = 1500
 /** After the last round there is nothing to decide, so the final screen comes up by itself after this. */
-const LAST_RESULT_MS = 3000
+const LAST_RESULT_MS = 6000
 /** Before the first round: give the child time to get in place, then wait until their head and shoulders are in view this long. */
 const POSITION_MIN_MS = 2000
 const POSITION_STEADY_MS = 1000
@@ -82,29 +82,18 @@ const ROUND_LINE: Record<Outcome, string> = {
 
 /** CORAL's tips while the child finds their spot. */
 const FIT_LINE: Record<Fit, string> = {
-  away: 'Come stand where I can see you!',
-  far: 'Come a little closer!',
-  close: 'Step back!',
-  side: 'Scoot to the middle!',
-  fit: 'Perfect!',
+  away: VOICE_LINES.fit_away,
+  far: VOICE_LINES.fit_far,
+  close: VOICE_LINES.fit_close,
+  side: VOICE_LINES.fit_side,
+  fit: VOICE_LINES.fit_fit,
 }
 
 /** After a miss. If a hand was out of the picture, the child is too close for that move. */
-const MISS_LINE = 'Oops, I missed that. Again!'
-const MISS_HANDS_LINE = 'Step back a little so I can see your hands!'
 
-const finalLine = (you: number, coral: number) =>
-  you > coral ? 'You beat me! Wow!' : coral > you ? 'I won! Rematch?' : 'Ooh, we tied! Rematch?'
+const finalLineId = (you: number, coral: number): LineId =>
+  you > coral ? 'final_win' : coral > you ? 'final_lose' : 'final_tie'
 
-/**
- * Speak a line in CORAL's voice. Exclamation marks are shown on screen but not
- * spoken: they made the voice sound harsh.
- */
-function say(text: string) {
-  killSpeech()
-    .then(() => speak({ text: text.replace(/!/g, '.').replace(/…/g, '...') }))
-    .catch(() => {})
-}
 
 /** Play screen: three rounds against CORAL. CORAL picks its move at random, before it has seen the child's. */
 export default function RpsPlay() {
@@ -139,6 +128,16 @@ function Game({ set }: { set: GestureSet }) {
   const [youMove, setYouMove] = useState<GestureId | null>(null)
   const [results, setResults] = useState<RoundResult[]>([])
   const [help, setHelp] = useState(false)
+  // Sound on by default each time the game opens; the button mutes CORAL's voice and the sound effects.
+  const [muted, setMuted] = useState(false)
+  useEffect(() => {
+    setVoiceMuted(muted)
+    setSoundsMuted(muted)
+  }, [muted])
+  useEffect(() => () => {
+    setVoiceMuted(false)
+    setSoundsMuted(false)
+  }, [])
 
   const scores = useMemo(() => gestureScores(body, set), [body, set])
   const detected = useMemo(() => {
@@ -159,7 +158,7 @@ function Game({ set }: { set: GestureSet }) {
   fitRef.current = fit
   const handsOutRef = useRef(false)
   handsOutRef.current = offEdges(body).length > 0
-  const [missLine, setMissLine] = useState(MISS_LINE)
+  const [missLine, setMissLine] = useState<LineId>('miss')
 
   // The beam from CORAL's head to its eye panel.
   const stageRowRef = useRef<HTMLElement>(null)
@@ -174,17 +173,16 @@ function Game({ set }: { set: GestureSet }) {
 
   useEffect(() => {
     stopSubjectSelection()
-    // CORAL waves hello until the game starts.
+    preloadVoice()
+    // CORAL says hi (even if the robot can't be reached) and waves until the game starts.
+    sayLine('hello')
     const run = runIdRef.current
     resetRobot()
-      .then(() => {
-        say("Hi! I'm CORAL. Want to play Rock, Paper, Scissors with me?")
-        return coralMoves.wave(() => run !== runIdRef.current)
-      })
+      .then(() => coralMoves.wave(() => run !== runIdRef.current))
       .catch(() => {})
     return () => {
       runIdRef.current++
-      killSpeech()
+      stopVoice()
       resetPose().catch(() => {})
     }
   }, [])
@@ -256,12 +254,12 @@ function Game({ set }: { set: GestureSet }) {
         if (votes[top] > 0 && votes[top] >= samples * MIN_VOTE_SHARE) {
           return { child: top, similarity: best[top], reactionMs: firstSeen[top] ?? 0 }
         }
-        const line = handsOut ? MISS_HANDS_LINE : MISS_LINE
+        const line = handsOut ? 'miss_hands' : 'miss'
         setMissLine(line)
         setPhase('nopose')
         onMiss()
         sfx.miss()
-        say(line)
+        sayLine(line)
         await sleep(NOPOSE_MS)
       }
     },
@@ -296,7 +294,7 @@ function Game({ set }: { set: GestureSet }) {
       setYouMove(child.child)
       setPhase('captured')
       sfx.lock()
-      say('Got it!')
+      sayLine('got_it')
       await Promise.all([moving, sleep(CAPTURED_MS)])
       if (cancelled()) return null
 
@@ -318,11 +316,11 @@ function Game({ set }: { set: GestureSet }) {
       const f = fitRef.current
       if (f === 'fit' && lastTip !== 'fit') {
         sfx.fit()
-        say(FIT_LINE.fit)
+        sayLine('fit_fit')
         lastTip = 'fit'
         lastTipAt = now
       } else if (f !== 'fit' && f !== lastTip && now - lastTipAt >= TIP_EVERY_MS) {
-        say(FIT_LINE[f])
+        sayLine(`fit_${f}`)
         lastTip = f
         lastTipAt = now
       }
@@ -351,8 +349,7 @@ function Game({ set }: { set: GestureSet }) {
       setResults([...done])
       setPhase('result')
       sfx[r.outcome === 'draw' ? 'tie' : r.outcome]()
-      const why = r.outcome === 'draw' ? '' : `${WINS_BECAUSE[r.outcome === 'win' ? r.child : r.robot]}. `
-      say(`You picked ${set.byId[r.child].label}. I picked ${set.byId[r.robot].label}. ${why}${ROUND_LINE[r.outcome]}`)
+      sayLine(`round_${r.child}_${r.robot}`)
       reacting = sleep(REACT_AFTER_MS).then(() =>
         coralMoves.react(r.outcome === 'lose' ? 'coral' : r.outcome === 'win' ? 'child' : 'draw', cancelled),
       )
@@ -368,7 +365,7 @@ function Game({ set }: { set: GestureSet }) {
     const you = done.filter((r) => r.outcome === 'win').length
     const coral = done.filter((r) => r.outcome === 'lose').length
     sfx[you > coral ? 'win' : coral > you ? 'lose' : 'tie']()
-    say(finalLine(you, coral))
+    sayLine(finalLineId(you, coral))
     reacting.then(() => coralMoves.dance(cancelled))
   }, [set, playRound, positionChild])
 
@@ -398,22 +395,23 @@ function Game({ set }: { set: GestureSet }) {
   // One message at a time, in CORAL's speech bubble.
   const bubble =
     phase === 'ready'
-      ? "Hi! I'm CORAL. Wanna play?"
+      ? "Hi! I'm CORAL. Let's play!"
       : phase === 'position'
         ? FIT_LINE[fit]
         : phase === 'nopose'
-          ? missLine
+          ? VOICE_LINES[missLine]
           : phase === 'captured'
             ? 'Got it!'
             : last
               ? ROUND_LINE[last.outcome]
               : phase === 'final'
-                ? finalLine(you, coral)
+                ? VOICE_LINES[finalLineId(you, coral)]
                 : null
 
   return (
     <div className={`rpsg phase-${phase}`}>
       <header className="top">
+        <MuteButton muted={muted} onToggle={() => setMuted((m) => !m)} />
         {phase !== 'ready' && <Scoreboard results={results} round={round} you={you} coral={coral} />}
         <CornerMenu onHelp={() => setHelp(true)} />
       </header>
@@ -542,6 +540,22 @@ function ScoreRing({ score, children }: { score: number | null; children: React.
       <div className="art">{children}</div>
       {score !== null && <span className="pct">{Math.round(s * 100)}%</span>}
     </div>
+  )
+}
+
+/** Sound on/off, in the top corner. */
+function MuteButton({ muted, onToggle }: { muted: boolean; onToggle: () => void }) {
+  return (
+    <button className={`mute-btn ${muted ? 'muted' : ''}`} onClick={onToggle} aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted}>
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden>
+        <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" />
+        {muted ? (
+          <path d="M16 9.5l5 5m0-5l-5 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+        ) : (
+          <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+        )}
+      </svg>
+    </button>
   )
 }
 

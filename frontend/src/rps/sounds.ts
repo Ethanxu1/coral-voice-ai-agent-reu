@@ -5,6 +5,12 @@
 type Note = { freq: number; at: number; len: number; type?: OscillatorType; gain?: number; slideTo?: number }
 
 let ctx: AudioContext | null = null
+let muted = false
+
+/** Mute or unmute the sound effects. */
+export function setSoundsMuted(value: boolean): void {
+  muted = value
+}
 
 function audio(): AudioContext | null {
   try {
@@ -17,6 +23,7 @@ function audio(): AudioContext | null {
 }
 
 function play(notes: Note[]) {
+  if (muted) return
   const a = audio()
   if (!a) return
   const t0 = a.currentTime + 0.01
