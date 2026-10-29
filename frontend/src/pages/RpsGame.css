@@ -195,6 +195,10 @@
   animation: rpsg-breathe 2s ease-in-out infinite;
 }
 .rpsg .next-btn:active { transform: translateY(6px); box-shadow: 0 2px 0 var(--coral-deep); }
+/* After the last round the button fills as the final screen comes up by itself. */
+.rpsg .next-btn { overflow: hidden; }
+.rpsg .next-btn .auto { position: absolute; left: 0; bottom: 0; height: 8px; background: rgba(255,255,255,.75); animation: rpsg-auto var(--wait) linear forwards; }
+@keyframes rpsg-auto { from { width: 0; } to { width: 100%; } }
 
 /* ── Match over ────────────────────────────────────────────────────────── */
 .rpsg .final { display: flex; flex-direction: column; align-items: center; gap: 30px; animation: rpsg-rise .5s ease both; }

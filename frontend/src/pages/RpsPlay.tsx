@@ -60,6 +60,8 @@ const NOPOSE_MS = 1800
 const CAPTURED_MS = 1300
 /** CORAL holds its move this long in the reveal before it reacts. */
 const REACT_AFTER_MS = 1500
+/** After the last round there is nothing to decide, so the final screen comes up by itself after this. */
+const LAST_RESULT_MS = 3000
 /** Before the first round: give the child time to get in place, then wait until their head and shoulders are in view this long. */
 const POSITION_MIN_MS = 2000
 const POSITION_STEADY_MS = 1000
@@ -192,13 +194,19 @@ function Game({ set }: { set: GestureSet }) {
     if (matched && phase !== 'captured' && phase !== 'result' && phase !== 'final') sfx.seen()
   }, [matched])
 
-  /** The result stays up until the Next button (or Space/Enter) is pressed: the game never moves on by itself. */
-  const waitForNext = () =>
+  /**
+   * The result stays up until the Next button (or Space/Enter) is pressed, or,
+   * with `autoMs`, until that much time has passed (the last round only).
+   */
+  const waitForNext = (autoMs?: number) =>
     new Promise<void>((resolve) => {
-      nextRef.current = () => {
+      const done = () => {
+        clearTimeout(timer)
         nextRef.current = null
         resolve()
       }
+      const timer = autoMs === undefined ? undefined : setTimeout(done, autoMs)
+      nextRef.current = done
     })
 
   /**
@@ -333,6 +341,7 @@ function Game({ set }: { set: GestureSet }) {
     await positionChild(cancelled)
 
     const done: RoundResult[] = []
+    let reacting: Promise<unknown> = Promise.resolve()
     while (done.length < ROUNDS) {
       if (cancelled()) return
       setRound(done.length + 1)
@@ -344,12 +353,14 @@ function Game({ set }: { set: GestureSet }) {
       sfx[r.outcome === 'draw' ? 'tie' : r.outcome]()
       const why = r.outcome === 'draw' ? '' : `${WINS_BECAUSE[r.outcome === 'win' ? r.child : r.robot]}. `
       say(`You picked ${set.byId[r.child].label}. I picked ${set.byId[r.robot].label}. ${why}${ROUND_LINE[r.outcome]}`)
-      const reacting = sleep(REACT_AFTER_MS).then(() =>
+      reacting = sleep(REACT_AFTER_MS).then(() =>
         coralMoves.react(r.outcome === 'lose' ? 'coral' : r.outcome === 'win' ? 'child' : 'draw', cancelled),
       )
-      await waitForNext()
+      const last = done.length === ROUNDS
+      await waitForNext(last ? LAST_RESULT_MS : undefined)
       // The next round's reset must not cut into a reaction still easing in.
-      await reacting
+      // After the last round the final screen shows straight away; the dance waits instead.
+      if (!last) await reacting
     }
     if (cancelled()) return
 
@@ -358,7 +369,7 @@ function Game({ set }: { set: GestureSet }) {
     const coral = done.filter((r) => r.outcome === 'lose').length
     sfx[you > coral ? 'win' : coral > you ? 'lose' : 'tie']()
     say(finalLine(you, coral))
-    coralMoves.dance(cancelled)
+    reacting.then(() => coralMoves.dance(cancelled))
   }, [set, playRound, positionChild])
 
   // Space or Enter presses whatever the big button on screen is (for the grown-up at the keyboard).
@@ -489,6 +500,9 @@ function Game({ set }: { set: GestureSet }) {
       {last && (
         <button className="next-btn" onClick={() => nextRef.current?.()}>
           {results.length >= ROUNDS ? 'See who won' : 'Next round'}
+          {results.length >= ROUNDS && (
+            <span key={results.length} className="auto" style={{ '--wait': `${LAST_RESULT_MS}ms` } as React.CSSProperties} />
+          )}
         </button>
       )}
 
