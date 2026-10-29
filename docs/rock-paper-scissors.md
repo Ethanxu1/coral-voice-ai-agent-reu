@@ -11,7 +11,7 @@ For setup and running the stack, see the [README](../README.md). For the overall
 - The October redesign was merged into `development` ([PR #12](https://github.com/Ethanxu1/coral-voice-ai-agent-reu/pull/12)).
 - Done: Learn, a three-round Play match, Make your own moves, and Gesture Studio, all on the redesigned UI. The game was played end to end in the simulator.
 - On hold until the PIs decide: the pre-training quiz, the student ID, data logging and screen recording (item 11 below).
-- 2026-10-29: Play redesigned for children standing back (branch `rps-play-kid-redesign`); see Play below and known issue 19.
+- 2026-10-29: Play redesigned for children standing back (branch `rps-redesign-ui`); see Play below and known issue 19.
 - Not checked yet: `./run.sh` on an Intel Mac or on Linux since the Apple-chip change (see "Running it"), and anything on the physical robot.
 
 ---
