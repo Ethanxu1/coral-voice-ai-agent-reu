@@ -43,7 +43,7 @@ Redesigned on 2026-10-29 for a child standing about six feet back: big things, l
 2. **Get in place**: only the upper body is needed, so a child may sit close. `bodyFit` wants head and shoulders in view, roughly centred (shoulder midpoint within 20% of the middle), shoulders under half the frame wide; arms resting below the picture are fine. CORAL coaches by voice ("Come stand where I can see you!", "Step back!", "Scoot to the middle!", "Come a little closer!") until then, says "Perfect!" with a ding, and the eye's frame turns green. The countdown starts after at least 2 s and 1 s in place.
 3. **Countdown**: one giant word at a time, each in its move's colour, with a tick: "Rock… Paper… Scissors… SHOOT!" (0.9 s each). At **Paper** (`THROW_AT`) CORAL picks at random and starts moving, so its arms arrive about when the child shoots.
 4. The camera reads the child's move; their move card locks in with a chime and CORAL says "Got it!". If no move was seen: "Oops, I missed that. Again!", or "Step back a little so I can see your hands!" if a hand was past the picture's edge during the capture window, and CORAL goes back to standing and the countdown restarts.
-5. **Reveal**: a big round badge for each player on their own side (CORAL's on the stage, the child's over the eye), marked with a star (won), a frown (lost) or an equals sign (draw). CORAL's bubble says the result in its voice ("You got me!", "I win this one!", "Ooh, same move!") with the reason underneath in small print for the grown-up. It moves on after 6 s, or with **Next**.
+5. **Reveal**: a big round badge for each player on their own side (CORAL's on the stage, the child's over the eye), marked with a star (won), a frown (lost) or an equals sign (draw). CORAL's bubble says the result in its voice ("You got me!", "I win this one!", "Ooh, same move!") with the reason underneath in small print for the grown-up. It stays up until someone presses **Next round** (or Space/Enter); the game never moves on by itself, so a grown-up can talk the result through first.
 6. **Match over**: CORAL's line ("You beat me! Wow!", "I won! Rematch?", "Ooh, we tied! Rematch?"), the score, a round badge per round with the child's move and its mark, confetti and CORAL's dance for every outcome, and one big **Play again**.
 
 Screenshots in `docs/images/rps/` are from the previous design (before 2026-10-29).
@@ -129,7 +129,7 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 2. Rock, Paper, Scissors (0.9 s each), then "Shoot" stays up 0.9 s while the child settles. At Paper (`THROW_AT`) CORAL picks a random gesture and starts easing into it (see "How CORAL moves in the game"), starting from the stand pose so it doesn't have to read the robot first. Measured: the move is sent at Paper, and Paper's arms come to rest about 0.45 s after Shoot.
 3. The camera is sampled every 50 ms for 0.6 s. A frame counts as the most similar gesture if that similarity is at least 60% (`MATCH` in `RpsPlay.tsx`; Learn keeps the stricter `DETECTION.minSimilarity` of 72%). The child's move is the gesture seen most often, if it was seen in at least a third of the samples; otherwise the countdown restarts.
 4. "Got it" shows for at least 1.3 s and until CORAL's arms have arrived. After a miss, CORAL is reset to stand once its move has finished, well before the next Shoot.
-5. Judge, update the score, show the result and announce it by voice; 1.5 s later CORAL reacts (`coralMoves.react`), and the next round waits for that move to finish.
+5. Judge, update the score, show the result and announce it by voice; 1.5 s later CORAL reacts. The next round starts only when **Next round** is pressed (`coralMoves.react`), and the next round waits for that move to finish.
 
 CORAL speaks in the first person ("You got me!", "I win this one!"). The lines are `ROUND_LINE`, `FIT_LINE` and `finalLine` in `RpsPlay.tsx`; the same text is shown in the bubble and spoken, with "!" spoken as a full stop (with them the TTS voice sounded harsh).
 
@@ -228,7 +228,6 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 | Change the move colours or pictures | `MOVE_COLOR` and the drawing in `rps/PoseArt.tsx` (drawn from each gesture's `figure`) |
 | Change CORAL's lines | `ROUND_LINE`, `FIT_LINE`, `finalLine` in `pages/RpsPlay.tsx` |
 | Change how CORAL sounds | `VOICE_NAMES` and `RATE` in `audio/speech.ts` (`say -v '?'` lists the Mac's voices) |
-| Change how long the round result stays up | `RESULT_MS` in `pages/RpsPlay.tsx` |
 | Change how long to hold when recording | `STILL_MS`, `STILL_TOLERANCE`, `MAX_HOLD_MS` in `pages/RpsCustom.tsx`; `HOLD_MS` in `gestures/useHoldStill.ts` for Gesture Studio |
 | Change when the robot counts as caught up | `SETTLE_PULSES`, `SETTLE_MS` in `rps/useRobotSettle.ts` |
 | Use real screenshots in view 1 | Add `rock.png`, `paper.png`, `scissors.png` to `frontend/public/rps/` |

@@ -57,8 +57,6 @@ const MIN_VOTE_SHARE = 1 / 3
 const NOPOSE_MS = 1800
 /** "Got it" shows for at least this long, and until CORAL's arms have arrived. */
 const CAPTURED_MS = 1300
-/** The round result moves on by itself after this, or sooner with the Next button. */
-const RESULT_MS = 6000
 /** CORAL holds its move this long in the reveal before it reacts. */
 const REACT_AFTER_MS = 1500
 /** Before the first round: give the child time to get in place, then wait until their head and shoulders are in view this long. */
@@ -161,7 +159,7 @@ function Game({ set }: { set: GestureSet }) {
   const [missLine, setMissLine] = useState(MISS_LINE)
 
   const runIdRef = useRef(0)
-  /** Ends the current result wait early (the Next button). */
+  /** Ends the wait on the round result (the Next button). */
   const nextRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
@@ -186,15 +184,13 @@ function Game({ set }: { set: GestureSet }) {
     if (matched && phase !== 'captured' && phase !== 'result' && phase !== 'final') sfx.seen()
   }, [matched])
 
-  const waitForNext = (ms: number) =>
+  /** The result stays up until the Next button (or Space/Enter) is pressed: the game never moves on by itself. */
+  const waitForNext = () =>
     new Promise<void>((resolve) => {
-      const done = () => {
-        clearTimeout(timer)
+      nextRef.current = () => {
         nextRef.current = null
         resolve()
       }
-      const timer = setTimeout(done, ms)
-      nextRef.current = done
     })
 
   /**
@@ -343,7 +339,7 @@ function Game({ set }: { set: GestureSet }) {
       const reacting = sleep(REACT_AFTER_MS).then(() =>
         coralMoves.react(r.outcome === 'lose' ? 'coral' : r.outcome === 'win' ? 'child' : 'draw', cancelled),
       )
-      await waitForNext(RESULT_MS)
+      await waitForNext()
       // The next round's reset must not cut into a reaction still easing in.
       await reacting
     }
@@ -483,8 +479,7 @@ function Game({ set }: { set: GestureSet }) {
 
       {last && (
         <button className="next-btn" onClick={() => nextRef.current?.()}>
-          {results.length >= ROUNDS ? 'See who won' : 'Next'}
-          <span key={results.length} className="auto" style={{ '--wait': `${RESULT_MS}ms` } as React.CSSProperties} />
+          {results.length >= ROUNDS ? 'See who won' : 'Next round'}
         </button>
       )}
 
