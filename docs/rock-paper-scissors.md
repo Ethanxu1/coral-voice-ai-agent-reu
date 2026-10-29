@@ -254,7 +254,7 @@ Coordinates are in shoulder widths from the middle of the shoulders, x to the ri
 
 ## 6. Known issues and open items
 
-1. **The robot's "rock" pose is approximate.** In the simulator it looks like arms bent in front of the chest, not a true cross. The simulator's camera angle makes crossed arms hard to judge. Tune `robotPulses` for rock in `gestures.ts`.
+1. **CORAL's Rock doesn't cross its arms.** (2026-10-29) Arms straight forward at shoulder height (`sho_pitch` 500), roll and elbow bend as in the stand pose, with the elbows twisted in (`el_pitch` 650/350) so the forearms angle toward each other; tuned by hand. It lands fully (collision check: not clamped). A real cross isn't practical: the forearms are long for the body, so the collision check stops them before they pass each other, and a stepwise path to a cross was tried and dropped as too slow and odd-looking.
 2. **Detection thresholds are estimates.** They were checked with synthetic data only (ideal poses plus noise, and everyday poses such as arms down and hands on hips). With realistic landmark jitter the three gestures were recognised 96 to 100% of the time in that test. They have not been validated with real children. Expect to tune `minSimilarity` for Learn; the game uses best match.
 3. **Arms pointing at the camera look like rock** in a 2D image (similarity about 0.70). `minSimilarity` is set to 0.72 to keep this out, which makes detection fairly strict.
 4. **Gentle follow mode** was checked in the simulator and the speed was judged good, with no toppling. It has **not** been tried on the physical robot, so re-check the `_GENTLE_*` values before using it there.

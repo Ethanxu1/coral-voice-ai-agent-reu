@@ -68,12 +68,12 @@ export const GESTURES: GestureDef[] = [
     robotPulses: {
       l_sho_pitch: 500,
       r_sho_pitch: 500,
-      l_sho_roll: 900,
-      r_sho_roll: 100,
-      l_el_pitch: 500,
-      r_el_pitch: 500,
-      l_el_yaw: 40,
-      r_el_yaw: 960,
+      l_sho_roll: 830,
+      r_sho_roll: 170,
+      l_el_pitch: 650,
+      r_el_pitch: 350,
+      l_el_yaw: 150,
+      r_el_yaw: 850,
     },
   },
   {
