@@ -6,6 +6,7 @@ import { resetPose } from '../api/robot'
 import { stopSubjectSelection } from '../api/vision'
 import { killSpeech, speak } from '../audio/speech'
 import { bodyFit, offEdges, type Fit } from '../rps/bodyFit'
+import CoralBeam from '../rps/CoralBeam'
 import CoralEye from '../rps/CoralEye'
 import { coralMoves } from '../rps/coralMoves'
 import CornerMenu from '../rps/CornerMenu'
@@ -157,6 +158,13 @@ function Game({ set }: { set: GestureSet }) {
   const handsOutRef = useRef(false)
   handsOutRef.current = offEdges(body).length > 0
   const [missLine, setMissLine] = useState(MISS_LINE)
+
+  // The beam from CORAL's head to its eye panel.
+  const stageRowRef = useRef<HTMLElement>(null)
+  const robotRef = useRef<HTMLDivElement>(null)
+  const eyeRef = useRef<HTMLDivElement>(null)
+  const [head, setHead] = useState<[number, number] | null>(null)
+  const onHeadMove = useCallback((x: number, y: number) => setHead([x, y]), [])
 
   const runIdRef = useRef(0)
   /** Ends the wait on the round result (the Next button). */
@@ -399,11 +407,12 @@ function Game({ set }: { set: GestureSet }) {
         <CornerMenu onHelp={() => setHelp(true)} />
       </header>
 
-      <main className="stage-row">
+      <main className="stage-row" ref={stageRowRef}>
+        {phase !== 'ready' && phase !== 'final' && <CoralBeam area={stageRowRef} robot={robotRef} eye={eyeRef} head={head} />}
         <section className={`coral-stage ${last?.outcome === 'lose' ? 'happy' : last?.outcome === 'win' ? 'sad' : ''}`}>
-          <div className="robot">
+          <div className="robot" ref={robotRef}>
             <div className="floor" />
-            <RobotViewer embedded look="stage" />
+            <RobotViewer embedded look="stage" onHeadMove={onHeadMove} />
           </div>
           {bubble && (
             <div key={bubble} className="bubble">
@@ -441,11 +450,11 @@ function Game({ set }: { set: GestureSet }) {
             <FinalPanel results={results} set={set} you={you} coral={coral} onAgain={playMatch} />
           ) : (
             <>
-              <div className="beam" />
               <CoralEye
                 body={body}
                 color={lit ? MOVE_COLOR[lit] : null}
                 fits={phase === 'position' ? fit === 'fit' : undefined}
+                frameRef={eyeRef}
                 open
               />
               {last && <Badge gesture={last.child} set={set} mark={markFor(last.outcome, 'child')} who="you" />}

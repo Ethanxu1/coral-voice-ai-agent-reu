@@ -1,5 +1,5 @@
 // Where the child stands in CORAL's camera picture: is their upper body in
-// view, and which edge of the picture did an arm leave by? Pure functions
+// view, and has an arm left the picture (for CORAL's "step back" tip)? Pure functions
 // over MediaPipe pose landmarks (x, y from 0 to 1 across the camera frame).
 
 import type { Landmark } from '../types/pose'

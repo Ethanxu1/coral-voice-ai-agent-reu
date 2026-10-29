@@ -32,9 +32,9 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 
 Redesigned on 2026-10-29 for a child standing about six feet back: big things, little reading, CORAL as a character. Styles are in `pages/RpsGame.css` (scoped `.rpsg`).
 
-- **Layout.** Left: CORAL on a warm stage, in its own coral colour (`RobotViewer look="stage"`). Right: **CORAL's eye** (`rps/CoralEye.tsx`), a coral-framed lens with a beam back toward the robot, showing a chunky stick figure of what the camera sees, with a small camera picture in its corner. Bottom: the three moves (`rps/PoseArt.tsx`), each inside a **similarity ring** that fills and turns red → yellow → green as the child's pose gets closer, reaching green at the 60% line where a move counts, with the percentage on it (`ScoreRing` in `RpsPlay.tsx`, smoothed by `useSmoothedScores`). The move CORAL sees lights up in its colour. The start screen's move pictures have the same rings. Top: the score in the display font (Fredoka) with a dot per round.
+- **Layout.** Left: CORAL on a warm stage, in its own coral colour (`RobotViewer look="stage"`). Right: **CORAL's eye** (`rps/CoralEye.tsx`), a coral-framed lens joined to CORAL's head by a beam, showing a chunky stick figure of what the camera sees, with a small camera picture in its corner. Bottom: the three moves (`rps/PoseArt.tsx`), each inside a **similarity ring** that fills and turns red → yellow → green as the child's pose gets closer, reaching green at the 60% line where a move counts, with the percentage on it (`ScoreRing` in `RpsPlay.tsx`, smoothed by `useSmoothedScores`). The move CORAL sees lights up in its colour. The start screen's move pictures have the same rings. Top: the score in the display font (Fredoka) with a dot per round.
 - **One message at a time**, in CORAL's speech bubble, also spoken. On-screen lines may have "!"; `say()` turns them into full stops before speaking (the voice sounded harsh with them).
-- **The eye's figure.** Head, neck, shoulders, arms and torso only, drawn thick (scaled to the child's size), eased frame to frame to take out jitter. Joints the tracker isn't sure of are faint and flicker. When an elbow or hand goes past the picture's edge, that edge pulses amber (`offEdges` in `rps/bodyFit.ts`). Once a move is recognised the figure fills with the move's colour.
+- **The eye's figure.** Head, neck, shoulders, arms and torso only, drawn thick (scaled to the child's size), eased frame to frame to take out jitter. Joints the tracker isn't sure of are faint and flicker. Once a move is recognised the figure fills with the move's colour.
 - **Grown-up controls** sit behind the "…" icon in the corner (`rps/CornerMenu.tsx`): connection, How to play, and Game menu / Exit, which must be held for 1.2 s. Space or Enter still presses the big button on screen.
 - **Sounds** (`rps/sounds.ts`, WebAudio, no files): pop when a move is seen, ding when the child is in place, a tick per countdown word, SHOOT, a chime when the move locks in, a boop on a miss, and win, lose and tie tunes.
 - **CORAL's body language** (`rps/coralMoves.ts`, arms and head only, so it can't topple): it waves on the start screen, reacts 1.5 s into each result (cheer and flex when it wins, slump with head down when the child wins, shrug on a draw), and dances (cheer, flex) at the end of the match whoever won. A small CSS hop or sag of the stage goes with the win and loss reactions.
@@ -147,8 +147,9 @@ CORAL's voice is the browser's own speech synthesis (Web Speech API, `audio/spee
 | `frontend/src/pages/RockPaperScissors.tsx` | The Learn screen |
 | `frontend/src/pages/RpsPlay.tsx` | The Play screen: three-round match |
 | `frontend/src/pages/RpsGame.css` | The Play screen's look, scoped under `.rpsg` |
-| `frontend/src/rps/CoralEye.tsx` | CORAL's eye: the chunky skeleton, green frame while getting in place, edge pulses |
-| `frontend/src/rps/bodyFit.ts` | Is the child's upper body in view; which edge did an arm leave by (pure functions) |
+| `frontend/src/rps/CoralEye.tsx` | CORAL's eye: the chunky skeleton, green frame while getting in place |
+| `frontend/src/rps/CoralBeam.tsx` | The beam from CORAL's head to the eye. The head's screen position comes from `RobotViewer`'s `onHeadMove` (the head mesh projected each frame) |
+| `frontend/src/rps/bodyFit.ts` | Is the child's upper body in view; has an arm left the picture (pure functions) |
 | `frontend/src/rps/PoseArt.tsx` | The chunky move pictures, and `MOVE_COLOR` |
 | `frontend/src/rps/coralMoves.ts` | CORAL's wave, round reactions and end-of-match dance |
 | `frontend/src/rps/CornerMenu.tsx` | The grown-ups' corner menu with press-and-hold Exit |
@@ -224,7 +225,7 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 | Change where the child must stand | `TOO_CLOSE`, `TOO_FAR`, `CENTRE_SLACK` in `rps/bodyFit.ts` |
 | Change the similarity rings | `ScoreRing` and `scoreColor` in `pages/RpsPlay.tsx` (green at `MATCH`) |
 | Change CORAL's wave, reactions or dance | Pulse sets in `rps/coralMoves.ts` (arms and head only) |
-| Change CORAL's colour or the stage lighting | `STAGE_*` colours and the `stage` branch of `components/RobotViewer.tsx` |
+| Change CORAL's colour, size or the stage lighting | `STAGE_*` colours and the `stage` branch of `components/RobotViewer.tsx` (camera position sets the size); `.coral-stage .robot` in `RpsGame.css` sets how much of the stage it gets |
 | Change the move colours or pictures | `MOVE_COLOR` and the drawing in `rps/PoseArt.tsx` (drawn from each gesture's `figure`) |
 | Change CORAL's lines | `ROUND_LINE`, `FIT_LINE`, `finalLine` in `pages/RpsPlay.tsx` |
 | Change how CORAL sounds | `VOICE_NAMES` and `RATE` in `audio/speech.ts` (`say -v '?'` lists the Mac's voices) |
@@ -271,7 +272,7 @@ Coordinates are in shoulder widths from the middle of the shoulders, x to the ri
 16. **`run.sh` is untested on an Intel Mac and on Linux** since the Apple-chip change. Those paths should be unchanged (the whole stack in Docker), but nobody has run them.
 17. **CORAL's move is visible before the child shoots.** It starts at Paper, so a quick child could see CORAL's arms and pick the winning move in the 1.8 s before Shoot. CORAL's pick is still random and doesn't see the child. If this matters for the study, start at Scissors (`THROW_AT`), at the cost of CORAL arriving later.
 18. **Kristika's branch `rps-redesign-ui-robot-test`** also has `tests/test_hardware_controller_positions.py`, which was left out: its import path is wrong (`robot.hardware_controller`), and with that fixed 2 of its 4 tests fail because the hardware-controller fix it tests isn't in the code. Ask her whether that fix is coming.
-19. **The redesigned Play screen (2026-10-29) was checked only in a headless browser with simulated poses**, not with a real child or at six feet. Sizes, the placement thresholds in `rps/bodyFit.ts` and the sounds' volume need a check in the room. Sitting close is allowed, but Paper's arms span about four shoulder widths: once the shoulders are wider than about 22% of the frame the hands leave the picture and Paper gets no score at all (checked with simulated landmarks). The edge pulse and the "Step back a little so I can see your hands!" miss line are the only guard. CORAL's reactions are sim-only, like its moves (item 7).
+19. **The redesigned Play screen (2026-10-29) was checked only in a headless browser with simulated poses**, not with a real child or at six feet. Sizes, the placement thresholds in `rps/bodyFit.ts` and the sounds' volume need a check in the room. Sitting close is allowed, but Paper's arms span about four shoulder widths: once the shoulders are wider than about 22% of the frame the hands leave the picture and Paper gets no score at all (checked with simulated landmarks). The "Step back a little so I can see your hands!" miss line is the only guard. CORAL's reactions are sim-only, like its moves (item 7).
 
 ### Ideas for next steps
 

@@ -1,7 +1,7 @@
-import { useRef } from 'react'
+import { useRef, type RefObject } from 'react'
 import { LiveStream } from '../components/LiveStream'
 import type { Landmark } from '../types/pose'
-import { LM, offEdges, seen } from './bodyFit'
+import { LM, seen } from './bodyFit'
 
 const W = 640
 const H = 480
@@ -23,8 +23,7 @@ function useSmoothedLandmarks(body: Landmark[]): Landmark[] {
 /**
  * CORAL's eye: what the robot sees, drawn as a big chunky stick figure that
  * reads from across the room. Faint, flickering limbs are ones it isn't sure
- * of; an edge pulses where an arm left the picture; the figure fills with a
- * move's colour once CORAL recognises it. While the child gets in place
+ * of; the figure fills with a move's colour once CORAL recognises it. While the child gets in place
  * (`fits` set), the frame glows green once their upper body is in view.
  */
 export default function CoralEye({
@@ -32,6 +31,7 @@ export default function CoralEye({
   color,
   fits,
   open,
+  frameRef,
 }: {
   body: Landmark[]
   /** The recognised move's colour, if any. */
@@ -40,18 +40,16 @@ export default function CoralEye({
   fits?: boolean
   /** Closed at the start screen; it opens when the game begins. */
   open: boolean
+  /** The eye's outer frame, for whoever needs its position (the beam from CORAL's head). */
+  frameRef?: RefObject<HTMLDivElement>
 }) {
   const smooth = useSmoothedLandmarks(body)
-  const edges = offEdges(body)
   return (
-    <div className={`eye ${open ? 'open' : ''} ${fits === undefined ? '' : fits ? 'fits' : 'placing'}`}>
+    <div ref={frameRef} className={`eye ${open ? 'open' : ''} ${fits === undefined ? '' : fits ? 'fits' : 'placing'}`}>
       <div className="eye-lens">
         <svg viewBox={`0 0 ${W} ${H}`} className="eye-svg" role="img" aria-label="What CORAL sees">
           <Skeleton lm={smooth} color={color ?? NEUTRAL} />
         </svg>
-        {(['left', 'right', 'top'] as const).map((e) => (
-          <div key={e} className={`eye-edge ${e} ${edges.includes(e) ? 'on' : ''}`} />
-        ))}
         <div className="eye-cam">
           <LiveStream badge={false} />
         </div>

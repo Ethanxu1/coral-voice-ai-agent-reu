@@ -49,20 +49,30 @@ const STAGE_HEAD = new THREE.Color('#FFE3D3')
 const stageColor = (g: GeomInfo) =>
   g.mesh.startsWith('head_tilt') ? STAGE_HEAD : /gripper|ank/.test(g.mesh) ? STAGE_JOINT : STAGE_BODY
 
+/** Where the robot's head is on screen, as a share of the canvas (0-1, from the top left). */
+export type HeadMoveHandler = (x: number, y: number) => void
+
+/** Report the head only when it has moved this much (share of the canvas), not every frame. */
+const HEAD_MOVE_EPS = 0.002
+
 function RobotMeshes({
   geoms,
   geometries,
   posesRef,
   look,
+  onHeadMove,
 }: {
   geoms: GeomInfo[]
   geometries: THREE.BufferGeometry[]
   posesRef: React.MutableRefObject<Float32Array | null>
   look: ViewerLook
+  onHeadMove?: HeadMoveHandler
 }) {
   const meshRefs = useRef<(THREE.Mesh | null)[]>([])
+  const headIndex = geoms.findIndex((g) => g.mesh.startsWith('head_tilt'))
+  const lastHead = useRef<[number, number] | null>(null)
 
-  useFrame(() => {
+  useFrame(({ camera }) => {
     const poses = posesRef.current
     if (!poses) return
     for (let i = 0; i < geometries.length; i++) {
@@ -75,6 +85,19 @@ function RobotMeshes({
       // turns a non-unit quaternion into a scaled, stretched mesh.
       m.quaternion.set(poses[o + 4], poses[o + 5], poses[o + 6], poses[o + 3]).normalize()
     }
+
+    const head = meshRefs.current[headIndex]
+    if (!onHeadMove || !head) return
+    const geo = geometries[headIndex]
+    if (!geo.boundingBox) geo.computeBoundingBox()
+    head.updateWorldMatrix(true, false)
+    const p = geo.boundingBox!.getCenter(new THREE.Vector3()).applyMatrix4(head.matrixWorld).project(camera)
+    const x = (p.x + 1) / 2
+    const y = (1 - p.y) / 2
+    const last = lastHead.current
+    if (last && Math.abs(last[0] - x) < HEAD_MOVE_EPS && Math.abs(last[1] - y) < HEAD_MOVE_EPS) return
+    lastHead.current = [x, y]
+    onHeadMove(x, y)
   })
 
   return (
@@ -96,7 +119,16 @@ function RobotMeshes({
   )
 }
 
-export default function RobotViewer({ embedded = false, look = 'lab' }: { embedded?: boolean; look?: ViewerLook } = {}) {
+export default function RobotViewer({
+  embedded = false,
+  look = 'lab',
+  onHeadMove,
+}: {
+  embedded?: boolean
+  look?: ViewerLook
+  /** Called when the robot's head moves on screen (e.g. to point something at it). */
+  onHeadMove?: HeadMoveHandler
+} = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
@@ -182,15 +214,15 @@ export default function RobotViewer({ embedded = false, look = 'lab' }: { embedd
       )}
 
       {look === 'stage' ? (
-        <Canvas camera={{ position: [0.95, 0.25, 0], fov: 38, near: 0.01, far: 50 }} gl={{ alpha: true }}>
+        <Canvas camera={{ position: [0.78, 0.24, 0], fov: 38, near: 0.01, far: 50 }} gl={{ alpha: true }}>
           <hemisphereLight args={['#FFF1E0', '#C98B6B', 1.4]} />
           <directionalLight position={[2.5, 2.5, 1]} intensity={2} color="#FFE8D2" />
           <directionalLight position={[-2, 1.5, -1]} intensity={0.5} color="#FFB59E" />
           <ContactShadows position={[0.02, 0.001, 0]} scale={0.8} blur={2.4} opacity={0.35} far={0.5} color="#7A2E3A" />
           {geometries.length > 0 && (
-            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} />
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} onHeadMove={onHeadMove} />
           )}
-          <OrbitControls makeDefault target={[0.02, 0.22, 0]} enablePan={false} />
+          <OrbitControls makeDefault target={[0.02, 0.21, 0]} enablePan={false} />
         </Canvas>
       ) : (
         <Canvas camera={{ position: [0.5, 0.35, 0.6], fov: 45, near: 0.01, far: 50 }}>

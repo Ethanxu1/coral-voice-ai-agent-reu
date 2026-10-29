@@ -54,9 +54,9 @@
 .rpsg .cm-item.holding .fill { width: 100%; transition: width var(--hold) linear; }
 
 /* ── CORAL's stage (left) and CORAL's eye (right) ──────────────────────── */
-.rpsg .stage-row { display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; padding: 0 36px; min-height: 0; position: relative; }
-.rpsg .coral-stage { position: relative; min-height: 0; }
-.rpsg .coral-stage .robot { position: absolute; left: 0; right: 0; top: 24%; bottom: 0; }
+.rpsg .stage-row { display: grid; grid-template-columns: 1.25fr 1fr; gap: 28px; padding: 0 36px; min-height: 0; position: relative; }
+.rpsg .coral-stage { position: relative; min-height: 0; z-index: 1; }
+.rpsg .coral-stage .robot { position: absolute; left: 0; right: 0; top: 11%; bottom: 0; }
 .rpsg .coral-stage .floor { position: absolute; left: 8%; right: 8%; bottom: 0; height: 30%; border-radius: 50%; background: radial-gradient(ellipse at center, #FFC7A8 0%, rgba(255,199,168,.55) 45%, rgba(255,199,168,0) 72%); }
 .rpsg .coral-stage.happy .robot { animation: rpsg-hop .6s ease 1.6s 3; }
 .rpsg .coral-stage.sad .robot { animation: rpsg-sag 1.2s ease 1.6s forwards; }
@@ -77,14 +77,11 @@
 .rpsg.phase-final .bubble { font-size: clamp(48px, 5vw, 80px); }
 @keyframes rpsg-pop { from { transform: translateX(-50%) scale(.6); opacity: 0; } }
 
-.rpsg .right { position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
+.rpsg .right { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
 
-/* The eye: a lens in CORAL's colour, with a beam back toward the robot. */
-.rpsg .beam {
-  position: absolute; left: -230px; top: 12%; width: 250px; height: 76%; z-index: 0; pointer-events: none;
-  clip-path: polygon(0 26%, 100% 0, 100% 100%, 0 34%);
-  background: linear-gradient(90deg, rgba(255,122,89,0) 0%, rgba(255,122,89,.5) 100%);
-}
+/* The eye: a lens in CORAL's colour. The beam from CORAL's head (rps/CoralBeam.tsx)
+   is drawn under both columns, so it starts behind the robot's head. */
+.rpsg .coral-beam { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
 .rpsg .eye { position: relative; z-index: 1; width: 100%; max-height: 100%; aspect-ratio: 4 / 3; }
 .rpsg .eye-lens {
   position: absolute; inset: 0; border-radius: 44px; overflow: hidden;
@@ -106,13 +103,6 @@
 .rpsg .eye.placing .eye-lens { border-color: #CBB8D6; }
 .rpsg .eye.fits .eye-lens { border-color: var(--green); box-shadow: 0 0 0 6px #BBF7D0, 0 0 50px rgba(34,197,94,.55), inset 0 0 40px rgba(0,0,0,.4); transition: border-color .3s, box-shadow .3s; }
 
-/* An edge glows where an arm left the picture. */
-.rpsg .eye-edge { position: absolute; z-index: 2; opacity: 0; pointer-events: none; }
-.rpsg .eye-edge.on { animation: rpsg-edge .7s ease-in-out infinite; }
-.rpsg .eye-edge.left { left: 0; top: 0; bottom: 0; width: 70px; background: linear-gradient(90deg, rgba(251,191,36,.9), rgba(251,191,36,0)); }
-.rpsg .eye-edge.right { right: 0; top: 0; bottom: 0; width: 70px; background: linear-gradient(270deg, rgba(251,191,36,.9), rgba(251,191,36,0)); }
-.rpsg .eye-edge.top { top: 0; left: 0; right: 0; height: 70px; background: linear-gradient(180deg, rgba(251,191,36,.9), rgba(251,191,36,0)); }
-@keyframes rpsg-edge { 50% { opacity: 1; } }
 
 .rpsg .eye-cam { position: absolute; right: 14px; bottom: 14px; width: 22%; border-radius: 12px; overflow: hidden; opacity: .8; z-index: 3; border: 3px solid rgba(255,255,255,.5); }
 
