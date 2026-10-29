@@ -1,24 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { LiveStream } from '../components/LiveStream'
 import RobotViewer from '../components/RobotViewer'
 import { usePoseWebSocket } from '../hooks/usePoseWebSocket'
 import { resetPose } from '../api/robot'
 import { stopSubjectSelection } from '../api/vision'
 import { killSpeech, speak } from '../audio/speech'
-import GestureFigure from '../rps/GestureFigure'
-import SkeletonView, { followReadiness } from '../rps/SkeletonView'
-import RpsBar from '../rps/RpsBar'
+import { bodyFit, offEdges, type Fit } from '../rps/bodyFit'
+import CoralEye from '../rps/CoralEye'
+import { coralMoves } from '../rps/coralMoves'
+import CornerMenu from '../rps/CornerMenu'
+import PoseArt, { MOVE_COLOR } from '../rps/PoseArt'
 import RpsTopbar, { RPS_PATH } from '../rps/RpsTopbar'
 import { gestureScores } from '../rps/classify'
 import { customGestureSet } from '../rps/customMoves'
 import { STANDARD_SET, type GestureSet } from '../rps/gestureSet'
 import { poseRobot, resetRobot } from '../rps/robotPose'
+import { sfx } from '../rps/sounds'
 import { useSmoothedScores } from '../rps/useSmoothedScores'
 import { BEATS, GESTURES, ROBOT_REST_PULSES, WINS_BECAUSE, type GestureId } from '../rps/gestures'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
-import './RpsPlay.css'
+import './RpsGame.css'
 import { sleep } from '../utils/sleep'
 
 type Outcome = 'win' | 'lose' | 'draw'
@@ -35,13 +37,13 @@ interface RoundResult {
 }
 
 const ROUNDS = 3
-const COUNT_STEPS = ['3', '2', '1', 'Shoot']
+const COUNT_STEPS = ['Rock', 'Paper', 'Scissors', 'Shoot']
 const STEP_MS = 900
 /**
  * CORAL starts its move at this step. A full arm swing takes about 1.7 s, so
  * starting at Shoot left the child waiting with nothing happening.
  */
-const THROW_AT = '2'
+const THROW_AT = 'Paper'
 /**
  * A move counts once its similarity reaches this. Lower than DETECTION.minSimilarity
  * (used by Learn), since it's a game: a roughly right pose should be enough.
@@ -57,34 +59,49 @@ const NOPOSE_MS = 1800
 const CAPTURED_MS = 1300
 /** The round result moves on by itself after this, or sooner with the Next button. */
 const RESULT_MS = 6000
-/** Before the first round: give the child time to step back, then wait until both arms are in view this long. */
+/** CORAL holds its move this long in the reveal before it reacts. */
+const REACT_AFTER_MS = 1500
+/** Before the first round: give the child time to get in place, then wait until their head and shoulders are in view this long. */
 const POSITION_MIN_MS = 2000
 const POSITION_STEADY_MS = 1000
+/** CORAL's positioning tips are spoken no more often than this. */
+const TIP_EVERY_MS = 2500
 
 function judge(child: GestureId, robot: GestureId): Outcome {
   if (child === robot) return 'draw'
   return BEATS[child] === robot ? 'win' : 'lose'
 }
 
-const ROUND_TEXT: Record<Outcome, string> = {
-  win: 'You win this round',
-  lose: 'CORAL wins this round',
-  draw: "It's a draw",
+/** What CORAL says after a round, in its own voice, and kind when it wins. */
+const ROUND_LINE: Record<Outcome, string> = {
+  win: 'You got me!',
+  lose: 'I win this one!',
+  draw: 'Ooh, same move!',
 }
 
-/** What CORAL says aloud: in its own voice, and kind when it wins. */
-const SPOKEN_ROUND_TEXT: Record<Outcome, string> = {
-  win: 'You win this round. Nice one.',
-  lose: 'I win this round. Good try.',
-  draw: "We picked the same. It's a draw.",
+/** CORAL's tips while the child finds their spot. */
+const FIT_LINE: Record<Fit, string> = {
+  away: 'Come stand where I can see you!',
+  far: 'Come a little closer!',
+  close: 'Step back!',
+  side: 'Scoot to the middle!',
+  fit: 'Perfect!',
 }
 
-/** Red (0) → yellow (0.5) → green (1). */
-const scoreColor = (s: number) => `hsl(${Math.round(s * 120)} ${s > 0.6 ? 55 : 78}% ${s > 0.6 ? 40 : 50}%)`
+/** After a miss. If a hand was out of the picture, the child is too close for that move. */
+const MISS_LINE = 'Oops, I missed that. Again!'
+const MISS_HANDS_LINE = 'Step back a little so I can see your hands!'
 
+const finalLine = (you: number, coral: number) =>
+  you > coral ? 'You beat me! Wow!' : coral > you ? 'I won! Rematch?' : 'Ooh, we tied! Rematch?'
+
+/**
+ * Speak a line in CORAL's voice. Exclamation marks are shown on screen but not
+ * spoken: they made the voice sound harsh.
+ */
 function say(text: string) {
   killSpeech()
-    .then(() => speak({ text }))
+    .then(() => speak({ text: text.replace(/!/g, '.').replace(/…/g, '...') }))
     .catch(() => {})
 }
 
@@ -120,7 +137,7 @@ function Game({ set }: { set: GestureSet }) {
   const [count, setCount] = useState(COUNT_STEPS[0])
   const [youMove, setYouMove] = useState<GestureId | null>(null)
   const [results, setResults] = useState<RoundResult[]>([])
-  const [hints, setHints] = useState(false)
+  const [help, setHelp] = useState(false)
 
   const scores = useMemo(() => gestureScores(body, set), [body, set])
   const detected = useMemo(() => {
@@ -128,17 +145,20 @@ function Game({ set }: { set: GestureSet }) {
     const top = GESTURES.reduce((a, g) => (scores[g.id] > scores[a] ? g.id : a), GESTURES[0].id)
     return scores[top] >= MATCH ? top : null
   }, [scores])
-  // What the bars show: smoothed, so a child sees their arms' effect rather than camera noise.
+  // What lights up for the child: smoothed, so camera noise doesn't make it blink.
   const { shown, matched } = useSmoothedScores(scores, MATCH)
-  const readiness = followReadiness(body)
+  const fit = bodyFit(body)
 
   // The game loop samples the camera outside React's render cycle.
   const detectedRef = useRef(detected)
   detectedRef.current = detected
   const scoresRef = useRef(scores)
   scoresRef.current = scores
-  const readyRef = useRef(readiness.ok)
-  readyRef.current = readiness.ok
+  const fitRef = useRef(fit)
+  fitRef.current = fit
+  const handsOutRef = useRef(false)
+  handsOutRef.current = offEdges(body).length > 0
+  const [missLine, setMissLine] = useState(MISS_LINE)
 
   const runIdRef = useRef(0)
   /** Ends the current result wait early (the Next button). */
@@ -146,13 +166,25 @@ function Game({ set }: { set: GestureSet }) {
 
   useEffect(() => {
     stopSubjectSelection()
-    resetRobot().catch(() => {})
+    // CORAL waves hello until the game starts.
+    const run = runIdRef.current
+    resetRobot()
+      .then(() => {
+        say("Hi! I'm CORAL. Want to play Rock, Paper, Scissors with me?")
+        return coralMoves.wave(() => run !== runIdRef.current)
+      })
+      .catch(() => {})
     return () => {
       runIdRef.current++
       killSpeech()
       resetPose().catch(() => {})
     }
   }, [])
+
+  // A pop whenever CORAL starts seeing a move.
+  useEffect(() => {
+    if (matched && phase !== 'captured' && phase !== 'result' && phase !== 'final') sfx.seen()
+  }, [matched])
 
   const waitForNext = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -180,6 +212,8 @@ function Game({ set }: { set: GestureSet }) {
           if (cancelled()) return null
           setCount(step)
           setPhase('countdown')
+          if (step === 'Shoot') sfx.shoot()
+          else sfx.tick()
           if (step === THROW_AT) onThrow()
           if (step !== 'Shoot') await sleep(STEP_MS)
         }
@@ -190,12 +224,14 @@ function Game({ set }: { set: GestureSet }) {
         const firstSeen: Partial<Record<GestureId, number>> = {}
         const shoot = Date.now()
         let samples = 0
+        let handsOut = false
         while (Date.now() - shoot < STEP_MS + CAPTURE_MS) {
           if (cancelled()) return null
           const seen = detectedRef.current
           if (seen) firstSeen[seen] ??= Date.now() - shoot
           if (Date.now() - shoot >= STEP_MS) {
             samples++
+            handsOut ||= handsOutRef.current
             if (seen) votes[seen]++
             const s = scoresRef.current
             if (s) for (const g of GESTURES) best[g.id] = Math.max(best[g.id], s[g.id])
@@ -208,9 +244,12 @@ function Game({ set }: { set: GestureSet }) {
         if (votes[top] > 0 && votes[top] >= samples * MIN_VOTE_SHARE) {
           return { child: top, similarity: best[top], reactionMs: firstSeen[top] ?? 0 }
         }
+        const line = handsOut ? MISS_HANDS_LINE : MISS_LINE
+        setMissLine(line)
         setPhase('nopose')
         onMiss()
-        say("I couldn't see a move. Let's try again.")
+        sfx.miss()
+        say(line)
         await sleep(NOPOSE_MS)
       }
     },
@@ -244,6 +283,8 @@ function Game({ set }: { set: GestureSet }) {
       if (!child) return null
       setYouMove(child.child)
       setPhase('captured')
+      sfx.lock()
+      say('Got it!')
       await Promise.all([moving, sleep(CAPTURED_MS)])
       if (cancelled()) return null
 
@@ -252,24 +293,40 @@ function Game({ set }: { set: GestureSet }) {
     [set, captureMove],
   )
 
+  /** Before the first round: CORAL coaches the child until their head and shoulders are in view. */
+  const positionChild = useCallback(async (cancelled: () => boolean) => {
+    setPhase('position')
+    const begin = Date.now()
+    let steadySince: number | null = null
+    let lastTip: Fit | null = null
+    let lastTipAt = 0
+    for (;;) {
+      if (cancelled()) return
+      const now = Date.now()
+      const f = fitRef.current
+      if (f === 'fit' && lastTip !== 'fit') {
+        sfx.fit()
+        say(FIT_LINE.fit)
+        lastTip = 'fit'
+        lastTipAt = now
+      } else if (f !== 'fit' && f !== lastTip && now - lastTipAt >= TIP_EVERY_MS) {
+        say(FIT_LINE[f])
+        lastTip = f
+        lastTipAt = now
+      }
+      steadySince = f === 'fit' ? steadySince ?? now : null
+      if (now - begin >= POSITION_MIN_MS && steadySince !== null && now - steadySince >= POSITION_STEADY_MS) return
+      await sleep(100)
+    }
+  }, [])
+
   const playMatch = useCallback(async () => {
     const run = ++runIdRef.current
     const cancelled = () => run !== runIdRef.current
     setResults([])
     setRound(1)
 
-    // Start was pressed at the computer: wait for the child to step back into view.
-    setPhase('position')
-    say('Step back so I can see both of your arms.')
-    const begin = Date.now()
-    let steadySince: number | null = null
-    for (;;) {
-      if (cancelled()) return
-      const now = Date.now()
-      steadySince = readyRef.current ? steadySince ?? now : null
-      if (now - begin >= POSITION_MIN_MS && steadySince !== null && now - steadySince >= POSITION_STEADY_MS) break
-      await sleep(100)
-    }
+    await positionChild(cancelled)
 
     const done: RoundResult[] = []
     while (done.length < ROUNDS) {
@@ -280,27 +337,36 @@ function Game({ set }: { set: GestureSet }) {
       done.push(r)
       setResults([...done])
       setPhase('result')
-      say(`You chose ${set.byId[r.child].label}. I chose ${set.byId[r.robot].label}. ${SPOKEN_ROUND_TEXT[r.outcome]}`)
+      sfx[r.outcome === 'draw' ? 'tie' : r.outcome]()
+      const why = r.outcome === 'draw' ? '' : `${WINS_BECAUSE[r.outcome === 'win' ? r.child : r.robot]}. `
+      say(`You picked ${set.byId[r.child].label}. I picked ${set.byId[r.robot].label}. ${why}${ROUND_LINE[r.outcome]}`)
+      const reacting = sleep(REACT_AFTER_MS).then(() =>
+        coralMoves.react(r.outcome === 'lose' ? 'coral' : r.outcome === 'win' ? 'child' : 'draw', cancelled),
+      )
       await waitForNext(RESULT_MS)
+      // The next round's reset must not cut into a reaction still easing in.
+      await reacting
     }
     if (cancelled()) return
 
     setPhase('final')
     const you = done.filter((r) => r.outcome === 'win').length
     const coral = done.filter((r) => r.outcome === 'lose').length
-    say(you > coral ? 'You win. Great game.' : coral > you ? 'I won this time. That was fun. Want to play again?' : "It's a tie. Let's play again.")
-  }, [set, playRound])
+    sfx[you > coral ? 'win' : coral > you ? 'lose' : 'tie']()
+    say(finalLine(you, coral))
+    coralMoves.dance(cancelled)
+  }, [set, playRound, positionChild])
 
-  // Space or Enter presses whatever the big button on screen is.
+  // Space or Enter presses whatever the big button on screen is (for the grown-up at the keyboard).
   const phaseRef = useRef(phase)
   phaseRef.current = phase
-  const hintsRef = useRef(hints)
-  hintsRef.current = hints
+  const helpRef = useRef(help)
+  helpRef.current = help
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== ' ' && e.key !== 'Enter') return
       e.preventDefault()
-      if (hintsRef.current) setHints(false)
+      if (helpRef.current) setHelp(false)
       else if (phaseRef.current === 'ready' || phaseRef.current === 'final') playMatch()
       else if (phaseRef.current === 'result') nextRef.current?.()
     }
@@ -311,390 +377,293 @@ function Game({ set }: { set: GestureSet }) {
   const you = results.filter((r) => r.outcome === 'win').length
   const coral = results.filter((r) => r.outcome === 'lose').length
   const last = phase === 'result' ? results[results.length - 1] : null
-  const visible = body.length > 0
-  const overCoral = phase === 'position' || phase === 'countdown' || phase === 'nopose' || phase === 'captured'
-  // From THROW_AT CORAL is moving, so its panel is uncovered and the card shrinks to a strip at the top.
-  const showCoral =
-    phase === 'captured' || (phase === 'countdown' && COUNT_STEPS.indexOf(count) >= COUNT_STEPS.indexOf(THROW_AT))
+  const playing = phase === 'position' || phase === 'countdown' || phase === 'nopose' || phase === 'captured'
+  const lit = phase === 'captured' ? youMove : matched
+
+  // One message at a time, in CORAL's speech bubble.
+  const bubble =
+    phase === 'ready'
+      ? "Hi! I'm CORAL. Wanna play?"
+      : phase === 'position'
+        ? FIT_LINE[fit]
+        : phase === 'nopose'
+          ? missLine
+          : phase === 'captured'
+            ? 'Got it!'
+            : last
+              ? ROUND_LINE[last.outcome]
+              : phase === 'final'
+                ? finalLine(you, coral)
+                : null
 
   return (
-    <div className="rpsp">
-      <RpsBar
-        actions={
-          <button className="btn hints" onClick={() => setHints(true)}>
-            <span className="ico">?</span>RPS Hints
-          </button>
-        }
-      >
-        <div className="round">
-          <div className="round-title">
-            Round {Math.min(round, ROUNDS)} of {ROUNDS}
-            {set.kind === 'custom' && <span className="own">Your moves</span>}
+    <div className={`rpsg phase-${phase}`}>
+      <header className="top">
+        {phase !== 'ready' && <Scoreboard results={results} round={round} you={you} coral={coral} />}
+        <CornerMenu onHelp={() => setHelp(true)} />
+      </header>
+
+      <main className="stage-row">
+        <section className={`coral-stage ${last?.outcome === 'lose' ? 'happy' : last?.outcome === 'win' ? 'sad' : ''}`}>
+          <div className="robot">
+            <div className="floor" />
+            <RobotViewer embedded look="stage" />
           </div>
-          <div className="pips">
-            {Array.from({ length: ROUNDS }, (_, i) => (
-              <span
-                key={i}
-                className={`pip ${i < results.length ? results[i].outcome : i === results.length && phase !== 'ready' && phase !== 'final' ? 'now' : ''}`}
+          {bubble && (
+            <div key={bubble} className="bubble">
+              {bubble}
+              {last && (
+                <small>
+                  {last.outcome === 'draw'
+                    ? `We both picked ${set.byId[last.child].label}`
+                    : WINS_BECAUSE[last.outcome === 'win' ? last.child : last.robot]}
+                </small>
+              )}
+            </div>
+          )}
+          {last && <Badge gesture={last.robot} set={set} mark={markFor(last.outcome, 'coral')} who="coral" />}
+        </section>
+
+        <section className="right">
+          {phase === 'ready' ? (
+            <div className="start">
+              <div className="start-moves">
+                {set.gestures.map((g) => (
+                  <div key={g.id} className={`start-move ${matched === g.id ? 'lit' : ''}`} style={{ '--c': MOVE_COLOR[g.id] } as React.CSSProperties}>
+                    <ScoreRing score={shown?.[g.id] ?? null}>
+                      <PoseArt gesture={g} />
+                    </ScoreRing>
+                    <b>{g.label}</b>
+                  </div>
+                ))}
+              </div>
+              <button className="big-btn" onClick={playMatch}>
+                Start
+              </button>
+            </div>
+          ) : phase === 'final' ? (
+            <FinalPanel results={results} set={set} you={you} coral={coral} onAgain={playMatch} />
+          ) : (
+            <>
+              <div className="beam" />
+              <CoralEye
+                body={body}
+                color={lit ? MOVE_COLOR[lit] : null}
+                fits={phase === 'position' ? fit === 'fit' : undefined}
+                open
               />
-            ))}
-          </div>
-        </div>
-        <div className="score">
-          <span className="who">You</span>
-          <span key={`y${you}`} className={`n you ${you > 0 ? 'bump' : ''}`}>{you}</span>
-          <span className="colon">:</span>
-          <span key={`c${coral}`} className={`n coral ${coral > 0 ? 'bump' : ''}`}>{coral}</span>
-          <span className="who">CORAL</span>
-        </div>
-      </RpsBar>
-
-      <main className="main">
-        <section className={`panel sim ${last?.outcome === 'lose' ? 'winner' : ''}`}>
-          <div className="rd-sim-grid" />
-          <RobotViewer embedded />
-          <div className="rd-sim-vignette" />
-          <div className="panel-head">
-            <span className="tag">
-              <i />
-              CORAL · Simulation
-            </span>
-          </div>
-          {last && (
-            <div className={`played ${last.outcome === 'lose' ? 'won' : ''}`}>
-              <span className="em">{set.byId[last.robot].emoji}</span>CORAL played {set.byId[last.robot].label}
-              {last.outcome === 'lose' && <span className="crown">👑</span>}
-            </div>
-          )}
-          {overCoral && (
-            <div className={`count-wrap ${showCoral ? 'top' : ''}`}>
-              <CountCard phase={phase} count={count} compact={showCoral} round={round} ready={readiness.ok} move={youMove} set={set} />
-            </div>
+              {last && <Badge gesture={last.child} set={set} mark={markFor(last.outcome, 'child')} who="you" />}
+            </>
           )}
         </section>
-
-        <section className={`panel me ${overCoral ? 'raised' : ''} ${last?.outcome === 'win' ? 'winner' : ''}`}>
-          <div className="hint-col">
-            <div className="hint-col-title">
-              Your move<small>green = CORAL sees it</small>
-            </div>
-            {set.gestures.map((g) => {
-              const s = shown ? shown[g.id] : 0
-              return (
-                <div key={g.id} className={`hint ${matched === g.id ? 'match' : ''}`}>
-                  <div className="fig">
-                    <GestureFigure gesture={g} />
-                  </div>
-                  <div className="name">
-                    {g.label}
-                    <span className="pct" style={{ color: shown ? scoreColor(s) : 'var(--faint)' }}>
-                      {shown ? `${Math.round(s * 100)}%` : '–'}
-                    </span>
-                  </div>
-                  <div className="tip">{g.tip}</div>
-                  <div className="meter">
-                    <div className="fill" style={{ width: `${Math.max(shown ? 3 : 0, s * 100)}%`, background: scoreColor(s) }} />
-                    <div className="goal" style={{ left: `${MATCH * 100}%` }} />
-                  </div>
-                </div>
-              )
-            })}
-            <div className="legend">
-              0%<span className="grad" />100%
-            </div>
-          </div>
-          <div className="skel">
-            <div className="panel-head" style={{ left: 16 }}>
-              <span className={`tag soft ${readiness.ok ? 'ok' : 'warn'}`}>
-                <i />
-                {readiness.ok ? 'I can see your head and arms' : visible ? readiness.message : 'Step in front of the camera'}
-              </span>
-            </div>
-            {visible ? (
-              <SkeletonView landmarks={body} />
-            ) : (
-              <div className="skel-empty">
-                <div>
-                  <b>I can't see you yet</b>Stand where the camera can see your head and arms
-                </div>
-              </div>
-            )}
-            {last && (
-              <div className={`played ${last.outcome === 'win' ? 'won' : ''}`}>
-                <span className="em">{set.byId[last.child].emoji}</span>You played {set.byId[last.child].label}
-                {last.outcome === 'win' && <span className="crown">👑</span>}
-              </div>
-            )}
-            <div className="cam">
-              <LiveStream badge={false} />
-              <span className="live">
-                <i />
-                LIVE
-              </span>
-            </div>
-          </div>
-        </section>
-
-        {last && (
-          <div className={`result ${last.outcome}`}>
-            <div className="kicker">
-              Round {results.length} of {ROUNDS}
-            </div>
-            <div className="vs">
-              <div className={`side ${last.outcome === 'win' ? 'won' : ''}`}>
-                <small>You</small>
-                <span className="em">{set.byId[last.child].emoji}</span>
-                <b>{set.byId[last.child].label}</b>
-              </div>
-              <span className="x">vs</span>
-              <div className={`side ${last.outcome === 'lose' ? 'won' : ''}`}>
-                <small>CORAL</small>
-                <span className="em">{set.byId[last.robot].emoji}</span>
-                <b>{set.byId[last.robot].label}</b>
-              </div>
-            </div>
-            <h1>{ROUND_TEXT[last.outcome]}</h1>
-            <div className="why">
-              {last.outcome === 'draw'
-                ? 'You both picked the same move.'
-                : `${WINS_BECAUSE[last.outcome === 'win' ? last.child : last.robot]}`}
-            </div>
-            <button className="next" onClick={() => nextRef.current?.()}>
-              {results.length >= ROUNDS ? 'See who won →' : 'Next round →'}
-              <span key={results.length} className="auto" style={{ '--wait': `${RESULT_MS}ms` } as React.CSSProperties} />
-            </button>
-          </div>
-        )}
       </main>
 
-      {overCoral && !showCoral && <div className="backdrop" />}
+      {playing && (
+        <footer className="moves">
+          {set.gestures.map((g) => (
+            <div
+              key={g.id}
+              className={`move ${lit === g.id ? 'lit' : ''} ${phase === 'captured' && youMove === g.id ? 'locked' : ''}`}
+              style={{ '--c': MOVE_COLOR[g.id] } as React.CSSProperties}
+            >
+              <ScoreRing score={phase === 'captured' ? null : shown?.[g.id] ?? null}>
+                <PoseArt gesture={g} color={lit === g.id ? undefined : '#B9AFC4'} />
+              </ScoreRing>
+              <b>{g.label}</b>
+            </div>
+          ))}
+        </footer>
+      )}
 
-      {phase === 'ready' && !hints && (
-        <div className="backdrop">
-          <div className="modal">
-            <div className="kicker">Rock · Paper · Scissors</div>
-            <h1>Ready to play CORAL?</h1>
-            <div className="sub">
-              Best of {ROUNDS} rounds. When the countdown ends, hold your move until CORAL says “Got it”.
-            </div>
-            <MoveTiles set={set} />
-            <div className={`ready-check ${readiness.ok ? '' : 'warn'}`}>
-              <span className="dot">{readiness.ok ? '✓' : '!'}</span>
-              {readiness.ok ? 'CORAL can see you. You’re ready.' : 'Step back so CORAL can see your head and arms'}
-            </div>
-            <button className="start" onClick={playMatch}>
-              Start
-            </button>
-            <div className="keyhint">Press Space or Enter</div>
-          </div>
+      {phase === 'countdown' && (
+        <div key={count} className={`count-word w-${count.toLowerCase()}`}>
+          {count === 'Shoot' ? 'SHOOT!' : `${count}…`}
         </div>
       )}
 
-      {phase === 'final' && !hints && <FinalCard results={results} set={set} onAgain={playMatch} />}
+      {last && (
+        <button className="next-btn" onClick={() => nextRef.current?.()}>
+          {results.length >= ROUNDS ? 'See who won' : 'Next'}
+          <span key={results.length} className="auto" style={{ '--wait': `${RESULT_MS}ms` } as React.CSSProperties} />
+        </button>
+      )}
 
-      {hints && <HintsModal set={set} onClose={() => setHints(false)} />}
+      {phase === 'final' && <Confetti />}
+      {help && <HowToPlay set={set} onClose={() => setHelp(false)} />}
     </div>
   )
 }
 
-function MoveTiles({ set }: { set: GestureSet }) {
+/** Red at 0, through yellow, to green at the MATCH line, where a move counts. */
+const scoreColor = (s: number) => `hsl(${Math.round(Math.min(1, s / MATCH) * 120)} 80% 45%)`
+
+const RING_R = 54
+const RING_LEN = 2 * Math.PI * RING_R
+
+/**
+ * How close the child's pose is to one move: a ring that fills and turns from
+ * red to green as the similarity score rises, with the score in the middle of
+ * its edge. `null` (no one in view, or the move is already locked in) hides it.
+ */
+function ScoreRing({ score, children }: { score: number | null; children: React.ReactNode }) {
+  const s = score ?? 0
   return (
-    <div className="tiles">
-      {set.gestures.map((g) => (
-        <div key={g.id} className="tile">
-          <span className="em">{g.emoji}</span>
-          <div className="fig">
-            <GestureFigure gesture={g} />
+    <div className={`score-ring ${score === null ? 'off' : ''}`} style={{ '--sc': scoreColor(s) } as React.CSSProperties}>
+      <svg viewBox="0 0 120 120" aria-hidden>
+        <circle cx="60" cy="60" r={RING_R} className="track" />
+        {s >= 0.01 && <circle cx="60" cy="60" r={RING_R} className="arc" strokeDasharray={`${s * RING_LEN} ${RING_LEN}`} />}
+        <line
+          className="goal"
+          x1="60"
+          y1={60 - RING_R - 7}
+          x2="60"
+          y2={60 - RING_R + 7}
+          transform={`rotate(${MATCH * 360} 60 60)`}
+        />
+      </svg>
+      <div className="art">{children}</div>
+      {score !== null && <span className="pct">{Math.round(s * 100)}%</span>}
+    </div>
+  )
+}
+
+type Mark = 'star' | 'frown' | 'equal'
+
+function markFor(outcome: Outcome, side: 'child' | 'coral'): Mark {
+  if (outcome === 'draw') return 'equal'
+  return (outcome === 'win') === (side === 'child') ? 'star' : 'frown'
+}
+
+function MarkIcon({ mark }: { mark: Mark }) {
+  return (
+    <span className={`mark ${mark}`} aria-label={mark}>
+      <svg viewBox="0 0 24 24" aria-hidden>
+        {mark === 'star' && <path d="M12 2.5l2.9 6 6.6.8-4.9 4.6 1.3 6.5L12 17.2l-5.9 3.2 1.3-6.5L2.5 9.3l6.6-.8z" />}
+        {mark === 'frown' && (
+          <>
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="8.6" cy="9.6" r="1.4" className="cut" />
+            <circle cx="15.4" cy="9.6" r="1.4" className="cut" />
+            <path d="M7.8 16.6q4.2-3.6 8.4 0" className="cut-line" />
+          </>
+        )}
+        {mark === 'equal' && (
+          <>
+            <rect x="4" y="7.5" width="16" height="3.4" rx="1.7" />
+            <rect x="4" y="13.1" width="16" height="3.4" rx="1.7" />
+          </>
+        )}
+      </svg>
+    </span>
+  )
+}
+
+/** A big round badge showing one player's move in the reveal. */
+function Badge({ gesture, set, mark, who }: { gesture: GestureId; set: GestureSet; mark: Mark; who: 'you' | 'coral' }) {
+  return (
+    <div className={`badge reveal ${who} ${mark}`} style={{ '--c': MOVE_COLOR[gesture] } as React.CSSProperties}>
+      <div className="disc">
+        <PoseArt gesture={set.byId[gesture]} />
+      </div>
+      <b>{who === 'you' ? 'You' : 'CORAL'}</b>
+      <MarkIcon mark={mark} />
+    </div>
+  )
+}
+
+/** Score in the display font, with a dot per round. */
+function Scoreboard({ results, round, you, coral }: { results: RoundResult[]; round: number; you: number; coral: number }) {
+  return (
+    <div className="scoreboard">
+      <span className="who">You</span>
+      <span key={`y${you}`} className="n you">{you}</span>
+      <div className="dots">
+        {Array.from({ length: ROUNDS }, (_, i) => (
+          <span key={i} className={`dot ${i < results.length ? results[i].outcome : i === round - 1 ? 'now' : ''}`} />
+        ))}
+      </div>
+      <span key={`c${coral}`} className="n coral">{coral}</span>
+      <span className="who">CORAL</span>
+    </div>
+  )
+}
+
+function FinalPanel({
+  results,
+  set,
+  you,
+  coral,
+  onAgain,
+}: {
+  results: RoundResult[]
+  set: GestureSet
+  you: number
+  coral: number
+  onAgain: () => void
+}) {
+  return (
+    <div className="final">
+      <div className="final-score">
+        <span className="you">{you}</span>
+        <span className="dash">–</span>
+        <span className="coral">{coral}</span>
+      </div>
+      <div className="final-rounds">
+        {results.map((r, i) => (
+          <div key={i} className={`round-badge ${markFor(r.outcome, 'child')}`} style={{ '--c': MOVE_COLOR[r.child] } as React.CSSProperties}>
+            <PoseArt gesture={set.byId[r.child]} />
+            <MarkIcon mark={markFor(r.outcome, 'child')} />
           </div>
-          <div className="name">{g.label}</div>
-          <div className="tip">{g.tip}</div>
-        </div>
+        ))}
+      </div>
+      <button className="big-btn" onClick={onAgain}>
+        Play again
+      </button>
+    </div>
+  )
+}
+
+function Confetti() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 80 }, (_, i) => ({
+        left: `${Math.random() * 100}%`,
+        background: ['#FF7A59', MOVE_COLOR.rock, MOVE_COLOR.paper, MOVE_COLOR.scissors, '#FFD54F'][i % 5],
+        animationDuration: `${2.4 + Math.random() * 2}s`,
+        animationDelay: `${Math.random() * 1.2}s`,
+      })),
+    [],
+  )
+  return (
+    <div className="confetti">
+      {pieces.map((style, i) => (
+        <i key={i} style={style} />
       ))}
     </div>
   )
 }
 
-/** The card over CORAL's panel from Start until the child's move is captured. */
-function CountCard({
-  phase,
-  count,
-  compact,
-  round,
-  ready,
-  move,
-  set,
-}: {
-  phase: Phase
-  count: string
-  /** CORAL is moving: show a strip at the top of its panel instead of the big ring. */
-  compact: boolean
-  round: number
-  ready: boolean
-  move: GestureId | null
-  set: GestureSet
-}) {
-  if (phase === 'position') {
-    return (
-      <div className="modal count-card">
-        <div className="kicker">Get in position</div>
-        <h1>{ready ? 'Great, hold on…' : 'Step back'}</h1>
-        <div className="sub">{ready ? 'The countdown starts in a moment.' : 'So CORAL can see your head and both arms.'}</div>
-        <div className="pointer">Watch for the green tag →</div>
-      </div>
-    )
-  }
-  if (phase === 'nopose') {
-    return (
-      <div className="modal count-card amber">
-        <div className="kicker">Hmm…</div>
-        <h1>I couldn't see a move</h1>
-        <div className="sub">Make Rock, Paper or Scissors so one bar goes green.</div>
-        <div className="again">Starting again…</div>
-      </div>
-    )
-  }
-  if (phase === 'captured' && move) {
-    const g = set.byId[move]
-    return (
-      <div className="modal count-card compact green">
-        <span className="kicker">Got it</span>
-        <span className="em">{g.emoji}</span>
-        <span className="word">{g.label}</span>
-      </div>
-    )
-  }
-  const word = count === 'Shoot'
-  if (compact) {
-    return (
-      <div className="modal count-card compact">
-        <span className="kicker">Round {round}</span>
-        <span key={count} className="word count">{count}</span>
-        <span className="sub">{word ? 'Hold it still…' : 'Get your arms ready'}</span>
-      </div>
-    )
-  }
+/** For the grown-up: how to make each move, from the corner menu. */
+function HowToPlay({ set, onClose }: { set: GestureSet; onClose: () => void }) {
   return (
-    <div className="modal count-card">
-      <div className="kicker">Round {round} · Make your move</div>
-      <div key={count} className="ring" style={{ '--step': `${STEP_MS}ms` } as React.CSSProperties}>
-        <svg viewBox="0 0 230 230">
-          <circle className="track" cx="115" cy="115" r="100" />
-          <circle className="prog" cx="115" cy="115" r="100" />
-        </svg>
-        <span className={`num ${word ? 'word' : ''}`}>{count}</span>
-      </div>
-      <div className="sub">{word ? 'Hold it still…' : 'Get your arms ready'}</div>
-      <div className="pointer">Watch your bars turn green →</div>
-    </div>
-  )
-}
-
-function HintsModal({ set, onClose }: { set: GestureSet; onClose: () => void }) {
-  return (
-    <div className="backdrop" style={{ zIndex: 70 }}>
-      <div className="modal hint-modal">
-        <div className="kicker">RPS Hints</div>
-        <h1>How to make each move</h1>
-        <div className="tiles">
-          {set.gestures.map((g) => {
-            const beaten = set.byId[BEATS[g.id]]
-            return (
-              <div key={g.id} className="tile">
-                <span className="em">{g.emoji}</span>
-                <div className="fig">
-                  <GestureFigure gesture={g} />
-                </div>
-                <div className="name">{g.label}</div>
-                {g.steps.length > 0 ? (
-                  <ol>
-                    {g.steps.map((s) => (
-                      <li key={s}>{s}</li>
-                    ))}
-                  </ol>
-                ) : (
-                  <div className="tip">{g.tagline}</div>
-                )}
-                <div className="beats">
-                  Beats {beaten.label} {beaten.emoji}
-                </div>
-              </div>
-            )
-          })}
+    <div className="help" onClick={onClose}>
+      <div className="help-card" onClick={(e) => e.stopPropagation()}>
+        <h2>How to play</h2>
+        <div className="help-moves">
+          {set.gestures.map((g) => (
+            <div key={g.id} className="help-move" style={{ '--c': MOVE_COLOR[g.id] } as React.CSSProperties}>
+              <PoseArt gesture={g} />
+              <b>{g.label}</b>
+              <p>{g.tip}</p>
+              <p className="beats">Beats {set.byId[BEATS[g.id]].label}</p>
+            </div>
+          ))}
         </div>
-        <div className="cycle">
-          <span>✊</span>smashes<span>✌️</span>cut<span>✋</span>wraps<span>✊</span>
-        </div>
-        <button className="cta" onClick={onClose}>
-          Got it
+        <p className="help-note">Stand so CORAL can see your head and shoulders (the frame turns green); sitting close is fine. When CORAL says Shoot, hold your move until it says “Got it”.</p>
+        <button className="big-btn small" onClick={onClose}>
+          OK
         </button>
       </div>
     </div>
-  )
-}
-
-function FinalCard({ results, set, onAgain }: { results: RoundResult[]; set: GestureSet; onAgain: () => void }) {
-  const you = results.filter((r) => r.outcome === 'win').length
-  const coral = results.filter((r) => r.outcome === 'lose').length
-  const verdict = you > coral ? 'You beat CORAL 🎉' : you < coral ? 'CORAL wins this time' : "It's a tie"
-  const confetti = useMemo(
-    () =>
-      Array.from({ length: 70 }, (_, i) => ({
-        left: `${Math.random() * 100}%`,
-        background: ['#FF6B4A', '#17BEBB', '#FFD54F', '#2E9E5B', '#7B4BB9'][i % 5],
-        animationDuration: `${2 + Math.random() * 2}s`,
-        animationDelay: `${Math.random() * 0.8}s`,
-      })),
-    [],
-  )
-  return (
-    <>
-      <div className="backdrop">
-        <div className="modal final">
-          <div className="kicker">Match over</div>
-          <h1>{verdict}</h1>
-          <div className="big-score">
-            <div>
-              <div className="n you">{you}</div>
-              <small>You</small>
-            </div>
-            <span className="dash">–</span>
-            <div>
-              <div className="n coral">{coral}</div>
-              <small>CORAL</small>
-            </div>
-          </div>
-          <div className="history">
-            {results.map((r, i) => (
-              <div key={i} className="row">
-                <span className="r">Round {i + 1}</span>
-                <span className="m">
-                  {set.byId[r.child].emoji} {set.byId[r.child].label}
-                </span>
-                <span className="vsx">vs</span>
-                <span className="m right">
-                  {set.byId[r.robot].label} {set.byId[r.robot].emoji}
-                </span>
-                <span className={`o ${r.outcome}`}>{{ win: 'You', lose: 'CORAL', draw: 'Draw' }[r.outcome]}</span>
-              </div>
-            ))}
-          </div>
-          <div className="actions">
-            <Link to={`${RPS_PATH}/learn`} className="ghost">
-              Learn the moves
-            </Link>
-            <button className="next" style={{ marginTop: 0 }} onClick={onAgain}>
-              Play again
-            </button>
-          </div>
-        </div>
-      </div>
-      {you > coral && (
-        <div className="confetti">
-          {confetti.map((style, i) => (
-            <i key={i} style={style} />
-          ))}
-        </div>
-      )}
-    </>
   )
 }

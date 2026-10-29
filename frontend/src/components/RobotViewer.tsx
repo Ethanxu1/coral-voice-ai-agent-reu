@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Grid } from '@react-three/drei'
+import { ContactShadows, OrbitControls, Grid } from '@react-three/drei'
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { SIM_WS } from '../config'
@@ -32,14 +32,33 @@ function bakeMeshOffset(geo: THREE.BufferGeometry, g: GeomInfo) {
   geo.applyMatrix4(rotInv.multiply(transNeg))
 }
 
+/**
+ * How the viewer looks. `lab` is the plain grey robot on a grid; `stage` is the
+ * Rock Paper Scissors character look: CORAL in its own colour, warm light, a
+ * soft floor, a transparent background (the page paints the room) and a camera
+ * framing the whole robot from the front.
+ */
+export type ViewerLook = 'lab' | 'stage'
+
+/** CORAL's colours on the stage: its shell, and the darker joints and servos. */
+const STAGE_BODY = new THREE.Color('#FF7A59')
+const STAGE_JOINT = new THREE.Color('#7A2E3A')
+const STAGE_HEAD = new THREE.Color('#FFE3D3')
+
+/** A light head, and hands and feet in the darker tone, so they read against the shell. */
+const stageColor = (g: GeomInfo) =>
+  g.mesh.startsWith('head_tilt') ? STAGE_HEAD : /gripper|ank/.test(g.mesh) ? STAGE_JOINT : STAGE_BODY
+
 function RobotMeshes({
   geoms,
   geometries,
   posesRef,
+  look,
 }: {
   geoms: GeomInfo[]
   geometries: THREE.BufferGeometry[]
   posesRef: React.MutableRefObject<Float32Array | null>
+  look: ViewerLook
 }) {
   const meshRefs = useRef<(THREE.Mesh | null)[]>([])
 
@@ -63,9 +82,13 @@ function RobotMeshes({
       {geometries.map((geo, i) => (
         <mesh key={i} ref={(el) => (meshRefs.current[i] = el)} geometry={geo}>
           <meshStandardMaterial
-            color={new THREE.Color(geoms[i].rgba[0], geoms[i].rgba[1], geoms[i].rgba[2])}
-            metalness={0.15}
-            roughness={0.6}
+            color={
+              look === 'stage'
+                ? stageColor(geoms[i])
+                : new THREE.Color(geoms[i].rgba[0], geoms[i].rgba[1], geoms[i].rgba[2])
+            }
+            metalness={look === 'stage' ? 0.05 : 0.15}
+            roughness={look === 'stage' ? 0.45 : 0.6}
           />
         </mesh>
       ))}
@@ -73,7 +96,7 @@ function RobotMeshes({
   )
 }
 
-export default function RobotViewer({ embedded = false }: { embedded?: boolean } = {}) {
+export default function RobotViewer({ embedded = false, look = 'lab' }: { embedded?: boolean; look?: ViewerLook } = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
@@ -158,26 +181,39 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
         </div>
       )}
 
-      <Canvas camera={{ position: [0.5, 0.35, 0.6], fov: 45, near: 0.01, far: 50 }}>
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[3, 5, 2]} intensity={1.2} />
-        <directionalLight position={[-3, 3, -2]} intensity={0.4} />
-        <Grid
-          args={[4, 4]}
-          cellSize={0.1}
-          cellThickness={0.6}
-          sectionSize={0.5}
-          sectionThickness={1}
-          infiniteGrid
-          fadeDistance={8}
-          cellColor="#3a3a44"
-          sectionColor="#4f6a8f"
-        />
-        {geometries.length > 0 && (
-          <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} />
-        )}
-        <OrbitControls makeDefault target={[0, 0.15, 0]} />
-      </Canvas>
+      {look === 'stage' ? (
+        <Canvas camera={{ position: [0.95, 0.25, 0], fov: 38, near: 0.01, far: 50 }} gl={{ alpha: true }}>
+          <hemisphereLight args={['#FFF1E0', '#C98B6B', 1.4]} />
+          <directionalLight position={[2.5, 2.5, 1]} intensity={2} color="#FFE8D2" />
+          <directionalLight position={[-2, 1.5, -1]} intensity={0.5} color="#FFB59E" />
+          <ContactShadows position={[0.02, 0.001, 0]} scale={0.8} blur={2.4} opacity={0.35} far={0.5} color="#7A2E3A" />
+          {geometries.length > 0 && (
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} />
+          )}
+          <OrbitControls makeDefault target={[0.02, 0.22, 0]} enablePan={false} />
+        </Canvas>
+      ) : (
+        <Canvas camera={{ position: [0.5, 0.35, 0.6], fov: 45, near: 0.01, far: 50 }}>
+          <ambientLight intensity={0.7} />
+          <directionalLight position={[3, 5, 2]} intensity={1.2} />
+          <directionalLight position={[-3, 3, -2]} intensity={0.4} />
+          <Grid
+            args={[4, 4]}
+            cellSize={0.1}
+            cellThickness={0.6}
+            sectionSize={0.5}
+            sectionThickness={1}
+            infiniteGrid
+            fadeDistance={8}
+            cellColor="#3a3a44"
+            sectionColor="#4f6a8f"
+          />
+          {geometries.length > 0 && (
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} />
+          )}
+          <OrbitControls makeDefault target={[0, 0.15, 0]} />
+        </Canvas>
+      )}
     </div>
   )
 }

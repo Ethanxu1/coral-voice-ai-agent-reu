@@ -1,0 +1,235 @@
+/* Rock-Paper-Scissors Play screen, sized for a child standing about six feet
+   back. Everything is scoped under .rpsg. CORAL's colour is coral; each move
+   has its own colour (MOVE_COLOR in rps/PoseArt.tsx), passed in as --c. */
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap');
+
+.rpsg {
+  --coral: #FF7A59;
+  --coral-deep: #E2553A;
+  --plum: #3B2A4A;
+  --ink: #2A1F33;
+  --cream: #FFF6EE;
+  --green: #22C55E;
+
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  position: relative;
+  color: var(--ink);
+  font-family: 'Nunito', sans-serif;
+  background:
+    radial-gradient(ellipse 60% 55% at 28% 42%, #FFF3E6 0%, rgba(255,243,230,0) 70%),
+    linear-gradient(180deg, #FFE7D3 0%, #FFD8BF 100%);
+}
+.rpsg * { box-sizing: border-box; }
+.rpsg button { font-family: inherit; cursor: pointer; border: none; }
+.rpsg h2 { margin: 0; }
+
+/* ── Top: score in the middle, grown-up menu in the corner ─────────────── */
+.rpsg .top { display: flex; justify-content: center; align-items: center; min-height: 92px; padding: 14px 24px 0; position: relative; z-index: 40; }
+.rpsg .scoreboard { display: flex; align-items: center; gap: 18px; font-family: 'Fredoka', sans-serif; }
+.rpsg .scoreboard .who { font-size: 30px; font-weight: 600; color: var(--plum); }
+.rpsg .scoreboard .n { font-size: 64px; font-weight: 700; line-height: 1; animation: rpsg-bump .5s ease; }
+.rpsg .scoreboard .n.you { color: #0F766E; }
+.rpsg .scoreboard .n.coral { color: var(--coral-deep); }
+.rpsg .scoreboard .dots { display: flex; gap: 10px; padding: 0 6px; }
+.rpsg .scoreboard .dot { width: 22px; height: 22px; border-radius: 50%; background: rgba(59,42,74,.15); }
+.rpsg .scoreboard .dot.now { background: var(--plum); box-shadow: 0 0 0 5px rgba(59,42,74,.15); }
+.rpsg .scoreboard .dot.win { background: #FBBF24; }
+.rpsg .scoreboard .dot.lose { background: #94A3B8; }
+.rpsg .scoreboard .dot.draw { background: #C4B5FD; }
+@keyframes rpsg-bump { 40% { transform: scale(1.35); } }
+
+.rpsg .corner-menu { position: absolute; top: 16px; right: 18px; }
+.rpsg .cm-toggle { width: 44px; height: 44px; border-radius: 50%; background: rgba(59,42,74,.08); color: rgba(59,42,74,.55); display: grid; place-items: center; }
+.rpsg .cm-toggle:hover { background: rgba(59,42,74,.14); color: var(--plum); }
+.rpsg .cm-pop { position: absolute; right: 0; top: 52px; width: 220px; background: #fff; border-radius: 16px; padding: 10px; box-shadow: 0 12px 34px rgba(59,42,74,.2); display: flex; flex-direction: column; gap: 6px; }
+.rpsg .cm-status { padding: 4px 6px 8px; }
+.rpsg .cm-item { position: relative; overflow: hidden; text-align: left; padding: 11px 14px; border-radius: 10px; font-weight: 800; font-size: 15px; color: var(--ink); background: #F6F0F8; display: flex; align-items: center; }
+.rpsg .cm-item:hover { background: #EDE3F1; }
+.rpsg .cm-item .txt { position: relative; flex: 1; }
+.rpsg .cm-item small { position: relative; font-size: 12px; font-weight: 700; color: #6B5B78; }
+.rpsg .cm-item .fill { position: absolute; inset: 0; width: 0; background: rgba(226,85,58,.28); }
+.rpsg .cm-item.holding .fill { width: 100%; transition: width var(--hold) linear; }
+
+/* ── CORAL's stage (left) and CORAL's eye (right) ──────────────────────── */
+.rpsg .stage-row { display: grid; grid-template-columns: 1.1fr 1fr; gap: 28px; padding: 0 36px; min-height: 0; position: relative; }
+.rpsg .coral-stage { position: relative; min-height: 0; }
+.rpsg .coral-stage .robot { position: absolute; left: 0; right: 0; top: 24%; bottom: 0; }
+.rpsg .coral-stage .floor { position: absolute; left: 8%; right: 8%; bottom: 0; height: 30%; border-radius: 50%; background: radial-gradient(ellipse at center, #FFC7A8 0%, rgba(255,199,168,.55) 45%, rgba(255,199,168,0) 72%); }
+.rpsg .coral-stage.happy .robot { animation: rpsg-hop .6s ease 1.6s 3; }
+.rpsg .coral-stage.sad .robot { animation: rpsg-sag 1.2s ease 1.6s forwards; }
+@keyframes rpsg-hop { 50% { transform: translateY(-4%); } }
+@keyframes rpsg-sag { to { transform: translateY(2%) scale(.98); } }
+
+/* CORAL's speech bubble: the one message on screen. */
+.rpsg .bubble {
+  position: absolute; top: 2%; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: 96%; z-index: 5; text-align: center;
+  background: #fff; color: var(--ink); border-radius: 32px; padding: 18px 34px;
+  font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: clamp(34px, 3.6vw, 56px); line-height: 1.1;
+  box-shadow: 0 10px 0 rgba(226,85,58,.25), 0 18px 40px rgba(59,42,74,.12);
+  animation: rpsg-pop .35s cubic-bezier(.3,1.6,.6,1);
+}
+.rpsg .bubble::after { content: ''; position: absolute; bottom: -18px; left: 50%; margin-left: -18px; border: 18px solid transparent; border-top-color: #fff; border-bottom: 0; }
+.rpsg .bubble small { display: block; margin-top: 6px; font-family: 'Nunito', sans-serif; font-size: 20px; font-weight: 800; color: #5B4A68; }
+.rpsg.phase-final .bubble { font-size: clamp(48px, 5vw, 80px); }
+@keyframes rpsg-pop { from { transform: translateX(-50%) scale(.6); opacity: 0; } }
+
+.rpsg .right { position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
+
+/* The eye: a lens in CORAL's colour, with a beam back toward the robot. */
+.rpsg .beam {
+  position: absolute; left: -230px; top: 12%; width: 250px; height: 76%; z-index: 0; pointer-events: none;
+  clip-path: polygon(0 26%, 100% 0, 100% 100%, 0 34%);
+  background: linear-gradient(90deg, rgba(255,122,89,0) 0%, rgba(255,122,89,.5) 100%);
+}
+.rpsg .eye { position: relative; z-index: 1; width: 100%; max-height: 100%; aspect-ratio: 4 / 3; }
+.rpsg .eye-lens {
+  position: absolute; inset: 0; border-radius: 44px; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, #4A3459 0%, #2A1F33 75%);
+  border: 14px solid var(--coral);
+  box-shadow: 0 0 0 6px #FFD1BE, 0 20px 50px rgba(226,85,58,.35), inset 0 0 40px rgba(0,0,0,.4);
+  animation: rpsg-open .6s cubic-bezier(.3,1.3,.6,1);
+}
+.rpsg .eye-lens::before { content: ''; position: absolute; top: 18px; left: 22px; width: 54px; height: 54px; border-radius: 50%; background: radial-gradient(circle at 50% 50%, #2A1F33 0 30%, var(--coral) 31% 62%, #fff 63%); z-index: 3; opacity: .95; }
+@keyframes rpsg-open { from { transform: scaleY(.05); } }
+.rpsg .eye-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.rpsg .eye-skel line { stroke-linecap: round; transition: stroke .25s; }
+.rpsg .eye-skel circle { stroke: none; transition: fill .25s; }
+.rpsg .eye-skel .head { fill-opacity: .9; }
+.rpsg .eye-skel .unsure { opacity: .25; animation: rpsg-flicker .35s steps(2) infinite; }
+@keyframes rpsg-flicker { 50% { opacity: .1; } }
+
+.rpsg .eye.placing .eye-lens { border-color: #CBB8D6; }
+.rpsg .eye.fits .eye-lens { border-color: var(--green); box-shadow: 0 0 0 6px #BBF7D0, 0 0 50px rgba(34,197,94,.55), inset 0 0 40px rgba(0,0,0,.4); transition: border-color .3s, box-shadow .3s; }
+
+/* An edge glows where an arm left the picture. */
+.rpsg .eye-edge { position: absolute; z-index: 2; opacity: 0; pointer-events: none; }
+.rpsg .eye-edge.on { animation: rpsg-edge .7s ease-in-out infinite; }
+.rpsg .eye-edge.left { left: 0; top: 0; bottom: 0; width: 70px; background: linear-gradient(90deg, rgba(251,191,36,.9), rgba(251,191,36,0)); }
+.rpsg .eye-edge.right { right: 0; top: 0; bottom: 0; width: 70px; background: linear-gradient(270deg, rgba(251,191,36,.9), rgba(251,191,36,0)); }
+.rpsg .eye-edge.top { top: 0; left: 0; right: 0; height: 70px; background: linear-gradient(180deg, rgba(251,191,36,.9), rgba(251,191,36,0)); }
+@keyframes rpsg-edge { 50% { opacity: 1; } }
+
+.rpsg .eye-cam { position: absolute; right: 14px; bottom: 14px; width: 22%; border-radius: 12px; overflow: hidden; opacity: .8; z-index: 3; border: 3px solid rgba(255,255,255,.5); }
+
+/* ── Start: three big moves and one big button ─────────────────────────── */
+.rpsg .start { display: flex; flex-direction: column; align-items: center; gap: 34px; width: 100%; }
+.rpsg .start-moves { display: flex; gap: 22px; width: 100%; justify-content: center; }
+.rpsg .start-move { flex: 1; max-width: 220px; background: #fff; border-radius: 30px; padding: 18px 10px 14px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 8px 0 rgba(59,42,74,.08); transition: transform .2s, box-shadow .2s; }
+.rpsg .start-move.lit { transform: translateY(-8px); box-shadow: 0 0 0 6px var(--c), 0 14px 0 rgba(59,42,74,.08); }
+.rpsg .start-move b, .rpsg .move b { font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 34px; color: var(--ink); }
+.rpsg .pose-art { width: 100%; height: auto; display: block; }
+
+.rpsg .big-btn {
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 64px; color: #fff;
+  background: var(--coral); padding: 18px 90px 22px; border-radius: 999px;
+  box-shadow: 0 10px 0 var(--coral-deep), 0 22px 40px rgba(226,85,58,.35);
+  animation: rpsg-breathe 2s ease-in-out infinite;
+}
+.rpsg .big-btn:active { transform: translateY(6px); box-shadow: 0 4px 0 var(--coral-deep); }
+.rpsg .big-btn.small { font-size: 32px; padding: 10px 48px 12px; animation: none; }
+@keyframes rpsg-breathe { 50% { transform: scale(1.04); } }
+
+/* ── The three moves along the bottom, lit when CORAL sees one ──────────── */
+.rpsg .moves { display: flex; justify-content: center; gap: 30px; padding: 14px 36px 22px; }
+.rpsg .move { width: 190px; display: flex; flex-direction: column; align-items: center; padding: 10px 8px 6px; border-radius: 28px; background: rgba(255,255,255,.55); transition: transform .2s, background .2s, box-shadow .2s; }
+.rpsg .move .score-ring { width: 150px; }
+.rpsg .move b { font-size: 28px; color: #6B5B78; }
+.rpsg .move.lit { background: #fff; transform: translateY(-6px) scale(1.04); box-shadow: 0 0 0 6px var(--c), 0 12px 30px rgba(59,42,74,.15); }
+.rpsg .move.lit b { color: var(--ink); }
+.rpsg .move.locked { animation: rpsg-lock .5s cubic-bezier(.3,1.8,.6,1); }
+@keyframes rpsg-lock { 40% { transform: translateY(-10px) scale(1.14); } }
+
+/* ── Similarity ring around each move: fills and turns red → green ─────── */
+.rpsg .score-ring { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
+.rpsg .score-ring > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.rpsg .score-ring .track { fill: none; stroke: rgba(59,42,74,.1); stroke-width: 10; }
+.rpsg .score-ring .arc { fill: none; stroke: var(--sc); stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray .25s ease, stroke .25s; }
+.rpsg .score-ring .goal { stroke: var(--plum); stroke-width: 3.5; stroke-linecap: round; opacity: .55; }
+.rpsg .score-ring.off .arc, .rpsg .score-ring.off .goal { display: none; }
+.rpsg .score-ring .art { width: 70%; }
+.rpsg .score-ring .pct {
+  position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 26px; line-height: 1;
+  color: #fff; background: var(--sc); padding: 4px 12px 5px; border-radius: 999px;
+  transition: background .25s; box-shadow: 0 3px 0 rgba(59,42,74,.15);
+}
+.rpsg .start-move .score-ring { max-width: 190px; }
+.rpsg .start-move b { margin-top: 12px; }
+.rpsg .move b { margin-top: 10px; }
+
+/* ── Countdown: one giant word at a time ───────────────────────────────── */
+.rpsg .count-word {
+  position: absolute; left: 0; right: 0; top: 38%; z-index: 30; text-align: center; pointer-events: none;
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: clamp(110px, 13vw, 230px); line-height: 1;
+  -webkit-text-stroke: 10px #fff; paint-order: stroke fill;
+  text-shadow: 0 14px 0 rgba(59,42,74,.18);
+  animation: rpsg-word .9s cubic-bezier(.2,1.4,.5,1) both;
+}
+.rpsg .count-word.w-rock { color: #8B5CF6; }
+.rpsg .count-word.w-paper { color: #0EA5A4; }
+.rpsg .count-word.w-scissors { color: #F59E0B; }
+.rpsg .count-word.w-shoot { color: var(--coral); font-size: clamp(150px, 18vw, 320px); animation: rpsg-shoot 1.2s cubic-bezier(.2,1.6,.5,1) both; }
+@keyframes rpsg-word { 0% { transform: scale(.3) rotate(-8deg); opacity: 0; } 30% { transform: scale(1.08) rotate(2deg); opacity: 1; } 80% { transform: scale(1); opacity: 1; } 100% { transform: scale(.9); opacity: 0; } }
+@keyframes rpsg-shoot { 0% { transform: scale(.2); opacity: 0; } 25% { transform: scale(1.15); opacity: 1; } 70% { transform: scale(1); opacity: 1; } 100% { opacity: 0; } }
+
+/* ── Reveal: each player's move as a big round badge on their side ─────── */
+.rpsg .badge { position: absolute; z-index: 20; display: flex; flex-direction: column; align-items: center; animation: rpsg-slam .55s cubic-bezier(.3,1.6,.6,1) both; }
+.rpsg .badge.coral { left: 3%; bottom: 6%; }
+.rpsg .badge.you { left: 50%; top: 50%; margin: -150px 0 0 -120px; }
+.rpsg .badge .disc { width: 240px; height: 240px; border-radius: 50%; background: #fff; border: 12px solid var(--c); display: grid; place-items: center; padding: 26px; box-shadow: 0 16px 40px rgba(59,42,74,.25); }
+.rpsg .badge b { margin-top: -18px; background: var(--c); color: #fff; font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 30px; padding: 4px 22px; border-radius: 999px; }
+.rpsg .badge .mark { position: absolute; top: -10px; right: -10px; }
+.rpsg .badge.star .disc { animation: rpsg-wiggle .5s ease .6s 3; }
+.rpsg .badge.frown { filter: saturate(.55); }
+@keyframes rpsg-slam { from { transform: scale(2.2); opacity: 0; } }
+@keyframes rpsg-wiggle { 25% { transform: rotate(-7deg) scale(1.05); } 75% { transform: rotate(7deg) scale(1.05); } }
+
+.rpsg .mark { width: 76px; height: 76px; display: grid; place-items: center; border-radius: 50%; background: #fff; box-shadow: 0 6px 16px rgba(59,42,74,.2); }
+.rpsg .mark svg { width: 56px; height: 56px; }
+.rpsg .mark.star svg { fill: #FBBF24; }
+.rpsg .mark.frown svg { fill: #94A3B8; }
+.rpsg .mark.frown .cut { fill: #fff; }
+.rpsg .mark.frown .cut-line { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; }
+.rpsg .mark.equal svg { fill: #8B5CF6; }
+
+.rpsg .next-btn {
+  position: absolute; right: 36px; bottom: 26px; z-index: 35; overflow: hidden;
+  font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 30px; color: var(--plum);
+  background: #fff; padding: 12px 34px; border-radius: 999px; box-shadow: 0 6px 0 rgba(59,42,74,.15);
+}
+.rpsg .next-btn .auto { position: absolute; left: 0; bottom: 0; height: 6px; background: var(--coral); animation: rpsg-auto var(--wait) linear forwards; }
+@keyframes rpsg-auto { from { width: 0; } to { width: 100%; } }
+
+/* ── Match over ────────────────────────────────────────────────────────── */
+.rpsg .final { display: flex; flex-direction: column; align-items: center; gap: 30px; animation: rpsg-rise .5s ease both; }
+.rpsg .final-score { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 150px; line-height: 1; display: flex; gap: 26px; }
+.rpsg .final-score .you { color: #0F766E; }
+.rpsg .final-score .coral { color: var(--coral-deep); }
+.rpsg .final-score .dash { color: rgba(59,42,74,.3); }
+.rpsg .final-rounds { display: flex; gap: 26px; }
+.rpsg .round-badge { position: relative; width: 150px; height: 150px; border-radius: 50%; background: #fff; border: 9px solid var(--c); padding: 16px; display: grid; place-items: center; box-shadow: 0 10px 24px rgba(59,42,74,.15); }
+.rpsg .round-badge .mark { position: absolute; top: -14px; right: -14px; width: 60px; height: 60px; }
+.rpsg .round-badge .mark svg { width: 42px; height: 42px; }
+.rpsg .round-badge.frown .pose-art { opacity: .6; }
+@keyframes rpsg-rise { from { transform: translateY(30px); opacity: 0; } }
+
+.rpsg .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 50; overflow: hidden; }
+.rpsg .confetti i { position: absolute; top: -20px; width: 14px; height: 22px; border-radius: 4px; animation: rpsg-fall linear infinite; }
+@keyframes rpsg-fall { to { transform: translateY(110vh) rotate(720deg); } }
+
+/* ── How to play (grown-up, from the corner menu) ──────────────────────── */
+.rpsg .help { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(255,231,211,.6); backdrop-filter: blur(6px); }
+.rpsg .help-card { background: #fff; border-radius: 30px; padding: 30px 36px; max-width: 920px; display: flex; flex-direction: column; align-items: center; gap: 20px; box-shadow: 0 20px 60px rgba(59,42,74,.2); }
+.rpsg .help-card h2 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 44px; }
+.rpsg .help-moves { display: flex; gap: 22px; }
+.rpsg .help-move { flex: 1; text-align: center; border-top: 8px solid var(--c); border-radius: 20px; background: var(--cream); padding: 16px; }
+.rpsg .help-move .pose-art { max-width: 140px; margin: 0 auto; }
+.rpsg .help-move b { font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 28px; }
+.rpsg .help-move p { margin: 6px 0 0; font-size: 17px; font-weight: 700; color: #4A3A57; }
+.rpsg .help-move .beats { color: var(--c); font-weight: 900; }
+.rpsg .help-note { margin: 0; font-size: 18px; font-weight: 700; color: #4A3A57; text-align: center; max-width: 640px; }
