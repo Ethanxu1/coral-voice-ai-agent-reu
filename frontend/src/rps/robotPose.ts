@@ -12,8 +12,9 @@ const GENTLE_PULSES_PER_S = 380
 let current: Record<string, number> = { ...ROBOT_REST_PULSES }
 
 /**
- * Move the simulator robot's arms to `target` from wherever they are, at gentle
- * follow speed, and resolve when the move has finished.
+ * Move the robot's arms to `target` from wherever they are, at gentle follow
+ * speed, and resolve when the move has finished. The simulator always moves; the
+ * physical robot does too when the server runs in robot mode (./run.sh -live).
  *
  * The move is one timed servo command that the simulator interpolates smoothly,
  * the same way follow mode drives the robot (an instant /set-pose snap can
@@ -33,7 +34,7 @@ export async function poseRobot(
   const biggest = Math.max(0, ...Object.keys(target).map((j) => Math.abs(target[j] - (from[j] ?? target[j]))))
   const durationMs = Math.max(minDurationMs, Math.round((biggest / GENTLE_PULSES_PER_S) * 1000))
   current = { ...current, ...target }
-  await setPose(target, { durationMs })
+  await setPose(target, { durationMs, toRobot: true })
 }
 
 /** Snap the whole robot back to a clean stand. */

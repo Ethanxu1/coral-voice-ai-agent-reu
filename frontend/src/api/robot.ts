@@ -73,19 +73,21 @@ export interface SetPoseResult {
   safety: MoveSafety
 }
 
-// Apply a raw {joint: hardware_pulse} pose to the sim (never the robot). Pulses
-// are the hardware units authored in motions.py; the server converts them to
-// sim radians. `durationMs` > 0 glides there over that time (0 = instant).
+// Apply a raw {joint: hardware_pulse} pose to the sim. Pulses are the hardware
+// units authored in motions.py; the server converts them to sim radians.
+// `durationMs` > 0 glides there over that time (0 = instant).
 // `skipCollisionCheck` bypasses the collision/fall gate (joint limits still
 // clamp); `checkFall: false` skips only the fall check (test pages, which pin
-// the sim upright instead).
+// the sim upright instead). `toRobot` also moves the physical robot when the
+// server is in robot mode (needs durationMs > 0 and the collision check).
 export async function setPose(
   pulses: Record<string, number>,
   {
     durationMs = 0,
     skipCollisionCheck = false,
     checkFall = true,
-  }: { durationMs?: number; skipCollisionCheck?: boolean; checkFall?: boolean } = {},
+    toRobot = false,
+  }: { durationMs?: number; skipCollisionCheck?: boolean; checkFall?: boolean; toRobot?: boolean } = {},
 ): Promise<SetPoseResult> {
   const data = await postJSON<{
     status: 'done' | 'blocked'
@@ -94,7 +96,7 @@ export async function setPose(
     safety?: unknown
   }>(
     `${SERVER_BASE}/set-pose`,
-    { pulses, duration_ms: durationMs, skip_collision_check: skipCollisionCheck, check_fall: checkFall },
+    { pulses, duration_ms: durationMs, skip_collision_check: skipCollisionCheck, check_fall: checkFall, to_robot: toRobot },
     'set-pose',
   )
   return {

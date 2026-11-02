@@ -113,7 +113,8 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
     goes through the same collision/fall gate as /move first (`check_fall=False`
     skips the fall half — the Pose Tester pins the sim upright instead), and the
     verdict is returned. With `duration_ms` > 0 the sim glides there over that time;
-    0 applies it instantly. Sim only: never reaches the physical robot.
+    0 applies it instantly. Sim only, unless `to_robot` (Rock Paper Scissors):
+    then the glide also reaches the physical robot in robot mode.
     """
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
@@ -135,9 +136,14 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
         return {"status": "blocked", "applied": [], "skipped": skipped, "safety": safety}
 
     if req.duration_ms > 0:
-        await dispatch_servo_commands(
-            joints_to_servo_commands(targets, req.duration_ms), sim_only=True
-        )
+        try:
+            await dispatch_servo_commands(
+                joints_to_servo_commands(targets, req.duration_ms),
+                sim_only=None if req.to_robot else True,
+            )
+        except RobotServerUnavailable as e:
+            logger.warning(f"/set-pose: robot server unavailable: {e}")
+            raise HTTPException(status_code=503, detail="robot server could not be reached")
     else:
         for joint, rad in targets.items():
             state.simulator.set_joint_position(joint, rad)
