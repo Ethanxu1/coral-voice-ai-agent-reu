@@ -110,7 +110,14 @@
 .rpsg .eye-cam { position: absolute; right: 14px; bottom: 14px; width: 22%; border-radius: 12px; overflow: hidden; opacity: .8; z-index: 3; border: 3px solid rgba(255,255,255,.5); }
 
 /* ── Start: three big moves and one big button ─────────────────────────── */
-.rpsg .start { display: flex; flex-direction: column; align-items: center; gap: 34px; width: 100%; }
+.rpsg .start { display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; height: 100%; padding: 8px 0 28px; }
+/*
+ * Try-it camera view above the move cards: the box takes the height the cards
+ * and Start leave, and the eye is the biggest 4:3 that fits in it. Sized with
+ * container units, not a flex height + aspect-ratio (Firefox gave that 0 width).
+ */
+.rpsg .start-eye { flex: 1 1 0; min-height: 0; width: 100%; container-type: size; display: flex; justify-content: center; align-items: flex-end; }
+.rpsg .start-eye .eye { width: min(100cqw, 100cqh * 4 / 3); height: auto; }
 .rpsg .start-moves { display: flex; gap: 22px; width: 100%; justify-content: center; }
 .rpsg .start-move { flex: 1; max-width: 220px; background: #fff; border-radius: 30px; padding: 18px 10px 14px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 8px 0 rgba(59,42,74,.08); transition: transform .2s, box-shadow .2s; }
 .rpsg .start-move.lit { transform: translateY(-8px); box-shadow: 0 0 0 6px var(--c), 0 14px 0 rgba(59,42,74,.08); }
@@ -141,7 +148,7 @@
 .rpsg .score-ring { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
 .rpsg .score-ring > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
 .rpsg .score-ring .track { fill: none; stroke: rgba(59,42,74,.1); stroke-width: 10; }
-.rpsg .score-ring .arc { fill: none; stroke: var(--sc); stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray .25s ease, stroke .25s; }
+.rpsg .score-ring .arc { fill: none; stroke: var(--sc); stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray 60ms linear, stroke .15s; }
 .rpsg .score-ring .goal { stroke: var(--plum); stroke-width: 3.5; stroke-linecap: round; opacity: .55; }
 .rpsg .score-ring.off .arc, .rpsg .score-ring.off .goal { display: none; }
 .rpsg .score-ring .art { width: 70%; }

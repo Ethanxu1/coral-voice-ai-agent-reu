@@ -417,7 +417,7 @@ function Game({ set }: { set: GestureSet }) {
       </header>
 
       <main className="stage-row" ref={stageRowRef}>
-        {phase !== 'ready' && phase !== 'final' && <CoralBeam area={stageRowRef} robot={robotRef} eye={eyeRef} head={head} />}
+        {phase !== 'final' && <CoralBeam area={stageRowRef} robot={robotRef} eye={eyeRef} head={head} />}
         <section className={`coral-stage ${last?.outcome === 'lose' ? 'happy' : last?.outcome === 'win' ? 'sad' : ''}`}>
           <div className="robot" ref={robotRef}>
             <div className="floor" />
@@ -441,6 +441,9 @@ function Game({ set }: { set: GestureSet }) {
         <section className="right">
           {phase === 'ready' ? (
             <div className="start">
+              <div className="start-eye">
+                <CoralEye body={body} color={matched ? MOVE_COLOR[matched] : null} frameRef={eyeRef} open />
+              </div>
               <div className="start-moves">
                 {set.gestures.map((g) => (
                   <div key={g.id} className={`start-move ${matched === g.id ? 'lit' : ''}`} style={{ '--c': MOVE_COLOR[g.id] } as React.CSSProperties}>

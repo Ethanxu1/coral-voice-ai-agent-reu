@@ -22,7 +22,7 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 
 | Route | Screen | What happens |
 |---|---|---|
-| `/rock-paper-scissors` | Menu | Three cards: Learn gestures, Let's play, Make your own moves |
+| `/rock-paper-scissors` | Menu | Two cards: Let's play, Make your own moves. Learn gestures was removed from the menu on 2026-11-02 (Play's start screen now has the camera view and live rings); the page is still at `/rock-paper-scissors/learn` |
 | `/rock-paper-scissors/learn` | Learn | Pick a move, see how to do it, and see what the system thinks you are doing |
 | `/rock-paper-scissors/play` | Play | A three-round match (see below) |
 | `/rock-paper-scissors/custom` | Make your own moves | The child records their own rock, paper and scissors |
@@ -32,7 +32,7 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 
 Redesigned on 2026-10-29 for a child standing about six feet back: big things, little reading, CORAL as a character. Styles are in `pages/RpsGame.css` (scoped `.rpsg`).
 
-- **Layout.** Left: CORAL on a warm stage, in its own coral colour (`RobotViewer look="stage"`). Right: **CORAL's eye** (`rps/CoralEye.tsx`), a coral-framed lens joined to CORAL's head by a beam, showing a chunky stick figure of what the camera sees, with a small camera picture in its corner. Bottom: the three moves (`rps/PoseArt.tsx`), each inside a **similarity ring** that fills and turns red → yellow → green as the child's pose gets closer, reaching green at the 60% line where a move counts, with the percentage on it (`ScoreRing` in `RpsPlay.tsx`, smoothed by `useSmoothedScores`). The move CORAL sees lights up in its colour. The start screen's move pictures have the same rings. Top: the score in the display font (Fredoka) with a dot per round.
+- **Layout.** Left: CORAL on a warm stage, in its own coral colour (`RobotViewer look="stage"`). Right: **CORAL's eye** (`rps/CoralEye.tsx`), a coral-framed lens joined to CORAL's head by a beam, showing a chunky stick figure of what the camera sees, with a small camera picture in its corner. Bottom: the three moves (`rps/PoseArt.tsx`), each inside a **similarity ring** that fills and turns red → yellow → green as the child's pose gets closer, reaching green at the 60% line where a move counts, with the percentage on it (`ScoreRing` in `RpsPlay.tsx`, smoothed by `useSmoothedScores`). The move CORAL sees lights up in its colour. The start screen shows CORAL's eye above its move pictures, which have the same rings, so a child (or a presenter) can try the moves and watch the scores before pressing Start. Top: the score in the display font (Fredoka) with a dot per round.
 - **One message at a time**, in CORAL's speech bubble, also spoken (see "CORAL's voice" below).
 - **Mute**: the speaker button at top left mutes CORAL's voice and the sound effects. The game opens unmuted every time.
 - **The eye's figure.** Head, neck, shoulders, arms and torso only, drawn thick (scaled to the child's size), eased frame to frame to take out jitter. Joints the tracker isn't sure of are faint and flicker. Once a move is recognised the figure fills with the move's colour.
@@ -161,7 +161,7 @@ History: the first version spoke through `say` on a speaker server; then OpenAI 
 | `frontend/src/rps/gestureSet.ts` | A playable set of three moves: the standard set, or one built from custom moves |
 | `frontend/src/rps/customMoves.ts` | The recorded custom moves (session memory) and the too-alike check |
 | `frontend/src/rps/useRobotFollow.ts` | Hook: the robot follows the child while a screen is open; retries until the server is up |
-| `frontend/src/rps/useSmoothedScores.ts` | Hook: similarity scores made readable for a child (averaged, 4 updates a second, rounded to 10%). Play uses its `matched` to light the move cards |
+| `frontend/src/rps/useSmoothedScores.ts` | Hook: similarity scores for display (averaged over 200 ms, 20 updates a second, whole percent; a matched move stays green until it drops 4% below the line). Play uses its `matched` to light the move cards |
 | `frontend/src/rps/voice.ts` | Play's voice: preloads and plays the ElevenLabs clips (`sayLine`), browser-speech fallback, mute |
 | `frontend/src/rps/voiceLines.json` | Every line CORAL says in Play, by id. The clips and the on-screen text both come from here |
 | `frontend/public/rps/voice/*.mp3` | The generated clips (21, about 1.2 MB) |
@@ -228,7 +228,7 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 | Make detection stricter or looser | `DETECTION` in `rps/gestures.ts`: `minSimilarity` (lower is looser), `maxDistance` (higher is looser), `margin`. The game itself ignores `minSimilarity` and `margin` (best match wins) |
 | Change how fast CORAL strikes its move | `GENTLE_PULSES_PER_S` in `rps/robotPose.ts` |
 | Change when CORAL starts its move | `THROW_AT` in `pages/RpsPlay.tsx` |
-| Change how calm the similarity bars are (Learn) or how quickly a move card lights up (Play) | `SMOOTH_MS`, `SHOW_EVERY_MS`, `SHOW_STEP`, `SHOW_DEADBAND` in `rps/useSmoothedScores.ts` |
+| Change how smooth or calm the similarity rings are, or how readily a move card stays lit (Play) | `SMOOTH_MS`, `SHOW_EVERY_MS`, `SHOW_STEP`, `MATCH_HYSTERESIS` in `rps/useSmoothedScores.ts` |
 | Change where the child must stand | `TOO_CLOSE`, `TOO_FAR`, `CENTRE_SLACK` in `rps/bodyFit.ts` |
 | Change the similarity rings | `ScoreRing` and `scoreColor` in `pages/RpsPlay.tsx` (green at `MATCH`) |
 | Change CORAL's wave, reactions or dance | Pulse sets in `rps/coralMoves.ts` (arms and head only) |
