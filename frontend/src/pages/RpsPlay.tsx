@@ -484,7 +484,7 @@ function Game({ set }: { set: GestureSet }) {
               style={{ '--c': MOVE_COLOR[g.id] } as React.CSSProperties}
             >
               <ScoreRing score={phase === 'captured' ? null : shown?.[g.id] ?? null}>
-                <PoseArt gesture={g} color={lit === g.id ? undefined : '#B9AFC4'} />
+                <PoseArt gesture={g} color={lit === g.id ? undefined : 'var(--pal-navy-pale)'} />
               </ScoreRing>
               <b>{g.label}</b>
             </div>
@@ -514,7 +514,7 @@ function Game({ set }: { set: GestureSet }) {
 }
 
 /** Red at 0, through yellow, to green at the MATCH line, where a move counts. */
-const scoreColor = (s: number) => `hsl(${Math.round(Math.min(1, s / MATCH) * 120)} 80% 45%)`
+const scoreColor = (s: number) => `color-mix(in oklch, var(--game-good) ${Math.round(Math.min(1, s / MATCH) * 100)}%, var(--game-robot))`
 
 const RING_R = 54
 const RING_LEN = 2 * Math.PI * RING_R
@@ -663,7 +663,7 @@ function Confetti() {
     () =>
       Array.from({ length: 80 }, (_, i) => ({
         left: `${Math.random() * 100}%`,
-        background: ['#FF7A59', MOVE_COLOR.rock, MOVE_COLOR.paper, MOVE_COLOR.scissors, '#FFD54F'][i % 5],
+        background: ['var(--pal-pink)', MOVE_COLOR.rock, MOVE_COLOR.paper, MOVE_COLOR.scissors, 'var(--pal-sand)'][i % 5],
         animationDuration: `${2.4 + Math.random() * 2}s`,
         animationDelay: `${Math.random() * 1.2}s`,
       })),
