@@ -7,7 +7,7 @@ const W = 640
 const H = 480
 /** Share of the way each frame moves a joint toward its new position: takes the jitter out, keeps up with real moves. */
 const SMOOTHING = 0.45
-const NEUTRAL = '#FFF1E8'
+const NEUTRAL = 'var(--pal-sand-light)'
 
 /** Landmarks eased frame to frame, so the drawing doesn't shake when the child holds still. */
 function useSmoothedLandmarks(body: Landmark[]): Landmark[] {

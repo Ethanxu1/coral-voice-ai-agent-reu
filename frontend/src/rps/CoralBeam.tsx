@@ -54,8 +54,8 @@ export default function CoralBeam({
     <svg className="coral-beam" aria-hidden>
       <defs>
         <linearGradient id="coral-beam-fade" gradientUnits="userSpaceOnUse" x1={from[0]} y1={from[1]} x2={top[0]} y2={from[1]}>
-          <stop offset="0" stopColor="#FF7A59" stopOpacity="0.7" />
-          <stop offset="1" stopColor="#FF7A59" stopOpacity="0.18" />
+          <stop offset="0" style={{ stopColor: 'var(--game-robot)' }} stopOpacity="0.7" />
+          <stop offset="1" style={{ stopColor: 'var(--game-robot)' }} stopOpacity="0.18" />
         </linearGradient>
       </defs>
       <polygon points={[from, top, bottom].map((p) => p.join(',')).join(' ')} fill="url(#coral-beam-fade)" />
