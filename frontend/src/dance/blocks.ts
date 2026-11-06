@@ -1,118 +1,114 @@
-// Tree data model for the Dance Game's block-coding sequence builder.
+// The Dance Game's Blockly blocks, and reading the workspace back as a program.
 //
-// A sequence is a list of Blocks. A pose block is one leaf move; a repeat
-// block wraps a nested list of blocks (which may itself contain repeat
-// blocks), mirroring a Scratch-style "repeat" C-block — multiple loops can
-// exist side by side, and loops can nest inside loops.
-//
-// Reordering and nesting both go through moveBlock(), which locates
-// positions by block uid rather than numeric index, so it never has to
-// reason about index shifts caused by removing a block from one spot before
-// inserting it in another.
+// Blockly owns dragging, snapping, nesting and the toolbox. This file only says
+// what the blocks look like and turns the stack under the start block into
+// Steps that sequencePlayer.ts walks. Only blocks connected under the start
+// block play; Blockly greys out loose ones (Events.disableOrphans) so a child
+// can see which.
 
-import type { DancePoseId, DanceSpeed } from './poses'
+import * as Blockly from 'blockly/core'
+import { DANCE_POSES, SPEED_LABEL, type DancePoseId, type DanceSpeed } from './poses'
 
-export interface PoseBlockT {
-  type: 'pose'
-  uid: string
-  poseId: DancePoseId
-  speed: DanceSpeed
+export const START_BLOCK = 'dance_start'
+const REPEAT_BLOCK = 'dance_repeat'
+const poseBlockType = (id: DancePoseId) => `dance_pose_${id}`
+const POSE_BY_BLOCK_TYPE = new Map(DANCE_POSES.map((p) => [poseBlockType(p.id), p.id]))
+
+/** One step of a dance program. `blockId` is the Blockly block it came from, for highlighting. */
+export type Step =
+  | { kind: 'pose'; blockId: string; pose: DancePoseId; speed: DanceSpeed }
+  | { kind: 'repeat'; blockId: string; times: number; body: Step[] }
+
+const MAX_REPEAT = 20
+
+let defined = false
+
+/** Register the dance block types with Blockly (once). */
+export function defineDanceBlocks(): void {
+  if (defined) return
+  defined = true
+  const speedOptions = Object.entries(SPEED_LABEL).map(([value, text]) => [text, value])
+  Blockly.common.defineBlocksWithJsonArray([
+    { type: START_BLOCK, message0: 'when ▶ Dance! is pressed', style: 'start_blocks', nextStatement: null },
+    {
+      type: REPEAT_BLOCK,
+      message0: 'repeat %1 times',
+      args0: [{ type: 'field_number', name: 'TIMES', value: 2, min: 1, max: MAX_REPEAT, precision: 1 }],
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'DO' }],
+      style: 'loop_blocks',
+      previousStatement: null,
+      nextStatement: null,
+    },
+    ...DANCE_POSES.map((p) => ({
+      type: poseBlockType(p.id),
+      message0: `${p.emoji} ${p.label} %1`,
+      args0: [{ type: 'field_dropdown', name: 'SPEED', options: speedOptions }],
+      style: 'move_blocks',
+      previousStatement: null,
+      nextStatement: null,
+    })),
+  ])
 }
 
-export interface RepeatBlockT {
-  type: 'repeat'
-  uid: string
-  count: number
-  children: Block[]
-}
+/** A palette colour from src/theme/palette.css (Blockly needs real colour values, not var()). */
+const pal = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(`--pal-${name}`).trim()
 
-export type Block = PoseBlockT | RepeatBlockT
-
-export function newPoseBlock(poseId: DancePoseId): PoseBlockT {
-  return { type: 'pose', uid: crypto.randomUUID(), poseId, speed: 'normal' }
-}
-
-export function newRepeatBlock(): RepeatBlockT {
-  return { type: 'repeat', uid: crypto.randomUUID(), count: 2, children: [] }
-}
-
-/** Apply `fn` to the block with `uid`, wherever it is in the tree. */
-export function mapBlock(blocks: Block[], uid: string, fn: (b: Block) => Block): Block[] {
-  return blocks.map((b) => {
-    if (b.uid === uid) return fn(b)
-    if (b.type === 'repeat') return { ...b, children: mapBlock(b.children, uid, fn) }
-    return b
+/** CORAL's palette as a Blockly theme: moves in coral, loops in teal, the start block in navy. */
+export function danceTheme(): Blockly.Theme {
+  return Blockly.Theme.defineTheme('coral-dance', {
+    name: 'coral-dance',
+    base: Blockly.Themes.Zelos,
+    blockStyles: {
+      start_blocks: { colourPrimary: pal('navy'), colourSecondary: pal('navy-light'), colourTertiary: pal('navy-deep'), hat: 'cap' },
+      loop_blocks: { colourPrimary: pal('teal'), colourSecondary: pal('teal-pale'), colourTertiary: pal('navy') },
+      move_blocks: { colourPrimary: pal('coral'), colourSecondary: pal('pink'), colourTertiary: pal('coral-deep') },
+    },
+    componentStyles: {
+      workspaceBackgroundColour: pal('white'),
+      flyoutBackgroundColour: pal('sand-light'),
+      flyoutOpacity: 1,
+      scrollbarColour: pal('navy-pale'),
+      insertionMarkerColour: pal('navy'),
+      selectedGlowColour: pal('gold'),
+    },
+    fontStyle: { family: "'Fredoka', 'Nunito', sans-serif", weight: '600', size: 15 },
   })
 }
 
-/** Remove the block with `uid` from wherever it is in the tree. */
-export function removeBlock(blocks: Block[], uid: string): { tree: Block[]; removed: Block | null } {
-  let removed: Block | null = null
-  const tree = blocks.reduce<Block[]>((acc, b) => {
-    if (b.uid === uid) {
-      removed = b
-      return acc
-    }
-    if (b.type === 'repeat') {
-      const inner = removeBlock(b.children, uid)
-      if (inner.removed) removed = inner.removed
-      acc.push({ ...b, children: inner.tree })
-      return acc
-    }
-    acc.push(b)
-    return acc
-  }, [])
-  return { tree, removed }
+/** The always-open block shelf: the loop, then every move at normal speed. */
+export const TOOLBOX: Blockly.utils.toolbox.ToolboxInfo = {
+  kind: 'flyoutToolbox',
+  contents: [
+    { kind: 'label', text: 'Loops' },
+    { kind: 'block', type: REPEAT_BLOCK },
+    { kind: 'label', text: 'Moves' },
+    ...DANCE_POSES.map((p) => ({ kind: 'block', type: poseBlockType(p.id), fields: { SPEED: 'normal' } })),
+  ],
 }
 
-/** True if `uid` is `node` itself or anywhere inside its subtree. */
-function containsUid(node: Block, uid: string): boolean {
-  if (node.uid === uid) return true
-  if (node.type === 'repeat') return node.children.some((c) => containsUid(c, uid))
-  return false
-}
-
-/**
- * Insert `block` into `parentUid`'s children (or the top level, if null),
- * just before `beforeUid` (or at the end, if null or not found there).
- */
-function insertBefore(
-  blocks: Block[],
-  parentUid: string | null,
-  beforeUid: string | null,
-  block: Block,
-): Block[] {
-  if (parentUid === null) {
-    const idx = beforeUid ? blocks.findIndex((b) => b.uid === beforeUid) : -1
-    const at = idx === -1 ? blocks.length : idx
-    return [...blocks.slice(0, at), block, ...blocks.slice(at)]
+/** Steps for a stack of blocks starting at `first`, skipping any a child disabled. */
+function readStack(first: Blockly.Block | null): Step[] {
+  const steps: Step[] = []
+  for (let b = first; b; b = b.getNextBlock()) {
+    if (!b.isEnabled()) continue
+    if (b.type === REPEAT_BLOCK) {
+      steps.push({ kind: 'repeat', blockId: b.id, times: Number(b.getFieldValue('TIMES')), body: readStack(b.getInputTargetBlock('DO')) })
+      continue
+    }
+    const pose = POSE_BY_BLOCK_TYPE.get(b.type)
+    if (pose) steps.push({ kind: 'pose', blockId: b.id, pose, speed: b.getFieldValue('SPEED') as DanceSpeed })
   }
-  return blocks.map((b) => {
-    if (b.uid === parentUid && b.type === 'repeat') {
-      const idx = beforeUid ? b.children.findIndex((c) => c.uid === beforeUid) : -1
-      const at = idx === -1 ? b.children.length : idx
-      return { ...b, children: [...b.children.slice(0, at), block, ...b.children.slice(at)] }
-    }
-    if (b.type === 'repeat') return { ...b, children: insertBefore(b.children, parentUid, beforeUid, block) }
-    return b
-  })
+  return steps
 }
 
-/**
- * Move the block with `sourceUid` so it sits just before `beforeUid` inside
- * `destParentUid`'s children (top level if null). No-ops if the move would
- * drop a block into itself or into its own subtree (which would otherwise
- * create a cycle), or if the source can't be found.
- */
-export function moveBlock(
-  blocks: Block[],
-  sourceUid: string,
-  destParentUid: string | null,
-  beforeUid: string | null,
-): Block[] {
-  if (sourceUid === destParentUid || sourceUid === beforeUid) return blocks
-  const { tree, removed } = removeBlock(blocks, sourceUid)
-  if (!removed) return blocks
-  if (destParentUid !== null && containsUid(removed, destParentUid)) return blocks
-  return insertBefore(tree, destParentUid, beforeUid, removed)
+/** The program: every step snapped under the start block. */
+export function readProgram(workspace: Blockly.Workspace): Step[] {
+  const start = workspace.getBlocksByType(START_BLOCK)[0]
+  return readStack(start?.getNextBlock() ?? null)
+}
+
+/** True if the program has at least one move to play (a repeat with nothing inside doesn't count). */
+export function hasMoves(steps: Step[]): boolean {
+  return steps.some((s) => s.kind === 'pose' || hasMoves(s.body))
 }

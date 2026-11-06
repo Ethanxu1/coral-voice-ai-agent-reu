@@ -80,6 +80,8 @@ export interface SetPoseResult {
 // clamp); `checkFall: false` skips only the fall check (test pages, which pin
 // the sim upright instead). `toRobot` also moves the physical robot when the
 // server is in robot mode (needs durationMs > 0 and the collision check).
+// `waitUntilArrived` resolves only once the sim's joints have physically reached
+// the pose (the motors trail the glide), not just their targets.
 export async function setPose(
   pulses: Record<string, number>,
   {
@@ -87,7 +89,14 @@ export async function setPose(
     skipCollisionCheck = false,
     checkFall = true,
     toRobot = false,
-  }: { durationMs?: number; skipCollisionCheck?: boolean; checkFall?: boolean; toRobot?: boolean } = {},
+    waitUntilArrived = false,
+  }: {
+    durationMs?: number
+    skipCollisionCheck?: boolean
+    checkFall?: boolean
+    toRobot?: boolean
+    waitUntilArrived?: boolean
+  } = {},
 ): Promise<SetPoseResult> {
   const data = await postJSON<{
     status: 'done' | 'blocked'
@@ -96,7 +105,14 @@ export async function setPose(
     safety?: unknown
   }>(
     `${SERVER_BASE}/set-pose`,
-    { pulses, duration_ms: durationMs, skip_collision_check: skipCollisionCheck, check_fall: checkFall, to_robot: toRobot },
+    {
+      pulses,
+      duration_ms: durationMs,
+      skip_collision_check: skipCollisionCheck,
+      check_fall: checkFall,
+      to_robot: toRobot,
+      wait_until_arrived: waitUntilArrived,
+    },
     'set-pose',
   )
   return {

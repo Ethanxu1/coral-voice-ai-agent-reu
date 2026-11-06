@@ -1,144 +1,120 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ConnectionHealthDot } from './RefinedDemo'
+import { useEffect, useRef, useState } from 'react'
 import RobotViewer from '../components/RobotViewer'
-import { useConnectionStatus } from '../components/ConnectionStatus'
-import { resetPose, stopSubjectSelection } from '../demo/api'
-import { resetToStand } from '../pose/robotPose'
-import { STAND_PULSES, SPEED_CYCLE, type DancePoseId } from '../dance/poses'
-import { newPoseBlock, newRepeatBlock, removeBlock, mapBlock, moveBlock, type Block } from '../dance/blocks'
+import { resetPose } from '../api/robot'
+import { stopSubjectSelection } from '../api/vision'
+import CornerMenu from '../rps/CornerMenu'
+import DanceWorkspace, { type DanceWorkspaceHandle } from '../dance/DanceWorkspace'
+import { hasMoves, type Step } from '../dance/blocks'
+import { DANCE_POSE_BY_ID, type DancePoseId } from '../dance/poses'
 import { playSequence } from '../dance/sequencePlayer'
-import PoseLibrary from '../dance/PoseLibrary'
-import SequenceBuilder from '../dance/SequenceBuilder'
-import './RefinedDemo.css'
 import './DanceGame.css'
 
-export default function DanceGame() {
-  const navigate = useNavigate()
-  const services = useConnectionStatus()
+/** For the grown-up: how the blocks work, from the corner menu. */
+function HowToPlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="help" onClick={onClose}>
+      <div className="help-card" onClick={(e) => e.stopPropagation()}>
+        <h2>How to play</h2>
+        <ol className="help-steps">
+          <li><span>🧩</span><p>Drag moves from the shelf and snap them under <b>when ▶ Dance! is pressed</b>.</p></li>
+          <li><span>🔁</span><p>Put moves inside <b>repeat</b> to do them again and again.</p></li>
+          <li><span>▶</span><p>Press <b>Dance!</b> and watch CORAL go.</p></li>
+        </ol>
+        <p className="help-note">Grey blocks aren't snapped on, so CORAL skips them. Drag a block back to the shelf to throw it away.</p>
+        <button className="big-btn small" onClick={onClose}>OK</button>
+      </div>
+    </div>
+  )
+}
 
-  const [blocks, setBlocks] = useState<Block[]>([])
+export default function DanceGame() {
+  const [program, setProgram] = useState<Step[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
-  const [activeUid, setActiveUid] = useState<string | null>(null)
-  const blocksRef = useRef<Block[]>([])
-  blocksRef.current = blocks
+  /** The move playing now, and a count so the same move twice in a row pops the bubble again. */
+  const [move, setMove] = useState<{ pose: DancePoseId; n: number } | null>(null)
+  const [help, setHelp] = useState(false)
+  const workspaceRef = useRef<DanceWorkspaceHandle>(null)
   const tokenRef = useRef(0)
 
-  // Greet with a clean stand on entry; cancel any in-flight play and settle
-  // the sim back to stand on exit.
+  // Start from a clean stand; on exit, cancel any dance and stand the sim back up.
   useEffect(() => {
     stopSubjectSelection()
-    resetToStand(STAND_PULSES).catch(() => {})
+    resetPose().catch(() => {})
     return () => {
       tokenRef.current++
       resetPose().catch(() => {})
     }
   }, [])
 
-  const addPose = useCallback((poseId: DancePoseId) => {
-    setBlocks((b) => [...b, newPoseBlock(poseId)])
-  }, [])
+  const finish = () => {
+    setIsPlaying(false)
+    setMove(null)
+    workspaceRef.current?.highlight(null)
+  }
 
-  const addRepeat = useCallback(() => {
-    setBlocks((b) => [...b, newRepeatBlock()])
-  }, [])
-
-  const removeBlockByUid = useCallback((uid: string) => {
-    setBlocks((b) => removeBlock(b, uid).tree)
-  }, [])
-
-  const cycleSpeed = useCallback((uid: string) => {
-    setBlocks((b) =>
-      mapBlock(b, uid, (blk) =>
-        blk.type === 'pose'
-          ? { ...blk, speed: SPEED_CYCLE[(SPEED_CYCLE.indexOf(blk.speed) + 1) % SPEED_CYCLE.length] }
-          : blk,
-      ),
-    )
-  }, [])
-
-  const setRepeatCount = useCallback((uid: string, n: number) => {
-    setBlocks((b) => mapBlock(b, uid, (blk) => (blk.type === 'repeat' ? { ...blk, count: n } : blk)))
-  }, [])
-
-  const dropBefore = useCallback((sourceUid: string, destParentUid: string | null, beforeUid: string | null) => {
-    setBlocks((b) => moveBlock(b, sourceUid, destParentUid, beforeUid))
-  }, [])
-
-  const handlePlay = useCallback(async () => {
+  const handlePlay = async () => {
     const token = ++tokenRef.current
+    const alive = () => tokenRef.current === token
     setIsPlaying(true)
-    setActiveUid(null)
     try {
-      await playSequence(
-        blocksRef.current,
-        () => tokenRef.current === token,
-        (uid) => setActiveUid(uid),
-      )
+      await playSequence(program, alive, (step) => {
+        setMove((m) => ({ pose: step.pose, n: (m?.n ?? 0) + 1 }))
+        workspaceRef.current?.highlight(step.blockId)
+      })
     } catch (e) {
       console.warn('dance sequence failed', e)
     } finally {
-      if (tokenRef.current === token) {
-        setIsPlaying(false)
-        setActiveUid(null)
-      }
+      if (alive()) finish()
     }
-  }, [])
+  }
 
-  const handleStop = useCallback(() => {
+  /** Stops after the move that is gliding now. */
+  const handleStop = () => {
     tokenRef.current++
-    setIsPlaying(false)
-    setActiveUid(null)
-  }, [])
+    finish()
+  }
 
-  const leave = () => navigate('/')
+  const ready = hasMoves(program)
+  const pose = move && DANCE_POSE_BY_ID[move.pose]
+  const bubble = pose
+    ? `${pose.emoji} ${pose.label}!`
+    : ready
+      ? 'Press Dance! to watch me go'
+      : 'Snap some moves on to make me dance'
 
   return (
-    <div className="rd-root">
-      <header className="rd-topbar">
-        <div className="rd-topbar-left">
-          <div className="rd-logo">
-            coral<span>.</span>
-          </div>
-        </div>
-        <div className="rd-topbar-right">
-          <button
-            className="rd-topbar-btn ghost"
-            onClick={() => {
-              resetToStand(STAND_PULSES).catch(() => {})
-            }}
-          >
-            Return to stand
-          </button>
-          <ConnectionHealthDot services={services} />
-          <button className="rd-topbar-btn danger" onClick={leave}>
-            End
-          </button>
-        </div>
+    <div className="dance">
+      <header className="top">
+        <h1>Make CORAL dance!</h1>
+        <CornerMenu onHelp={() => setHelp(true)} menuPath={null} />
       </header>
 
       <main className="dance-main">
-        <PoseLibrary onAddPose={addPose} onAddRepeat={addRepeat} />
+        <section className="code-card">
+          <DanceWorkspace ref={workspaceRef} locked={isPlaying} onChange={setProgram} />
+        </section>
 
-        <div className="dance-viewer-col">
-          <div className="rd-sim-grid" />
-          <div className="rd-sim-vignette" />
-          <div className="rd-sim-badge"><span className="rd-sim-badge-dot" />SIM</div>
-          <RobotViewer embedded />
-        </div>
-
-        <SequenceBuilder
-          blocks={blocks}
-          isPlaying={isPlaying}
-          activeUid={activeUid}
-          onDropBefore={dropBefore}
-          onRemove={removeBlockByUid}
-          onCycleSpeed={cycleSpeed}
-          onRepeatCountChange={setRepeatCount}
-          onPlay={handlePlay}
-          onStop={handleStop}
-        />
+        <section className="stage">
+          <div key={move ? move.n : bubble} className={`bubble ${pose ? 'move' : ''}`}>
+            {bubble}
+          </div>
+          <div className={`robot ${isPlaying ? 'dancing' : ''}`}>
+            <div className="floor" />
+            <RobotViewer embedded look="stage" />
+          </div>
+          {isPlaying ? (
+            <button className="big-btn stop" onClick={handleStop}>
+              ■ Stop
+            </button>
+          ) : (
+            <button className="big-btn" onClick={handlePlay} disabled={!ready}>
+              ▶ Dance!
+            </button>
+          )}
+        </section>
       </main>
+
+      {help && <HowToPlay onClose={() => setHelp(false)} />}
     </div>
   )
 }

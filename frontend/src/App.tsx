@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import RefinedDemo from './pages/RefinedDemo'
 import Welcome from './pages/Welcome'
@@ -12,9 +13,11 @@ import RockPaperScissorsMenu from './pages/RockPaperScissorsMenu'
 import GestureStudio from './pages/GestureStudio'
 import GestureRecord from './pages/GestureRecord'
 import GestureLibrary from './pages/GestureLibrary'
-import DanceGame from './pages/DanceGame'
 import ConnectionStatus from './components/ConnectionStatus'
 import './App.css'
+
+// Loaded on demand so Blockly stays out of the bundle every other page downloads.
+const DanceGame = lazy(() => import('./pages/DanceGame'))
 
 function App() {
   const mainView = (
@@ -70,7 +73,7 @@ function App() {
       <Route path="/gestures" element={<GestureStudio />} />
       <Route path="/gestures/record" element={<GestureRecord />} />
       <Route path="/gestures/library" element={<GestureLibrary />} />
-      <Route path="/dance-game" element={<DanceGame />} />
+      <Route path="/dance-game" element={<Suspense><DanceGame /></Suspense>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

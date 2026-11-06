@@ -30,6 +30,7 @@ from app.services.motion import (
     collision_checked_targets,
     dispatch_servo_commands,
     reset_to_stand,
+    wait_until_arrived,
 )
 from app.state import state
 from fastapi import APIRouter, HTTPException
@@ -114,7 +115,9 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
     skips the fall half — the Pose Tester pins the sim upright instead), and the
     verdict is returned. With `duration_ms` > 0 the sim glides there over that time;
     0 applies it instantly. Sim only, unless `to_robot` (Rock Paper Scissors):
-    then the glide also reaches the physical robot in robot mode.
+    then the glide also reaches the physical robot in robot mode. With
+    `wait_until_arrived` (Dance Game) it replies once the sim's joints have
+    physically got there, not just their motor targets.
     """
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
@@ -147,6 +150,8 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
     else:
         for joint, rad in targets.items():
             state.simulator.set_joint_position(joint, rad)
+    if req.wait_until_arrived:
+        await wait_until_arrived(state.simulator, targets)
 
     applied = [joint for joint in req.pulses if joint in targets]
     return {"status": "done", "applied": applied, "skipped": skipped, "safety": safety}

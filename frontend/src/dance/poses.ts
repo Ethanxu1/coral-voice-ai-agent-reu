@@ -15,7 +15,7 @@
 //
 // "wave" in motions.py is a 9-frame animation, not a single pose. Its last
 // frame is identical to the resting stand-arms position (it's the wind-down
-// frame), so using it here would make the "Wave" card look just like "Stand".
+// frame), so using it here would make the "Wave" block look just like "Stand".
 // Frame 0 (arms raised, mid-wave) is used instead as a single representative
 // pose. Playing the full animation is a documented future idea, not built here.
 
@@ -225,23 +225,18 @@ export const DANCE_POSE_BY_ID: Record<DancePoseId, DancePoseDef> = Object.fromEn
   DANCE_POSES.map((p) => [p.id, p]),
 ) as Record<DancePoseId, DancePoseDef>
 
-/** Baseline the sequence resets to before the first lap and after the last. */
-export const STAND_PULSES = DANCE_POSE_BY_ID.stand.robotPulses
-
 export type DanceSpeed = 'slow' | 'normal' | 'fast'
 
-/** How long each move takes to ease into, per speed choice. */
+/** How long each move takes to glide into, per speed choice. */
 export const SPEED_MS: Record<DanceSpeed, number> = {
   slow: 1400,
-  normal: 700, // matches pose/robotPose.ts's own default, so "Normal" feels the same as other games
+  normal: 700,
   fast: 350,
 }
 
+/** The speed dropdown's text on each move block, in dropdown order. */
 export const SPEED_LABEL: Record<DanceSpeed, string> = {
-  slow: 'Slow',
-  normal: 'Normal',
-  fast: 'Fast',
+  slow: '🐢 slow',
+  normal: '🚶 normal',
+  fast: '🐇 fast',
 }
-
-/** Click order for cycling a chip's speed tag. */
-export const SPEED_CYCLE: DanceSpeed[] = ['slow', 'normal', 'fast']

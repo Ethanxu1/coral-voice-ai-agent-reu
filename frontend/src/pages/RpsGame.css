@@ -45,16 +45,6 @@
 .rpsg .mute-btn { position: absolute; top: 16px; left: 18px; width: 52px; height: 52px; border-radius: 50%; background: color-mix(in srgb, var(--pal-navy) 8%, transparent); color: var(--plum); display: grid; place-items: center; }
 .rpsg .mute-btn:hover { background: color-mix(in srgb, var(--pal-navy) 14%, transparent); }
 .rpsg .mute-btn.muted { background: var(--plum); color: #fff; }
-.rpsg .cm-toggle { width: 44px; height: 44px; border-radius: 50%; background: color-mix(in srgb, var(--pal-navy) 8%, transparent); color: color-mix(in srgb, var(--pal-navy) 55%, transparent); display: grid; place-items: center; }
-.rpsg .cm-toggle:hover { background: color-mix(in srgb, var(--pal-navy) 14%, transparent); color: var(--plum); }
-.rpsg .cm-pop { position: absolute; right: 0; top: 52px; width: 220px; background: #fff; border-radius: 16px; padding: 10px; box-shadow: 0 12px 34px color-mix(in srgb, var(--pal-navy) 20%, transparent); display: flex; flex-direction: column; gap: 6px; }
-.rpsg .cm-status { padding: 4px 6px 8px; }
-.rpsg .cm-item { position: relative; overflow: hidden; text-align: left; padding: 11px 14px; border-radius: 10px; font-weight: 800; font-size: 15px; color: var(--ink); background: var(--pal-sand-light); display: flex; align-items: center; }
-.rpsg .cm-item:hover { background: var(--pal-sand); }
-.rpsg .cm-item .txt { position: relative; flex: 1; }
-.rpsg .cm-item small { position: relative; font-size: 12px; font-weight: 700; color: var(--pal-navy-soft); }
-.rpsg .cm-item .fill { position: absolute; inset: 0; width: 0; background: color-mix(in srgb, var(--pal-coral-deep) 28%, transparent); }
-.rpsg .cm-item.holding .fill { width: 100%; transition: width var(--hold) linear; }
 
 /* ── CORAL's stage (left) and CORAL's eye (right) ──────────────────────── */
 .rpsg .stage-row { display: grid; grid-template-columns: 1.25fr 1fr; gap: 28px; padding: 0 36px; min-height: 0; position: relative; }

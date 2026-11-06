@@ -2,7 +2,7 @@
 
 import threading
 import time
-from typing import Callable
+from typing import Callable, Iterable
 
 import mujoco
 import mujoco.viewer
@@ -256,6 +256,19 @@ class AiNexSimulator:
         fallen state, which animating the joints alone cannot."""
         self._apply_stand_keyframe(lift=self.DROP_HEIGHT)
         logger.info("Reset: dropped into standing pose")
+
+    def get_actual_joint_positions(self, joint_names: Iterable[str]) -> dict[str, float]:
+        """Where the joints physically are (qpos), in radians.
+
+        The getters above return the motor targets (ctrl); the position motors
+        trail those, the soft arm motors by a lot during a fast glide.
+        """
+        addrs = {}
+        for name in joint_names:
+            actuator_id = self._actuator_ids[self.JOINT_NAMES.get(name, name)]
+            addrs[name] = int(self.model.jnt_qposadr[int(self.model.actuator_trnid[actuator_id, 0])])
+        with self._lock:
+            return {name: float(self.data.qpos[addr]) for name, addr in addrs.items()}
 
     def get_all_joint_states(self) -> dict[str, float]:
         states = {}

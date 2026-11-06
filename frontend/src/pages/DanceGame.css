@@ -1,292 +1,85 @@
-/* Dance Game reuses the Refined Demo shell (rd-* classes in RefinedDemo.css)
-   for the topbar and sim panel chrome. The 3-column body below is new. */
+/* Dance Game, in the same look as Rock-Paper-Scissors Play (RpsGame.css): the
+   sand room, CORAL on its stage, Fredoka for anything a child reads. Scoped
+   under .dance; colours come from the shared palette (src/theme/palette.css).
+   The Blockly blocks take their colours from the same palette in dance/blocks.ts. */
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@600;700;800&display=swap');
 
-.dance-main {
-  flex: 1;
+.dance {
+  height: 100vh;
   display: grid;
-  grid-template-columns: 260px 1.4fr 320px;
-  gap: 18px;
-  min-height: 0;
-}
-
-.dance-panel-title {
-  font-family: 'Baloo 2', cursive;
-  font-size: 16px;
-  font-weight: 800;
-  color: #2D2926;
-  padding: 18px 20px 8px;
-  flex-shrink: 0;
-}
-
-/* ── Left: pose library ────────────────────────────────────────────────── */
-.dance-library {
-  background: #FFFDF8;
-  border-radius: 28px;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.dance-library-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding: 4px 16px 20px;
-}
-
-.dance-library-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 14px 6px;
-  background: rgba(45, 41, 38, 0.05);
-  border: 2px solid transparent;
-  border-radius: 18px;
-  cursor: pointer;
-  transition: transform 0.12s, border-color 0.12s, background 0.12s;
-}
-
-.dance-library-card:hover {
-  transform: translateY(-2px);
-  border-color: #17BEBB;
-  background: rgba(23, 190, 187, 0.1);
-}
-
-.dance-library-emoji {
-  font-size: 28px;
-}
-
-.dance-library-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: #2D2926;
-  text-align: center;
-}
-
-.dance-palette-section-label {
-  padding: 2px 16px;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #9E9591;
-}
-
-.dance-palette-section-label:first-of-type {
-  padding-top: 0;
-}
-
-.dance-repeat-card {
-  grid-column: span 2;
-  flex-direction: row;
-  justify-content: center;
-  background: rgba(255, 159, 28, 0.12);
-}
-
-.dance-repeat-card:hover {
-  border-color: #FF9F1C;
-  background: rgba(255, 159, 28, 0.2);
-}
-
-/* ── Middle: robot viewer ──────────────────────────────────────────────── */
-.dance-viewer-col {
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
   position: relative;
-  border-radius: 28px;
-  background: #26232F;
-  overflow: hidden;
-  min-height: 460px;
+  color: var(--game-text);
+  font-family: 'Nunito', sans-serif;
+  background:
+    radial-gradient(ellipse 50% 55% at 72% 45%, var(--pal-sand-light) 0%, transparent 70%),
+    linear-gradient(180deg, var(--pal-sand-mid) 0%, var(--pal-sand) 100%);
 }
+.dance * { box-sizing: border-box; }
+.dance button { font-family: inherit; cursor: pointer; border: none; }
+.dance h1, .dance h2 { margin: 0; }
 
-/* ── Right: sequence builder ───────────────────────────────────────────── */
-.dance-builder {
-  background: #FFFDF8;
-  border-radius: 28px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
+/* ── Top: the title, grown-up menu in the corner ───────────────────────── */
+.dance .top { display: flex; justify-content: center; align-items: center; min-height: 84px; padding: 14px 24px 0; position: relative; z-index: 40; }
+.dance .top h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 42px; color: var(--pal-navy); }
+.dance .corner-menu { position: absolute; top: 16px; right: 18px; }
 
-.dance-canvas {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 16px 16px;
-}
+/* ── Blocks (left) and CORAL's stage (right) ───────────────────────────── */
+.dance .dance-main { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; padding: 10px 32px 28px; min-height: 0; }
 
-.dance-block-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  /* Always-present slack below the last row, so "drop at the end of this
-     list" is a real, reachable area even when the list is full-looking —
-     not just a sliver you have to hit exactly. */
-  min-height: 28px;
-  padding-bottom: 8px;
+.dance .code-card {
+  position: relative; min-height: 0; border-radius: 28px; overflow: hidden;
+  background: var(--pal-white);
+  box-shadow: 0 8px 0 color-mix(in srgb, var(--pal-navy) 8%, transparent), 0 18px 40px color-mix(in srgb, var(--pal-navy) 10%, transparent);
 }
+.dance .dance-workspace { position: absolute; inset: 0; }
 
-.dance-block-wrap {
-  /* Pure structural wrapper (drag source + drop target) around a repeat
-     block's visible card — see dance-repeat-block for the actual styling. */
-}
+/* Blockly: the shelf's section labels, the playing block, and the locked shelf. */
+.dance .blocklyFlyoutLabelText { fill: var(--pal-navy-soft); font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 18px; }
+.dance .blocklyHighlighted > .blocklyPath { stroke: var(--pal-gold); stroke-width: 5px; filter: drop-shadow(0 0 6px var(--pal-gold)); }
+.dance .dance-workspace.locked .blocklyFlyout,
+.dance .dance-workspace.locked .blocklyFlyoutScrollbar { opacity: .45; pointer-events: none; transition: opacity .2s; }
 
-/* The live "it will land here" preview. Being an ordinary flex child, it
-   naturally pushes the surrounding rows apart — that's the "shifting"
-   effect, for free, with no manual position math. */
-.dance-drop-indicator {
-  height: 10px;
-  border-radius: 6px;
-  background: repeating-linear-gradient(135deg, #17BEBB 0 8px, #0fa8ab 8px 16px);
-  box-shadow: 0 0 0 2px rgba(23, 190, 187, 0.25);
-}
+.dance .stage { position: relative; min-height: 0; display: flex; flex-direction: column; align-items: center; }
+.dance .robot { position: relative; flex: 1 1 0; min-height: 0; width: 100%; }
+.dance .robot .floor { position: absolute; left: 10%; right: 10%; bottom: 0; height: 30%; border-radius: 50%; background: radial-gradient(ellipse at center, var(--pal-pink) 0%, color-mix(in srgb, var(--pal-pink) 55%, transparent) 45%, transparent 72%); }
+.dance .robot.dancing .floor { animation: dance-glow 1.2s ease-in-out infinite; }
+@keyframes dance-glow { 50% { transform: scale(1.08); opacity: .8; } }
 
-.dance-block-dropzone-empty {
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6B625D;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-  padding: 10px;
-  border: 2px dashed rgba(45, 41, 38, 0.15);
-  border-radius: 14px;
-  pointer-events: none;
+/* CORAL's speech bubble: a hint while building, the current move while dancing. */
+.dance .bubble {
+  position: relative; z-index: 5; max-width: 96%; text-align: center;
+  background: #fff; color: var(--game-text); border-radius: 28px; padding: 14px 28px;
+  font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: clamp(24px, 2.4vw, 36px); line-height: 1.15;
+  box-shadow: 0 8px 0 color-mix(in srgb, var(--pal-coral-deep) 25%, transparent), 0 16px 34px color-mix(in srgb, var(--pal-navy) 12%, transparent);
+  animation: dance-pop .35s cubic-bezier(.3,1.6,.6,1);
 }
+.dance .bubble::after { content: ''; position: absolute; bottom: -16px; left: 50%; margin-left: -16px; border: 16px solid transparent; border-top-color: #fff; border-bottom: 0; }
+.dance .bubble.move { color: var(--game-robot-deep); font-size: clamp(30px, 3vw, 46px); }
+@keyframes dance-pop { from { transform: scale(.6); opacity: 0; } }
 
-.dance-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: rgba(45, 41, 38, 0.05);
-  border: 2px solid transparent;
-  border-radius: 14px;
+.dance .big-btn {
+  flex: none; margin-top: 18px;
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 48px; color: #fff;
+  background: var(--game-robot); padding: 14px 72px 18px; border-radius: 999px;
+  box-shadow: 0 10px 0 var(--game-robot-deep), 0 22px 40px color-mix(in srgb, var(--pal-coral-deep) 35%, transparent);
+  animation: dance-breathe 2s ease-in-out infinite;
 }
+.dance .big-btn:active { transform: translateY(6px); box-shadow: 0 4px 0 var(--game-robot-deep); }
+.dance .big-btn:disabled { background: var(--pal-navy-pale); box-shadow: 0 10px 0 var(--pal-navy-soft); animation: none; cursor: default; transform: none; }
+.dance .big-btn.stop { background: var(--pal-navy); box-shadow: 0 10px 0 var(--pal-navy-deep), 0 22px 40px color-mix(in srgb, var(--pal-navy) 30%, transparent); animation: none; }
+.dance .big-btn.stop:active { box-shadow: 0 4px 0 var(--pal-navy-deep); }
+.dance .big-btn.small { font-size: 30px; padding: 10px 48px 12px; margin-top: 0; animation: none; }
+@keyframes dance-breathe { 50% { transform: scale(1.04); } }
 
-.dance-chip.active {
-  border-color: #FF6B4A;
-  background: rgba(255, 107, 74, 0.1);
-}
-
-.dance-chip-drag-handle {
-  color: rgba(45, 41, 38, 0.35);
-  cursor: grab;
-  font-size: 14px;
-}
-
-.dance-chip-emoji {
-  font-size: 18px;
-}
-
-.dance-chip-label {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 700;
-  color: #2D2926;
-}
-
-.dance-chip-speed {
-  border: none;
-  background: rgba(23, 190, 187, 0.15);
-  color: #0f7f7d;
-  font-size: 11px;
-  font-weight: 800;
-  padding: 4px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.dance-chip-speed:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.dance-chip-remove {
-  border: none;
-  background: transparent;
-  color: #9E9591;
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 4px;
-}
-
-.dance-chip-remove:hover {
-  color: #FF6B4A;
-}
-
-.dance-controls {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 14px 20px 20px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-/* ── Repeat block: a C-shaped container, Scratch-style ─────────────────── */
-.dance-repeat-block {
-  border: 2px solid #FF9F1C;
-  border-radius: 14px;
-  background: rgba(255, 159, 28, 0.08);
-  overflow: hidden;
-}
-
-.dance-repeat-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: rgba(255, 159, 28, 0.18);
-}
-
-.dance-repeat-label {
-  font-size: 13px;
-  font-weight: 800;
-  color: #a85a00;
-}
-
-.dance-repeat-header input {
-  width: 46px;
-  padding: 4px 6px;
-  border-radius: 8px;
-  border: 1px solid rgba(168, 90, 0, 0.3);
-  font-size: 13px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.dance-repeat-body {
-  padding: 10px 10px 10px 22px;
-}
-
-.dance-play-btn {
-  padding: 10px 22px;
-  border: none;
-  border-radius: 999px;
-  background: #2E7D32;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.dance-play-btn:disabled {
-  background: #9E9591;
-  cursor: default;
-}
-
-.dance-play-btn.stop {
-  background: #FF6B4A;
-}
-
-@media (max-width: 980px) {
-  .dance-main {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
-  }
-}
+/* ── How to play (grown-up, from the corner menu) ──────────────────────── */
+.dance .help { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: color-mix(in srgb, var(--pal-sand) 60%, transparent); backdrop-filter: blur(6px); }
+.dance .help-card { background: #fff; border-radius: 30px; padding: 30px 36px; max-width: 640px; display: flex; flex-direction: column; align-items: center; gap: 18px; box-shadow: 0 20px 60px color-mix(in srgb, var(--pal-navy) 20%, transparent); }
+.dance .help-card h2 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 40px; }
+.dance .help-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.dance .help-steps li { display: flex; align-items: center; gap: 14px; background: var(--game-bg-light); border-radius: 18px; padding: 12px 18px; font-size: 19px; font-weight: 700; }
+.dance .help-steps li span { font-size: 30px; width: 40px; text-align: center; flex: none; }
+.dance .help-steps p { margin: 0; }
+.dance .help-steps b { color: var(--pal-navy); }
+.dance .help-note { margin: 0; font-size: 16px; font-weight: 700; color: var(--game-text-soft); text-align: center; }

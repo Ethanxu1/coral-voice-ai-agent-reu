@@ -29,6 +29,9 @@ class SetPoseRequest(BaseModel):
     # Rock Paper Scissors: also move the physical robot when the server is in
     # robot mode. Only for safety-checked, timed glides.
     to_robot: bool = False
+    # Dance Game: reply only once the sim's joints have physically reached the
+    # pose (or stopped short), not as soon as the motor targets have.
+    wait_until_arrived: bool = False
 
     @model_validator(mode="after")
     def _robot_pose_is_checked_and_timed(self) -> "SetPoseRequest":

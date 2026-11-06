@@ -1,42 +1,51 @@
-// Runs a programmed dance block-tree on the simulator robot.
+// Runs a dance program (the steps under the start block) on the simulator robot.
 //
-// Pure async logic, no React — the page owns the cancellation token and React
-// state, this just walks the blocks and calls into pose/robotPose.ts.
+// Pure async logic, no React: the page owns the cancellation token and React
+// state, this just walks the steps.
 
-import { poseRobot, resetToStand } from '../pose/robotPose'
-import { DANCE_POSE_BY_ID, SPEED_MS, STAND_PULSES } from './poses'
-import type { Block } from './blocks'
+import { resetPose, setPose } from '../api/robot'
+import { DANCE_POSE_BY_ID, SPEED_MS } from './poses'
+import type { Step } from './blocks'
 
-async function playBlocks(blocks: Block[], isAlive: () => boolean, onStep?: (uid: string) => void): Promise<void> {
-  for (const block of blocks) {
+type PoseStep = Extract<Step, { kind: 'pose' }>
+
+/**
+ * Glide the sim to one pose. The request returns once the robot's body has
+ * actually arrived there (or stopped short), so the next move starts from the
+ * finished pose. An instant snap can topple the physics model, so every move is a glide.
+ */
+const glideTo = (pose: PoseStep['pose'], durationMs: number) =>
+  setPose(DANCE_POSE_BY_ID[pose].robotPulses, { durationMs, waitUntilArrived: true })
+
+async function playSteps(steps: Step[], isAlive: () => boolean, onStep?: (step: PoseStep) => void): Promise<void> {
+  for (const step of steps) {
     if (!isAlive()) return
-    if (block.type === 'pose') {
-      onStep?.(block.uid)
-      await poseRobot(DANCE_POSE_BY_ID[block.poseId].robotPulses, SPEED_MS[block.speed])
+    if (step.kind === 'pose') {
+      onStep?.(step)
+      await glideTo(step.pose, SPEED_MS[step.speed])
     } else {
-      for (let i = 0; i < block.count; i++) {
+      for (let i = 0; i < step.times; i++) {
         if (!isAlive()) return
-        await playBlocks(block.children, isAlive, onStep)
+        await playSteps(step.body, isAlive, onStep)
       }
     }
-    if (!isAlive()) return
   }
 }
 
 /**
- * Play the whole top-level block list once (repeat blocks within it loop
- * themselves). `isAlive()` is checked before and after every move so a
- * cancellation (Stop, or the page unmounting) lands cleanly instead of
- * mid-ease. No reset-to-stand between repeat-block laps — one pose eases
- * straight into the next, so the routine reads as continuous rather than
- * stuttering to attention every lap.
+ * Play the program once (repeat steps loop themselves), from a clean stand
+ * and back to one at the end (a reset, not a glide: gliding out of a deep
+ * pose like Warrior can fold the sim over). `isAlive()` is checked before every
+ * move so a cancellation (Stop, or the page unmounting) lands after the
+ * current move has arrived instead of mid-glide. No stand between repeat laps: one pose
+ * glides straight into the next, so the routine reads as continuous.
  */
 export async function playSequence(
-  blocks: Block[],
+  steps: Step[],
   isAlive: () => boolean,
-  onStep?: (uid: string) => void,
+  onStep?: (step: PoseStep) => void,
 ): Promise<void> {
-  await resetToStand(STAND_PULSES)
-  if (isAlive()) await playBlocks(blocks, isAlive, onStep)
-  if (isAlive()) await resetToStand(STAND_PULSES)
+  await resetPose()
+  if (isAlive()) await playSteps(steps, isAlive, onStep)
+  if (isAlive()) await resetPose()
 }

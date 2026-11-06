@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import motion as motion_routes
 from app.main import create_app
+from app.robot.hardware_angle_utils import hardware_units_to_rad
 from app.state import state
 
 pytestmark = pytest.mark.db
@@ -64,6 +65,28 @@ def test_duration_glides_through_the_dispatcher(client, monkeypatch):
     [(commands, sim_only)] = calls
     assert sim_only is True
     assert [c.duration_ms for c in commands] == [800]
+
+
+def test_wait_until_arrived_returns_once_the_body_is_there(client):
+    """The Dance Game starts its next move when /set-pose returns. The position
+    motors trail the glide (the soft arms by ~0.25 rad here), so with
+    wait_until_arrived the joint must physically be at the pose by then, not
+    just its motor target."""
+    target = hardware_units_to_rad(513, "l_sho_roll")  # arm out to the side
+
+    data = client.post(
+        "/set-pose",
+        json={
+            "pulses": {"l_sho_roll": 513},
+            "duration_ms": 700,
+            "skip_collision_check": True,
+            "wait_until_arrived": True,
+        },
+    ).json()
+
+    assert data["status"] == "done"
+    actual = state.simulator.get_actual_joint_positions(["l_sho_roll"])["l_sho_roll"]
+    assert actual == pytest.approx(target, abs=0.06)
 
 
 def test_to_robot_follows_the_robot_mode(client, monkeypatch):

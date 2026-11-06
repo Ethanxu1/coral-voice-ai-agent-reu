@@ -22,6 +22,15 @@ from loguru import logger
 # needs a longer, gentler interval than a single-joint nudge.
 RESET_TO_STAND_MS = 1000
 
+# wait_until_arrived: a joint this close to its target counts as there (~3°);
+# one that moved less than STILL_RAD in a poll has stopped (short, when the pose
+# is out of reach or gravity wins over a soft motor). Polled every POLL_S, given
+# up after TIMEOUT_S so a joint that keeps creeping can't stall the caller.
+ARRIVED_RAD = 0.05
+STILL_RAD = 0.005
+ARRIVAL_POLL_S = 0.05
+ARRIVAL_TIMEOUT_S = 3.0
+
 
 def convert_state_to_degrees(state: dict[str, float]) -> dict[str, float]:
     return {joint: round(math.degrees(value), 1) for joint, value in state.items()}
@@ -184,6 +193,26 @@ async def dispatch_servo_commands(
             raise results[0]
     else:
         state.hardware_in_sync = send_to_hardware
+
+
+async def wait_until_arrived(simulator: AiNexSimulator, targets: dict[str, float]) -> None:
+    """Return once the sim's joints have physically reached ``targets`` (rad),
+    or stopped moving, or ARRIVAL_TIMEOUT_S has passed.
+
+    A glide only moves the position motors' targets; the joints trail them
+    under physics, so a move "done" by the dispatcher is still on its way.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + ARRIVAL_TIMEOUT_S
+    previous: dict[str, float] | None = None
+    while loop.time() < deadline:
+        actual = simulator.get_actual_joint_positions(targets)
+        if all(abs(actual[j] - targets[j]) < ARRIVED_RAD for j in targets):
+            return
+        if previous is not None and all(abs(actual[j] - previous[j]) < STILL_RAD for j in targets):
+            return
+        previous = actual
+        await asyncio.sleep(ARRIVAL_POLL_S)
 
 
 async def _execute_on_hardware_if_connected(
