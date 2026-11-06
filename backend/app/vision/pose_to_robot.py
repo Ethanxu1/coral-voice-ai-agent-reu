@@ -25,7 +25,6 @@ hip yaw, and ankles stay at neutral.
 
 from __future__ import annotations
 
-import logging
 import math
 import time
 from typing import Optional
@@ -33,7 +32,6 @@ from typing import Optional
 import numpy as np
 
 from app import config
-from app.robot.angle_utils import rad_to_servo_units
 from app.robot.hardware_angle_utils import HW_STAND_RAD
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import SERVO_ID_MAP
@@ -41,13 +39,11 @@ from app.validation import JOINT_LIMITS
 
 from . import geometry
 
-logger = logging.getLogger(__name__)
-
 # NOTE: OneEuroFilter is imported lazily inside JointAngleSmoother (see __init__)
 # rather than at module load. Pulling it here would drag in pose_estimator ->
-# mediapipe/cv2, but compute_joint_targets / targets_to_servo_commands only need
-# `geometry` (numpy). Keeping the top-level import light lets the Pi robot_server
-# reuse the retargeting without installing the full vision stack.
+# mediapipe/cv2, but compute_joint_targets only needs
+# `geometry` (numpy). Keeping the top-level import light lets the main server
+# reuse the retargeting (follow mode) without loading the full vision stack.
 
 # MediaPipe pose landmark indices (re-exported from geometry for clarity)
 _LM_L_SHOULDER = geometry.LEFT_SHOULDER
@@ -435,31 +431,6 @@ def compute_joint_targets(
                     targets["r_knee"] = _clamp_to_limits("r_knee", -bend)
 
     return targets
-
-
-def targets_to_servo_commands(
-    targets: dict[str, float], duration_ms: int
-) -> list[ServoCommand]:
-    """Convert joint-name → radians dict to ServoCommands for the *simulator*.
-
-    Uses the uniform 500-centre map (rad=0 ↔ 500), which round-trips correctly
-    through the MuJoCo sim. For the physical robot use
-    targets_to_hardware_servo_commands instead — real servos have asymmetric
-    stand pulses, mirror-mounted direction signs, and damaged-servo limits.
-    """
-    commands: list[ServoCommand] = []
-    for joint, rad in targets.items():
-        servo_id = SERVO_ID_MAP.get(joint)
-        if servo_id is None:
-            continue
-        commands.append(
-            ServoCommand(
-                servo_id=servo_id,
-                position=rad_to_servo_units(rad),
-                duration_ms=duration_ms,
-            )
-        )
-    return commands
 
 
 def targets_to_hardware_servo_commands(

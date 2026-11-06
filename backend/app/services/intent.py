@@ -8,13 +8,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from fastapi import WebSocket
-from loguru import logger
-
 from app.data.pose_db import get_pose, list_pose_names, save_pose
 from app.services.motion import _execute_on_hardware_if_connected, _get_robot_state
 from app.services.tts import send_chat_response_with_audio
 from app.state import state
+from fastapi import WebSocket
+from loguru import logger
 
 if TYPE_CHECKING:
     from app.services.chat import HierarchicalMemory
@@ -376,7 +375,7 @@ async def try_handle_system_intent(
 
     if intent == "follow_start":
         await state.follow_controller.start_follow(
-            status_fn, sim_only=sim_only, clean_logger=clean_logger
+            status_fn, sim_only=sim_only, clean_logger=clean_logger, owner=websocket
         )
         response = "Following your movements — say stop when done."
         await send_chat_response_with_audio(

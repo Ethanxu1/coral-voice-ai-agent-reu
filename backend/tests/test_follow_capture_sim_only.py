@@ -21,7 +21,7 @@ class _FakeFollowController:
         self.start_follow_calls: list[bool | None] = []
         self.capture_calls: list[bool | None] = []
 
-    async def start_follow(self, status_fn, sim_only=None, clean_logger=None):
+    async def start_follow(self, status_fn, sim_only=None, clean_logger=None, owner=None):
         self.start_follow_calls.append(sim_only)
 
     async def stop_follow(self, status_fn=None, reason=None, clean_logger=None):

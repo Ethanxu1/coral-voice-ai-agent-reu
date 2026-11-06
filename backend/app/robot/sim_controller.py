@@ -3,7 +3,7 @@ import time
 
 from app.robot.angle_utils import rad_to_servo_units, servo_units_to_rad
 from app.robot.interface import RobotController, ServoCommand, ServoFeedback
-from app.robot.servo_config import JOINT_NAME_MAP, SERVO_ID_MAP
+from app.robot.servo_config import JOINT_NAME_MAP
 
 
 class SimController(RobotController):

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import RobotViewer from '../components/RobotViewer'
-import { getRobotBase, getRobotStream } from '../demo/robotConfig'
-import { resetPose } from '../demo/api'
-import { ACTION_WS } from '../demo/config'
+import { resetPose } from '../api/robot'
+import { ACTION_WS, SERVER_BASE, VISION_BASE } from '../config'
+import GravityToggle from '../components/GravityToggle'
+import { LiveStream } from '../components/LiveStream'
+import { useSimUpright } from '../hooks/useSimUpright'
 import './TestFunctionality.css'
+import { JOINT_GROUPS as JOINT_GROUPS_BY_PART } from '../robot/joints'
 
 const JOINT_GROUPS: {
   title: string
@@ -68,32 +71,14 @@ function radToServoUnits(rad: number): number {
   return Math.max(0, Math.min(1000, units))
 }
 
-const STATE_GROUPS: { title: string; joints: string[] }[] = [
-  { title: 'Head', joints: ['head_pan', 'head_tilt'] },
-  {
-    title: 'Left Arm',
-    joints: ['l_sho_pitch', 'l_sho_roll', 'l_el_pitch', 'l_el_yaw', 'l_gripper'],
-  },
-  {
-    title: 'Right Arm',
-    joints: ['r_sho_pitch', 'r_sho_roll', 'r_el_pitch', 'r_el_yaw', 'r_gripper'],
-  },
-  {
-    title: 'Left Leg',
-    joints: ['l_hip_yaw', 'l_hip_roll', 'l_hip_pitch', 'l_knee', 'l_ank_pitch', 'l_ank_roll'],
-  },
-  {
-    title: 'Right Leg',
-    joints: ['r_hip_yaw', 'r_hip_roll', 'r_hip_pitch', 'r_knee', 'r_ank_pitch', 'r_ank_roll'],
-  },
-]
 
 export default function TestFunctionality() {
+  const [gravity, setGravity] = useState(false)
+  useSimUpright(!gravity)
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed' | 'error'>('connecting')
   const [joints, setJoints] = useState<Record<string, number>>({})
   const [lastCmd, setLastCmd] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const cameraKeyRef = useRef(0)
 
   // WebSocket for commands
   useEffect(() => {
@@ -107,9 +92,7 @@ export default function TestFunctionality() {
         const data = JSON.parse(event.data)
         if (data.type === 'command_result') {
           let note = ''
-          if (data.fall_blocked) {
-            note = ' — blocked: would fall over'
-          } else if (data.collision_clamped) {
+          if (data.collision_clamped) {
             const pairs = Array.isArray(data.bad_pairs) ? data.bad_pairs.join(', ') : ''
             note = ` — stopped short: would collide (${pairs})`
           }
@@ -127,7 +110,7 @@ export default function TestFunctionality() {
     let cancelled = false
     const tick = async () => {
       try {
-        const res = await fetch(`${getRobotBase()}/joint_states`, { signal: AbortSignal.timeout(2500) })
+        const res = await fetch(`${SERVER_BASE}/joint_states`, { signal: AbortSignal.timeout(2500) })
         if (!res.ok) return
         const data = await res.json()
         if (!cancelled && data.joint_states) setJoints(data.joint_states)
@@ -164,7 +147,10 @@ export default function TestFunctionality() {
           <div className="tf-panel tf-viewer">
             <div className="tf-panel-header">
               <span>MuJoCo viewer</span>
-              <span className={`tf-status tf-status-${wsState}`}>{wsState}</span>
+              <span className="tf-viewer-controls">
+                <GravityToggle gravity={gravity} onChange={setGravity} />
+                <span className={`tf-status tf-status-${wsState}`}>{wsState}</span>
+              </span>
             </div>
             <div className="tf-viewer-wrap">
               <RobotViewer embedded />
@@ -174,15 +160,10 @@ export default function TestFunctionality() {
           <div className="tf-panel tf-camera">
             <div className="tf-panel-header">
               <span>Camera</span>
-              <span className="tf-camera-hint">{getRobotStream()}/video_feed</span>
+              <span className="tf-camera-hint">{VISION_BASE}/video_feed</span>
             </div>
             <div className="tf-camera-wrap">
-              <img
-                key={cameraKeyRef.current}
-                src={`${getRobotStream()}/video_feed`}
-                alt="Live camera"
-                onError={() => setTimeout(() => { cameraKeyRef.current += 1 }, 2000)}
-              />
+              <LiveStream badge={false} />
               <span className="tf-live-badge">● LIVE</span>
             </div>
           </div>
@@ -236,7 +217,7 @@ export default function TestFunctionality() {
               {Object.keys(joints).length === 0 ? (
                 <div className="tf-empty">No joint state yet</div>
               ) : (
-                STATE_GROUPS.map((group) => (
+                JOINT_GROUPS_BY_PART.map((group) => (
                   <div key={group.title} className="tf-state-group">
                     <div className="tf-state-group-title">{group.title}</div>
                     {group.joints.map((name) => {

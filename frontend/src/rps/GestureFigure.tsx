@@ -11,7 +11,7 @@ const line = (a: [number, number], b: [number, number]) => (
 )
 
 /** Stick-figure picture that shows how to make a gesture. */
-export default function GestureFigure({ gesture }: { gesture: GestureDef }) {
+export default function GestureFigure({ gesture }: { gesture: Pick<GestureDef, 'label' | 'figure'> }) {
   const { leftElbow, leftHand, rightElbow, rightHand } = gesture.figure
   return (
     <svg

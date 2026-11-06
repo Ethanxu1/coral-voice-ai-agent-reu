@@ -103,9 +103,9 @@ These become `ServoCommand(servo_id, position, duration_ms)` objects, with servo
 `RobotController` is an abstract base with two implementations behind one interface, so everything above this line is identical in both modes:
 
 - **[`sim_controller.py`](../backend/app/robot/sim_controller.py)** — spawns a thread per command that linearly interpolates `set_joint_position()` on the MuJoCo simulator over `duration_ms` in 20 ms steps. All joints move concurrently, then the call blocks until every thread finishes.
-- **[`hardware_controller.py`](../backend/app/robot/hardware_controller.py)** — converts to hardware units and POSTs the same `ServoCommand` structs over HTTP to `robot_server.py` running on the Pi at `ROBOT_IP:ROBOT_AGENT_PORT`, which drives the physical servos.
+- **[`hardware_controller.py`](../backend/app/robot/hardware_controller.py)** — converts to hardware units and POSTs the same `ServoCommand` structs over HTTP to the servo server (`backend/app/robot/pi/nodes/server.py`) running on the Pi at `ROBOT_IP:ROBOT_AGENT_PORT`, which drives the physical servos.
 
-Which one is live depends on how the server was started — `uv run server` for sim, `ROBOT_IP=… uv run robot` for hardware.
+Which one is live depends on how the stack was started — `./run.sh` for sim, `./run.sh -live -ip <robot ip>` for hardware (the backend reads `ROBOT_MODE`).
 
 ---
 

@@ -23,6 +23,8 @@ export interface GestureDef {
   emoji: string
   /** One line shown under the title in Learn. */
   tagline: string
+  /** A few words shown next to the live match bar in Play. */
+  tip: string
   /** Step-by-step teaching text shown in Learn. */
   steps: string[]
   /**
@@ -51,6 +53,7 @@ export const GESTURES: GestureDef[] = [
     label: 'Rock',
     emoji: '✊',
     tagline: 'Cross your arms over your chest, like a closed fist.',
+    tip: 'Cross your arms over your chest',
     steps: [
       'Stand facing the camera.',
       'Bend both elbows and bring your hands up to your chest.',
@@ -65,12 +68,12 @@ export const GESTURES: GestureDef[] = [
     robotPulses: {
       l_sho_pitch: 500,
       r_sho_pitch: 500,
-      l_sho_roll: 900,
-      r_sho_roll: 100,
-      l_el_pitch: 500,
-      r_el_pitch: 500,
-      l_el_yaw: 40,
-      r_el_yaw: 960,
+      l_sho_roll: 830,
+      r_sho_roll: 170,
+      l_el_pitch: 650,
+      r_el_pitch: 350,
+      l_el_yaw: 150,
+      r_el_yaw: 850,
     },
   },
   {
@@ -78,6 +81,7 @@ export const GESTURES: GestureDef[] = [
     label: 'Paper',
     emoji: '✋',
     tagline: 'Stretch both arms straight out to the sides, like a flat sheet.',
+    tip: 'Arms straight out, like a T',
     steps: [
       'Stand facing the camera.',
       'Lift both arms out to your sides.',
@@ -106,6 +110,7 @@ export const GESTURES: GestureDef[] = [
     label: 'Scissors',
     emoji: '✌️',
     tagline: 'Raise both arms up high in a V, like the two blades.',
+    tip: 'Both arms up high in a V',
     steps: [
       'Stand facing the camera.',
       'Lift both arms up over your head.',
@@ -154,6 +159,20 @@ function figureToPose(figure: GestureDef['figure']): PoseVector {
   }
 }
 
+/** The other way round: a stick-figure drawing of a pose recorded from the camera. */
+export function figureFromPose(pose: PoseVector): GestureDef['figure'] {
+  const denorm = (p: [number, number] | undefined): [number, number] => {
+    const [x, y] = p ?? [0, 0]
+    return [FIGURE_SHOULDER_MID[0] + x * FIGURE_SHOULDER_WIDTH, FIGURE_SHOULDER_MID[1] + y * FIGURE_SHOULDER_WIDTH]
+  }
+  return {
+    leftElbow: denorm(pose.rightElbow),
+    leftHand: denorm(pose.rightWrist),
+    rightElbow: denorm(pose.leftElbow),
+    rightHand: denorm(pose.leftWrist),
+  }
+}
+
 export const GESTURE_TEMPLATES: PoseTemplate[] = GESTURES.map((g) => ({
   id: g.id,
   joints: figureToPose(g.figure),
@@ -193,4 +212,11 @@ export const BEATS: Record<GestureId, GestureId> = {
   rock: 'scissors',
   paper: 'rock',
   scissors: 'paper',
+}
+
+/** Why each gesture wins, said after a round. */
+export const WINS_BECAUSE: Record<GestureId, string> = {
+  rock: 'Rock smashes Scissors',
+  paper: 'Paper wraps Rock',
+  scissors: 'Scissors cut Paper',
 }

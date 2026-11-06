@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 
-
 # Leading filler words that don't affect intent (with optional trailing punctuation).
 _LEADING_FILLERS_RE = re.compile(
     r"^(?:(?:um|uh|like|well|so|okay|ok)\b[,;:!.]?\s+)+",

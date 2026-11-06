@@ -1,0 +1,417 @@
+/* Gesture Studio reuses the Refined Demo shell (rd-* in RefinedDemo.css) and the
+   Rock-Paper-Scissors cells and buttons (rps-* in RockPaperScissors.css). Only
+   the pieces those don't have live here. */
+
+.gs-topbar-title {
+  font-family: 'Baloo 2', cursive;
+  font-size: 20px;
+  font-weight: 800;
+  color: #6B625D;
+  margin-left: 14px;
+}
+
+.gs-menu-cards {
+  grid-template-columns: repeat(2, minmax(0, 320px));
+  justify-content: center;
+}
+
+/* ── Shared bits ─────────────────────────────────────────────────────────── */
+.gs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.gs-subhead {
+  font-family: 'Baloo 2', cursive;
+  font-size: 18px;
+  font-weight: 800;
+  color: #2D2926;
+}
+
+.gs-muted {
+  font-size: 13px;
+  color: #6B625D;
+}
+
+.gs-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border: 2px solid rgba(45, 41, 38, 0.15);
+  border-radius: 14px;
+  background: #fff;
+  font-family: 'Nunito', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #2D2926;
+}
+
+.gs-input:focus {
+  outline: none;
+  border-color: #17BEBB;
+}
+
+.gs-input-sm {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.rps-small-btn.gs-ghost {
+  background: transparent;
+  color: #2D2926;
+  box-shadow: inset 0 0 0 2px rgba(45, 41, 38, 0.2);
+}
+
+.rps-small-btn.gs-danger {
+  background: #E5484D;
+}
+
+.rps-small-btn.gs-primary {
+  background: #8BC34A;
+}
+
+.gs-link-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.gs-notice {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(139, 195, 74, 0.18);
+  color: #2D2926;
+  cursor: default;
+}
+
+.gs-notice.warn {
+  background: rgba(255, 107, 74, 0.16);
+}
+
+/* ── Record screen: the controls cell ────────────────────────────────────── */
+.rps-cell.gs-panel {
+  background: #FFFDF8;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 52px 18px 16px;
+  box-sizing: border-box;
+}
+
+.gs-panel .rps-cell-title {
+  color: #fff;
+}
+
+.gs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #6B625D;
+}
+
+.rps-big-btn.gs-record-btn {
+  padding: 10px 32px;
+  font-size: 22px;
+  background: #E5484D;
+}
+
+.gs-recent {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gs-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gs-recent-item .rps-figure {
+  width: 44px;
+}
+
+.gs-panel-footer {
+  justify-content: space-between;
+}
+
+/* ── Library screen ──────────────────────────────────────────────────────── */
+.gs-library {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.gs-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+  border-radius: 28px;
+  background: #FFFDF8;
+  box-shadow: 0 8px 24px rgba(45, 41, 38, 0.08);
+}
+
+.gs-sidebar-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gs-list-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: 'Nunito', sans-serif;
+}
+
+.gs-list-item:hover {
+  background: rgba(23, 190, 187, 0.08);
+}
+
+.gs-list-item.active {
+  background: rgba(23, 190, 187, 0.14);
+  border-color: #17BEBB;
+}
+
+.gs-list-item .rps-figure {
+  width: 48px;
+}
+
+.gs-list-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gs-list-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: #2D2926;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-list-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6B625D;
+}
+
+.gs-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #F5B700;
+  color: #2D2926;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gs-empty {
+  font-size: 14px;
+  color: #6B625D;
+  line-height: 1.4;
+}
+
+.gs-detail {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gs-detail-empty {
+  align-items: center;
+  justify-content: center;
+  border-radius: 28px;
+  background: #FFFDF8;
+}
+
+.gs-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gs-title-input {
+  flex: 1;
+  font-family: 'Baloo 2', cursive;
+  font-size: 22px;
+  font-weight: 800;
+  padding: 6px 14px;
+}
+
+.gs-views {
+  flex: 1;
+  min-height: 280px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.gs-view {
+  border-radius: 24px;
+}
+
+.gs-figure-view .rps-figure {
+  width: min(70%, 260px);
+}
+
+.gs-tune {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: 24px;
+  background: #FFFDF8;
+  box-shadow: 0 8px 24px rgba(45, 41, 38, 0.08);
+}
+
+.gs-tune-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.gs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #2D2926;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gs-tune-arms {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 28px;
+}
+
+.gs-tune-arm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gs-tune-arm-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #17BEBB;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gs-slider {
+  display: grid;
+  grid-template-columns: 118px 24px minmax(0, 1fr) 24px 46px;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.gs-slider.unreached {
+  background: rgba(255, 107, 74, 0.16);
+}
+
+.gs-slider-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #2D2926;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gs-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #F5B700;
+}
+
+.gs-slider input[type='range'] {
+  width: 100%;
+  accent-color: #17BEBB;
+}
+
+.gs-nudge {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(45, 41, 38, 0.08);
+  color: #2D2926;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0;
+}
+
+.gs-nudge:hover {
+  background: rgba(45, 41, 38, 0.16);
+}
+
+.gs-slider-value {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #6B625D;
+}
+
+.gs-tune-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .gs-library {
+    grid-template-columns: 1fr;
+  }
+  .gs-tune-arms,
+  .gs-views {
+    grid-template-columns: 1fr;
+  }
+}

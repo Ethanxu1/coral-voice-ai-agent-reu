@@ -4,24 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING
 
-from langfuse import get_client, observe, propagate_attributes
-from langfuse.openai import openai
-from loguru import logger
-from pydantic import TypeAdapter, ValidationError
-
+from app.config import LLM_MODEL
 from app.data.pose_db import get_pose, list_pose_names
-from app.llm.config import LLM_MODEL
-from app.llm.intent_classifier import classify_intent
 from app.llm.primitives import (
     get_parameterized_primitive,
     get_primitive,
     resolve_primitive,
 )
-from app.robot.angle_utils import rad_to_servo_units
-from app.robot.interface import ServoCommand
-from app.robot.servo_config import SERVO_ID_MAP
+from app.llm.prompts import load_prompt
+from app.robot.angle_utils import joints_to_servo_commands
 from app.schemas.motion_plan import MotionPlan, ParallelGroup, PlainWaypoint
 from app.services.motion import (
     Waypoint,
@@ -34,10 +27,14 @@ from app.services.motion import (
 )
 from app.services.motion_fallback import plan_for_description
 from app.services.recording import ConversationRecorder
-from app.services.transcription import get_router_prompt, get_chat_prompt
-from app.state import state
-from app.state_manager import StateManager
-from app.validation import ValidationResult, describe_joint_state, validate_waypoint
+from app.validation import describe_joint_state, validate_waypoint
+from langfuse import get_client, observe, propagate_attributes
+from langfuse.openai import openai
+from loguru import logger
+from pydantic import TypeAdapter, ValidationError
+
+if TYPE_CHECKING:
+    from app.simulator import AiNexSimulator
 
 
 class HierarchicalMemory:
@@ -308,7 +305,7 @@ async def _run_motion_planner(
 
     @observe(name="motion_planner_llm")
     def call_llm() -> str:
-        prompt = get_router_prompt()
+        prompt = load_prompt("router")
         messages = [
             {"role": "system", "content": prompt},
             *memory_ctx,
@@ -344,21 +341,13 @@ async def _run_motion_planner(
 async def process_chat_message(
     user_message: str,
     memory: HierarchicalMemory,
-    state_manager: StateManager,
     recorder: ConversationRecorder,
     simulator_instance: "AiNexSimulator | None",
     session_id: str,
     pre_context: tuple[dict, str, list] | None = None,
-    on_action_started: Callable[[], Awaitable[None]] | None = None,
     sim_only: bool | None = None,
 ) -> dict:
-    """Process a user message: single LLM call → primitive resolution → joint execution.
-
-    ``on_action_started`` (if given) is awaited once, right before motion execution
-    begins, but only when the plan actually contains a motion to run. It lets the
-    caller tell the client "the robot is now moving" so a slow round-trip can be
-    distinguished from a stall (the demo moves on instead of re-asking).
-    """
+    """Process a user message: single LLM call → primitive resolution → joint execution."""
     langfuse = get_client()
 
     with propagate_attributes(
@@ -424,19 +413,7 @@ async def process_chat_message(
             pose_name = plan.pose_name or ""
             joints = get_pose(pose_name)
             if joints is not None:
-                if simulator_instance is not None:
-                    state_manager.save_checkpoint(
-                        simulator_instance, f"before:saved_pose:{pose_name}"
-                    )
-                cmds = [
-                    ServoCommand(
-                        servo_id=SERVO_ID_MAP[joint],
-                        position=rad_to_servo_units(rad),
-                        duration_ms=1000,
-                    )
-                    for joint, rad in joints.items()
-                    if joint in SERVO_ID_MAP
-                ]
+                cmds = joints_to_servo_commands(joints, 1000)
                 # Striking a named saved pose is a "demonstrate" action (same
                 # category as /poses/play) — always reaches hardware once
                 # connected, ignoring the composing-only sim_only toggle.
@@ -477,19 +454,9 @@ async def process_chat_message(
         validation_warnings = []
 
         if motion_steps:
-            if simulator_instance is not None:
-                state_manager.save_checkpoint(
-                    simulator_instance, f"before:{user_message[:30]}"
-                )
             for wp in all_waypoints:
                 if wp.validation_result and wp.validation_result.had_violations:
                     validation_warnings.extend(wp.validation_result.violations)
-
-            # Signal that a real motion is about to run, before the (potentially
-            # slow) execution blocks. The client uses this to tell "already
-            # executing" apart from "still thinking" if its own wait times out.
-            if on_action_started is not None:
-                await on_action_started()
 
             # Execute motion steps: batch consecutive Waypoints together so
             # sequential movements run in one tight interpolation loop (matching
@@ -595,7 +562,7 @@ async def process_conversation_message(
 
         @observe(name="chat_llm")
         def run_chat_llm():
-            prompt = get_chat_prompt()
+            prompt = load_prompt("chat")
             messages = [
                 {"role": "system", "content": prompt},
                 *memory_ctx,

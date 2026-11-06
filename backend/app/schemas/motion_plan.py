@@ -11,7 +11,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 PrimitiveName = Literal[
     "left_arm_out",
     "right_arm_out",

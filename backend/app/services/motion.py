@@ -6,17 +6,16 @@ import asyncio
 import math
 from typing import Any, Awaitable
 
-from loguru import logger
-
-from app.robot.angle_utils import rad_to_servo_units, servo_units_to_rad, speed_to_duration_ms
+from app.robot.angle_utils import (
+    joints_to_servo_commands,
+    speed_to_duration_ms,
+)
 from app.robot.hardware_controller import AiNexHardwareController
 from app.robot.interface import ServoCommand
-from app.robot.servo_config import SERVO_ID_MAP
-from app.robot.sim_controller import SimController
 from app.simulator import AiNexSimulator
-from app.validation import ValidationResult, validate_waypoint
 from app.state import state
-
+from app.validation import ValidationResult
+from loguru import logger
 
 # Hardware travel time for a reset/stand. The sim teleports into the stand
 # keyframe, but a physical robot has to be animated there, and a full-body move
@@ -94,7 +93,7 @@ def collision_checked_targets(
     sim: AiNexSimulator | None,
     target_joints: dict[str, float],
     context: str,
-    current: dict[str, float] | None = None,
+    check_fall: bool = True,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     """Run both safety checks on target_joints from a starting joint state.
 
@@ -106,11 +105,9 @@ def collision_checked_targets(
        targets are the sim's current joints — since there's no safe fraction
        of falling over.
 
-    `current` defaults to the sim's live joint state (the normal case: the
-    sim hasn't moved yet, only target_joints is proposed). Pass it explicitly
-    when the sim has already been moved to (or past) target_joints — e.g. a
-    raw debug joint-jog command applied directly to the sim before this check
-    runs — so the safety checks still see the correct starting pose.
+    The starting pose is the sim's live joint state, so call this BEFORE
+    moving the sim. `check_fall=False` skips step 2 (the test pages, which pin
+    the sim upright instead).
 
     Returns (safe_targets, safety_report). safety_report is JSON-ready so
     endpoints can pass it straight to the frontend:
@@ -128,8 +125,7 @@ def collision_checked_targets(
     }
     if sim is None or not target_joints:
         return target_joints, report
-    if current is None:
-        current = sim.get_all_joint_states()
+    current = sim.get_all_joint_states()
 
     safe_joints = target_joints
     if state.collision_checker is not None:
@@ -142,7 +138,7 @@ def collision_checked_targets(
             )
             report.update(collision_clamped=True, safe_fraction=safe_frac, bad_pairs=bad_pairs)
 
-    if state.stability_checker is not None:
+    if check_fall and state.stability_checker is not None:
         fall = state.stability_checker.check_fall(safe_joints, current)
         report.update(head_z=fall["head_z"], threshold_z=fall["threshold_z"])
         if fall["fell"]:
@@ -154,29 +150,6 @@ def collision_checked_targets(
             return dict(current), report
 
     return safe_joints, report
-
-
-def apply_safety_clamp_to_sim(
-    sim: AiNexSimulator,
-    before: dict[str, float],
-    after: dict[str, float],
-    context: str,
-) -> dict[str, Any]:
-    """Re-check a motion the sim has ALREADY been moved to (e.g. a raw debug
-    joint-jog command, applied directly and instantly) against the same
-    self-collision/fall safety gate as /move, and roll the sim back to the
-    safe target if the raw move was too aggressive.
-
-    `before`/`after` are joint-state snapshots taken immediately before and
-    after the raw move. Returns the safety_report from collision_checked_targets
-    so the caller can relay it to the client.
-    """
-    safe_joints, safety_report = collision_checked_targets(sim, after, context, current=before)
-    if safety_report["collision_clamped"] or safety_report["fall_blocked"]:
-        for joint, value in safe_joints.items():
-            if abs(after.get(joint, value) - before.get(joint, value)) > 1e-9:
-                sim.set_joint_position(joint, value)
-    return safety_report
 
 
 async def dispatch_servo_commands(
@@ -231,19 +204,30 @@ async def _execute_on_hardware_if_connected(
     safe_joints, _safety = collision_checked_targets(
         state.simulator, joints, "pose save/demonstrate"
     )
-    commands = [
-        ServoCommand(
-            servo_id=SERVO_ID_MAP[joint],
-            position=rad_to_servo_units(rad),
-            duration_ms=duration_ms,
-        )
-        for joint, rad in safe_joints.items()
-        if joint in SERVO_ID_MAP
-    ]
+    commands = joints_to_servo_commands(safe_joints, duration_ms)
     try:
         await dispatch_servo_commands(commands, sim_only=None)
     except RobotServerUnavailable as e:
         logger.warning(f"Could not execute pose on hardware: {e}")
+
+
+async def reset_to_stand() -> None:
+    """Re-stand the robot.
+
+    The sim drops into its stand keyframe from slightly above the floor, which
+    also recovers a fallen robot (animating joints alone cannot). A physical
+    robot can't be teleported, so connected hardware is animated to the stand
+    pose over RESET_TO_STAND_MS instead.
+    """
+    sim = state.simulator
+    await asyncio.to_thread(sim.reset_pose)
+    if state.hardware_dispatcher is None:
+        return
+    commands = joints_to_servo_commands(sim.get_stand_joint_positions(), RESET_TO_STAND_MS)
+    try:
+        await dispatch_servo_commands(commands, sim_only=None)
+    except RobotServerUnavailable as e:
+        logger.warning(f"Reset: robot server unavailable: {e}")
 
 
 async def execute_waypoints(
@@ -299,20 +283,7 @@ async def execute_waypoints(
                 waypoint.joints = dict(current)
                 safety.update(fall_blocked=True, safe_fraction=0.0)
 
-        commands = []
-        for joint_name, rad in waypoint.joints.items():
-            servo_id = SERVO_ID_MAP.get(joint_name)
-            if servo_id is None:
-                logger.warning(f"No servo ID mapping for joint: {joint_name}")
-                continue
-            commands.append(
-                ServoCommand(
-                    servo_id=servo_id,
-                    position=rad_to_servo_units(rad),
-                    duration_ms=duration_ms,
-                )
-            )
-
+        commands = joints_to_servo_commands(waypoint.joints, duration_ms)
         await dispatch_servo_commands(commands, sim_only=sim_only)
 
         executed.append(
