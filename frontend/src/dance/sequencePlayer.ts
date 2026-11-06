@@ -10,6 +10,15 @@ import type { Step } from './blocks'
 type PoseStep = Extract<Step, { kind: 'pose' }>
 
 /**
+ * How long the last pose is held before the robot stands back up. Every other
+ * pose shows while the next move glides out of it, but the closing reset drops
+ * straight into stand, so without a hold the last pose is gone the moment it lands.
+ */
+const FINAL_HOLD_MS = 1000
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
  * Glide the sim to one pose. The request returns once the robot's body has
  * actually arrived there (or stopped short), so the next move starts from the
  * finished pose. An instant snap can topple the physics model, so every move is a glide.
@@ -34,7 +43,7 @@ async function playSteps(steps: Step[], isAlive: () => boolean, onStep?: (step: 
 
 /**
  * Play the program once (repeat steps loop themselves), from a clean stand
- * and back to one at the end (a reset, not a glide: gliding out of a deep
+ * and, after holding the last pose, back to one at the end (a reset, not a glide: gliding out of a deep
  * pose like Warrior can fold the sim over). `isAlive()` is checked before every
  * move so a cancellation (Stop, or the page unmounting) lands after the
  * current move has arrived instead of mid-glide. No stand between repeat laps: one pose
@@ -47,5 +56,6 @@ export async function playSequence(
 ): Promise<void> {
   await resetPose()
   if (isAlive()) await playSteps(steps, isAlive, onStep)
+  if (isAlive()) await sleep(FINAL_HOLD_MS)
   if (isAlive()) await resetPose()
 }
