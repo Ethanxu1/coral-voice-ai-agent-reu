@@ -7,7 +7,9 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import motion as motion_routes
 from app.main import create_app
+from app.robot.angle_utils import rad_to_servo_units
 from app.robot.hardware_angle_utils import hardware_units_to_rad
+from app.robot.servo_config import SERVO_ID_MAP
 from app.state import state
 
 pytestmark = pytest.mark.db
@@ -87,6 +89,32 @@ def test_wait_until_arrived_returns_once_the_body_is_there(client):
     assert data["status"] == "done"
     actual = state.simulator.get_actual_joint_positions(["l_sho_roll"])["l_sho_roll"]
     assert actual == pytest.approx(target, abs=0.06)
+
+
+def test_glide_routes_around_a_collision_on_the_way(client, monkeypatch):
+    """Wave -> Dab (Dance Game) collides part-way on the straight path. The
+    glide must go around through intermediate poses and still end at Dab,
+    instead of stopping at the last safe point."""
+    wave = {"r_sho_pitch": 0, "r_sho_roll": 500, "r_el_pitch": 500, "r_el_yaw": 940}
+    dab = {"r_sho_pitch": 675, "r_sho_roll": 225, "r_el_pitch": 120, "r_el_yaw": 890}
+    for joint, pulse in wave.items():
+        state.simulator.set_joint_position(joint, hardware_units_to_rad(pulse, joint))
+    legs = []
+
+    async def record(commands, sim_only=None):
+        legs.append({c.servo_id: c.position for c in commands})
+
+    monkeypatch.setattr(motion_routes, "dispatch_servo_commands", record)
+
+    data = client.post(
+        "/set-pose", json={"pulses": dab, "duration_ms": 1000, "check_fall": False}
+    ).json()
+
+    assert data["safety"]["collision_clamped"] is False
+    assert len(legs) >= 2, "expected the glide to go through an intermediate pose"
+    for joint, pulse in dab.items():
+        expected = rad_to_servo_units(hardware_units_to_rad(pulse, joint))
+        assert legs[-1][SERVO_ID_MAP[joint]] == pytest.approx(expected, abs=1)
 
 
 def test_to_robot_follows_the_robot_mode(client, monkeypatch):

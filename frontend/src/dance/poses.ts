@@ -18,6 +18,13 @@
 // frame), so using it here would make the "Wave" block look just like "Stand".
 // Frame 0 (arms raised, mid-wave) is used instead as a single representative
 // pose. Playing the full animation is a documented future idea, not built here.
+//
+// Four source poses ask for more than the robot's geometry allows: an elbow
+// folded until the forearm is inside the upper arm (superhero, muscles, wave,
+// thinker), and in thinker the feet overlapping. The collision check stopped
+// every move into them short. Those joints are eased off to just clear of
+// contact (a few degrees; marked "eased" below), so each pose is reached in
+// full. backend/tests/test_dance_poses.py checks every pose here is clear.
 
 export type DancePoseId =
   | 'stand'
@@ -114,7 +121,7 @@ export const DANCE_POSES: DancePoseDef[] = [
       l_sho_pitch: 824, r_sho_pitch: 174,
       l_sho_roll: 704, r_sho_roll: 316,
       l_el_pitch: 652, r_el_pitch: 348,
-      l_el_yaw: 90, r_el_yaw: 907,
+      l_el_yaw: 103, r_el_yaw: 898, // eased from 90 / 907
       l_gripper: 504, r_gripper: 499,
       head_pan: 500, head_tilt: 500,
     },
@@ -130,11 +137,11 @@ export const DANCE_POSES: DancePoseDef[] = [
       l_knee: 476, r_knee: 502,
       l_hip_pitch: 351, r_hip_pitch: 651,
       l_hip_roll: 501, r_hip_roll: 497,
-      l_hip_yaw: 500, r_hip_yaw: 557,
+      l_hip_yaw: 500, r_hip_yaw: 543, // r eased from 557
       l_sho_pitch: 518, r_sho_pitch: 436,
       l_sho_roll: 784, r_sho_roll: 171,
       l_el_pitch: 655, r_el_pitch: 162,
-      l_el_yaw: 53, r_el_yaw: 849,
+      l_el_yaw: 104, r_el_yaw: 849, // l eased from 53
       l_gripper: 625, r_gripper: 499,
       head_pan: 500, head_tilt: 500,
     },
@@ -154,7 +161,7 @@ export const DANCE_POSES: DancePoseDef[] = [
       l_sho_pitch: 348, r_sho_pitch: 654,
       l_sho_roll: 601, r_sho_roll: 450,
       l_el_pitch: 507, r_el_pitch: 498,
-      l_el_yaw: 26, r_el_yaw: 905,
+      l_el_yaw: 63, r_el_yaw: 905, // l eased from 26
       l_gripper: 610, r_gripper: 374,
       head_pan: 500, head_tilt: 500,
     },
@@ -214,7 +221,7 @@ export const DANCE_POSES: DancePoseDef[] = [
       l_sho_pitch: 1000, r_sho_pitch: 0,
       l_sho_roll: 500, r_sho_roll: 500,
       l_el_pitch: 500, r_el_pitch: 500,
-      l_el_yaw: 268, r_el_yaw: 1000,
+      l_el_yaw: 268, r_el_yaw: 940, // r eased from 1000
       l_gripper: 500, r_gripper: 500,
       head_pan: 500, head_tilt: 500,
     },

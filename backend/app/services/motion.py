@@ -98,6 +98,18 @@ def _sync_sim_to_hardware() -> None:
     logger.info(f"Synced simulator to {synced} physical joint positions")
 
 
+def _clean_safety_report() -> dict[str, Any]:
+    """A safety report for a move that went through untouched."""
+    return {
+        "fall_blocked": False,
+        "collision_clamped": False,
+        "safe_fraction": 1.0,
+        "bad_pairs": [],
+        "head_z": None,
+        "threshold_z": None,
+    }
+
+
 def collision_checked_targets(
     sim: AiNexSimulator | None,
     target_joints: dict[str, float],
@@ -124,14 +136,7 @@ def collision_checked_targets(
        "bad_pairs": [...], "head_z": float|None, "threshold_z": float|None}
     Checks are individually skipped (no-op) when their checker is disabled.
     """
-    report: dict[str, Any] = {
-        "fall_blocked": False,
-        "collision_clamped": False,
-        "safe_fraction": 1.0,
-        "bad_pairs": [],
-        "head_z": None,
-        "threshold_z": None,
-    }
+    report = _clean_safety_report()
     if sim is None or not target_joints:
         return target_joints, report
     current = sim.get_all_joint_states()
@@ -159,6 +164,56 @@ def collision_checked_targets(
             return dict(current), report
 
     return safe_joints, report
+
+
+def planned_safe_path(
+    sim: AiNexSimulator | None,
+    target_joints: dict[str, float],
+    context: str,
+    check_fall: bool = True,
+) -> tuple[list[dict[str, float]], dict[str, Any]]:
+    """Like collision_checked_targets, but goes around a self-collision on the way.
+
+    Returns (poses to move through in order, safety_report). When the straight
+    move is clear, or no route around is found (e.g. the target pose itself is
+    in contact), this is exactly collision_checked_targets: one pose, clamped
+    to the last safe point if needed. When CollisionChecker.plan_path finds a
+    detour, every pose on it is fall-checked from the one before; a fall
+    anywhere blocks the whole move, as for a straight move. The report then
+    carries ``rerouted: True``.
+    """
+    checker = state.collision_checker
+    if sim is None or checker is None or not target_joints:
+        safe, report = collision_checked_targets(sim, target_joints, context, check_fall)
+        return [safe], report
+    current = sim.get_all_joint_states()
+    path = checker.plan_path(current, target_joints)
+    if path is None or len(path) == 1:
+        safe, report = collision_checked_targets(sim, target_joints, context, check_fall)
+        return [safe], report
+
+    logger.info(f"{context}: direct move would self-collide; going around via {len(path) - 1} pose(s)")
+    report = {**_clean_safety_report(), "rerouted": True}
+    if check_fall and state.stability_checker is not None:
+        previous = current
+        for pose in path:
+            fall = state.stability_checker.check_fall(pose, previous)
+            report.update(head_z=fall["head_z"], threshold_z=fall["threshold_z"])
+            if fall["fell"]:
+                logger.warning(f"{context}: FALL RISK on the detour; move blocked entirely (0%)")
+                report.update(fall_blocked=True, safe_fraction=0.0)
+                return [dict(current)], report
+            previous = pose
+    return path, report
+
+
+def leg_durations(start: dict[str, float], path: list[dict[str, float]], total_ms: int) -> list[int]:
+    """Split a move's time across the legs of its path, by each leg's largest joint change."""
+    if len(path) == 1:
+        return [total_ms]
+    spans = [max((abs(b[j] - a.get(j, b[j])) for j in b), default=0.0) for a, b in zip([start, *path], path)]
+    whole = sum(spans) or 1.0
+    return [max(1, round(total_ms * span / whole)) for span in spans]
 
 
 async def dispatch_servo_commands(
