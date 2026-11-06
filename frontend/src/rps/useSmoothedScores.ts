@@ -1,25 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 
 /**
- * Averaging time: landmark jitter (frame to frame) averages out, while a real
- * arm movement, which takes a few hundred ms, still shows.
+ * Averaging time: landmark jitter (frame to frame) averages out, while an arm
+ * movement still shows within a fraction of a second.
  */
-const SMOOTH_MS = 450
-/** The display changes this often: a child can follow a few updates a second, not the camera's 30. */
-const SHOW_EVERY_MS = 250
-/** Shown scores are rounded to this… */
-const SHOW_STEP = 0.1
+const SMOOTH_MS = 200
+/** The display changes this often, so the rings rise and fall smoothly. */
+const SHOW_EVERY_MS = 50
+/** Shown scores are rounded to this (whole percent). */
+const SHOW_STEP = 0.01
 /**
- * …and a shown score only changes once the average is this far from it, so a
- * pose held at the edge of two steps (or of the match line) doesn't blink.
+ * Once a move is matched it stays matched until its score drops this far below
+ * the line, so a pose held right at the line doesn't make the card blink.
  */
-const SHOW_DEADBAND = 0.07
+const MATCH_HYSTERESIS = 0.04
 
 /**
- * Similarity scores made readable for a child: averaged over time, updated a few
- * times a second and rounded to 10%. `matched` is the move whose card should be
- * green: the best move, if its shown score is at the line, so the colour always
- * agrees with the number. Display only: the game still judges from the raw scores.
+ * Similarity scores for display: averaged over time, updated 20 times a second
+ * and rounded to whole percent. `matched` is the move whose card should be
+ * green: the best move, once its shown score reaches the line. Display only:
+ * the game still judges from the raw scores.
  */
 export function useSmoothedScores<K extends string>(
   scores: Record<K, number> | null,
@@ -53,13 +53,11 @@ export function useSmoothedScores<K extends string>(
         if (!s) return v.shown ? { shown: null, matched: null } : v
         const keys = Object.keys(s) as K[]
         const shown = {} as Record<K, number>
-        for (const k of keys) {
-          const old = v.shown?.[k]
-          shown[k] = old !== undefined && Math.abs(s[k] - old) < SHOW_DEADBAND ? old : Math.round(s[k] / SHOW_STEP) * SHOW_STEP
-        }
+        for (const k of keys) shown[k] = Math.round(s[k] / SHOW_STEP) * SHOW_STEP
         const top = keys.reduce((a, b) => (s[b] > s[a] ? b : a))
+        const line = v.matched === top ? match - MATCH_HYSTERESIS : match
         // Rounding error: 0.6000000001 must count as at the line.
-        const matched = shown[top] >= match - 1e-9 ? top : null
+        const matched = shown[top] >= line - 1e-9 ? top : null
         const same = v.shown && v.matched === matched && keys.every((k) => v.shown![k] === shown[k])
         return same ? v : { shown, matched }
       })

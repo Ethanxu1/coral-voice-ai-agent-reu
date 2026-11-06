@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ServoMove(BaseModel):
@@ -26,6 +26,15 @@ class SetPoseRequest(BaseModel):
     check_fall: bool = True
     # 0 applies instantly; otherwise the sim glides there over this many ms.
     duration_ms: int = Field(default=0, ge=0, le=10000)
+    # Rock Paper Scissors: also move the physical robot when the server is in
+    # robot mode. Only for safety-checked, timed glides.
+    to_robot: bool = False
+
+    @model_validator(mode="after")
+    def _robot_pose_is_checked_and_timed(self) -> "SetPoseRequest":
+        if self.to_robot and (self.skip_collision_check or self.duration_ms == 0):
+            raise ValueError("to_robot needs the collision check and a duration_ms > 0")
+        return self
 
 
 class IntentRequest(BaseModel):

@@ -3,7 +3,10 @@ import { RPS_PATH } from '../rps/RpsTopbar'
 import './RefinedDemo.css'
 import './RockPaperScissors.css'
 
-/** Landing screen for Rock Paper Scissors: pick Learn or Play. */
+/**
+ * Landing screen for Rock Paper Scissors: Play or make your own moves. Learning
+ * the moves happens on Play's start screen; the Learn page is still at /learn.
+ */
 export default function RockPaperScissorsMenu() {
   const navigate = useNavigate()
   return (
@@ -25,11 +28,6 @@ export default function RockPaperScissorsMenu() {
         <h1 className="rps-menu-title">Rock Paper Scissors</h1>
         <p className="rps-menu-sub">What do you want to do?</p>
         <div className="rps-menu-cards">
-          <Link to={`${RPS_PATH}/learn`} className="rps-menu-card learn">
-            <span className="rps-menu-emoji">📖</span>
-            <span className="rps-menu-name">Learn gestures</span>
-            <span className="rps-menu-desc">See how to make rock, paper and scissors.</span>
-          </Link>
           <Link to={`${RPS_PATH}/play`} className="rps-menu-card play">
             <span className="rps-menu-emoji">🎮</span>
             <span className="rps-menu-name">Let's play</span>

@@ -1,0 +1,23 @@
+{
+  "hello": "Hi! I'm CORAL. Let's play Rock, Paper, Scissors!",
+  "fit_away": "Come stand where I can see you!",
+  "fit_far": "Come a little closer!",
+  "fit_close": "Step back!",
+  "fit_side": "Scoot to the middle!",
+  "fit_fit": "Perfect!",
+  "got_it": "Got it!",
+  "miss": "Oops, I missed that. Again!",
+  "miss_hands": "Step back a little so I can see your hands!",
+  "round_rock_rock": "You picked Rock. I picked Rock. Ooh, same move!",
+  "round_rock_paper": "You picked Rock. I picked Paper. Paper wraps Rock. I win this one!",
+  "round_rock_scissors": "You picked Rock. I picked Scissors. Rock smashes Scissors. You got me!",
+  "round_paper_rock": "You picked Paper. I picked Rock. Paper wraps Rock. You got me!",
+  "round_paper_paper": "You picked Paper. I picked Paper. Ooh, same move!",
+  "round_paper_scissors": "You picked Paper. I picked Scissors. Scissors cut Paper. I win this one!",
+  "round_scissors_rock": "You picked Scissors. I picked Rock. Rock smashes Scissors. I win this one!",
+  "round_scissors_paper": "You picked Scissors. I picked Paper. Scissors cut Paper. You got me!",
+  "round_scissors_scissors": "You picked Scissors. I picked Scissors. Ooh, same move!",
+  "final_win": "You beat me! Wow!",
+  "final_lose": "I won! Rematch?",
+  "final_tie": "Ooh, we tied! Rematch?"
+}

@@ -6,11 +6,12 @@ This document covers what exists, how it works, how to run and change it, and wh
 
 For setup and running the stack, see the [README](../README.md). For the overall system, see [overview.md](overview.md).
 
-## Status (2026-10-27)
+## Status (2026-10-29)
 
-- All the work is on branch `rps-redesign-ui`, in [PR #12](https://github.com/Ethanxu1/coral-voice-ai-agent-reu/pull/12) into `development`. It is waiting for review.
+- The October redesign was merged into `development` ([PR #12](https://github.com/Ethanxu1/coral-voice-ai-agent-reu/pull/12)).
 - Done: Learn, a three-round Play match, Make your own moves, and Gesture Studio, all on the redesigned UI. The game was played end to end in the simulator.
 - On hold until the PIs decide: the pre-training quiz, the student ID, data logging and screen recording (item 11 below).
+- 2026-10-29: Play redesigned for children standing back (branch `rps-redesign-ui`); see Play below and known issue 19.
 - Not checked yet: `./run.sh` on an Intel Mac or on Linux since the Apple-chip change (see "Running it"), and anything on the physical robot.
 
 ---
@@ -21,7 +22,7 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 
 | Route | Screen | What happens |
 |---|---|---|
-| `/rock-paper-scissors` | Menu | Three cards: Learn gestures, Let's play, Make your own moves |
+| `/rock-paper-scissors` | Menu | Two cards: Let's play, Make your own moves. Learn gestures was removed from the menu on 2026-11-02 (Play's start screen now has the camera view and live rings); the page is still at `/rock-paper-scissors/learn` |
 | `/rock-paper-scissors/learn` | Learn | Pick a move, see how to do it, and see what the system thinks you are doing |
 | `/rock-paper-scissors/play` | Play | A three-round match (see below) |
 | `/rock-paper-scissors/custom` | Make your own moves | The child records their own rock, paper and scissors |
@@ -29,18 +30,24 @@ Entry point: the **Rock Paper Scissors** button on the home page (`/`).
 
 ### Play
 
-The layout follows the October redesign (the `rps-ui` prototype). The top bar shows the round with a pip per round (green won, red lost, grey draw), the score, Menu, End and **RPS Hints**; it stays clickable above every overlay. Left: CORAL in the simulator. Right: one card per move with its stick figure, a one-line tip and a live similarity bar (red → yellow → green, tick at the 60% match line; the card turns green when it counts), then the tracker's stick figure with the camera in its corner.
+Redesigned on 2026-10-29 for a child standing about six feet back: big things, little reading, CORAL as a character. Styles are in `pages/RpsGame.css` (scoped `.rpsg`).
 
-The bars are smoothed for the child (`rps/useSmoothedScores.ts`). Raw scores change with every camera frame, about 30 times a second, and most of that is landmark jitter, so a child holding still saw numbers jump and couldn't connect "I raised my arms" with "the score went up". The display now averages over about 0.45 s, updates 4 times a second, rounds to 10% (60%, 70%, 80%…), and only changes a number once the average has moved 7 points away from it. Measured with heavy simulated jitter: holding a pose, the number changes 0 to 2 times in 4 s, even right at the match line; a new pose turns its card green within about 0.7 to 1 s. A card is green exactly when its shown number is at the line, so colour and number always agree. The game still judges from the raw scores.
+- **Layout.** Left: CORAL on a warm stage, in its own coral colour (`RobotViewer look="stage"`). Right: **CORAL's eye** (`rps/CoralEye.tsx`), a coral-framed lens joined to CORAL's head by a beam, showing a chunky stick figure of what the camera sees, with a small camera picture in its corner. Bottom: the three moves (`rps/PoseArt.tsx`), each inside a **similarity ring** that fills and turns red → yellow → green as the child's pose gets closer, reaching green at the 60% line where a move counts, with the percentage on it (`ScoreRing` in `RpsPlay.tsx`, smoothed by `useSmoothedScores`). The move CORAL sees lights up in its colour. The start screen shows CORAL's eye above its move pictures, which have the same rings, so a child (or a presenter) can try the moves and watch the scores before pressing Start. Top: the score in the display font (Fredoka) with a dot per round.
+- **One message at a time**, in CORAL's speech bubble, also spoken (see "CORAL's voice" below).
+- **Mute**: the speaker button at top left mutes CORAL's voice and the sound effects. The game opens unmuted every time.
+- **The eye's figure.** Head, neck, shoulders, arms and torso only, drawn thick (scaled to the child's size), eased frame to frame to take out jitter. Joints the tracker isn't sure of are faint and flicker. Once a move is recognised the figure fills with the move's colour.
+- **Grown-up controls** sit behind the "…" icon in the corner (`rps/CornerMenu.tsx`): connection, How to play, and Game menu / Exit, which must be held for 1.2 s. Space or Enter still presses the big button on screen.
+- **Sounds** (`rps/sounds.ts`, WebAudio, no files): pop when a move is seen, ding when the child is in place, a tick per countdown word, SHOOT, a chime when the move locks in, a boop on a miss, and win, lose and tie tunes.
+- **CORAL's body language** (`rps/coralMoves.ts`, arms and head only, so it can't topple): it waves on the start screen, reacts 1.5 s into each result (cheer and flex when it wins, slump with head down when the child wins, shrug on a draw), and dances (cheer, flex) at the end of the match whoever won. A small CSS hop or sag of the stage goes with the win and loss reactions.
 
-1. The **Start** popup shows the three moves and whether CORAL can see the child. Start was pressed at the computer, so the game first waits until both arms are in view for a second ("Step back").
-2. Each round: 3 in a ring over CORAL's panel, while the child's panel stays lit so they can watch their bars.
-3. At **2** CORAL picks its move at random and starts moving, so its arms arrive about when the child shoots (a full swing takes about 1.7 s; starting at Shoot left the child waiting seconds for CORAL). The card shrinks to a strip at the top of CORAL's panel and the overlay lifts, so the robot is in view for 2, 1, Shoot.
-4. Meanwhile the camera reads the child's move ("Got it"). If no move was seen, "I couldn't see a move", CORAL goes back to standing and the countdown restarts. The result waits until CORAL's arms have arrived.
-5. The result shows both moves, who won and why ("Paper wraps Rock"); the winner's panel glows. It moves on by itself after 6 s (time for a child to read it), or sooner with **Next round**. Space or Enter presses the big button on screen.
-6. After three rounds: final score, a round-by-round recap, Play again and Learn the moves.
+1. **Start**: CORAL waves and says hi; three big move pictures and one big Start button. A move picture lights up if the child is already doing it.
+2. **Get in place**: only the upper body is needed, so a child may sit close. `bodyFit` wants head and shoulders in view, roughly centred (shoulder midpoint within 20% of the middle), shoulders under half the frame wide; arms resting below the picture are fine. CORAL coaches by voice ("Come stand where I can see you!", "Step back!", "Scoot to the middle!", "Come a little closer!") until then, says "Perfect!" with a ding, and the eye's frame turns green. The countdown starts after at least 2 s and 1 s in place.
+3. **Countdown**: one giant word at a time, each in its move's colour, with a tick: "Rock… Paper… Scissors… SHOOT!" (0.9 s each). At **Paper** (`THROW_AT`) CORAL picks at random and starts moving, so its arms arrive about when the child shoots.
+4. The camera reads the child's move; their move card locks in with a chime and CORAL says "Got it!". If no move was seen: "Oops, I missed that. Again!", or "Step back a little so I can see your hands!" if a hand was past the picture's edge during the capture window, and CORAL goes back to standing and the countdown restarts.
+5. **Reveal**: a big round badge for each player on their own side (CORAL's on the stage, the child's over the eye), marked with a star (won), a frown (lost) or an equals sign (draw). CORAL's bubble says the result in its voice ("You got me!", "I win this one!", "Ooh, same move!") with the reason underneath in small print for the grown-up. After rounds 1 and 2 it stays up until someone presses **Next round** (or Space/Enter), so a grown-up can talk the result through first. After the last round the button says **See who won** and fills up for 6 s (enough for CORAL to finish saying the result), then the final screen comes up by itself (`LAST_RESULT_MS`); CORAL's end dance starts once its round reaction has finished.
+6. **Match over**: CORAL's line ("You beat me! Wow!", "I won! Rematch?", "Ooh, we tied! Rematch?"), the score, a round badge per round with the child's move and its mark, confetti and CORAL's dance for every outcome, and one big **Play again**.
 
-Screenshots of every step are in [`docs/images/rps/`](images/rps/): [ready](images/rps/01-ready.jpg), [countdown](images/rps/02-countdown.jpg), [no move seen](images/rps/03-no-move.jpg), [CORAL moving from 2](images/rps/04-coral-moves.jpg), [got it](images/rps/05-got-it.jpg), [result](images/rps/06-result.jpg), [hints](images/rps/07-hints.jpg), [match over](images/rps/08-final.jpg), and Make your own moves ([cards](images/rps/09-custom-moves.jpg), [step back](images/rps/10-custom-step-back.jpg)).
+Screenshots in `docs/images/rps/` are from the previous design (before 2026-10-29).
 
 Each round's result keeps the best similarity score and the time from Shoot until the move was first seen (`reactionMs`). Nothing is stored yet: how game data is recorded is waiting on the PIs.
 
@@ -120,14 +127,16 @@ Each gesture's reference pose is derived from its stick-figure drawing in `gestu
 ### The game round (`playRound` in `RpsPlay.tsx`)
 
 1. Reset the robot to stand.
-2. 3, 2, 1 (0.9 s each), then "Shoot" stays up 0.9 s while the child settles. At 2 (`THROW_AT`) CORAL picks a random gesture and starts easing into it (see "How CORAL moves in the game"), starting from the stand pose so it doesn't have to read the robot first. Measured: the move is sent at 2, and Paper's arms come to rest about 0.45 s after Shoot.
+2. Rock, Paper, Scissors (0.9 s each), then "Shoot" stays up 0.9 s while the child settles. At Paper (`THROW_AT`) CORAL picks a random gesture and starts easing into it (see "How CORAL moves in the game"), starting from the stand pose so it doesn't have to read the robot first. Measured: the move is sent at Paper, and Paper's arms come to rest about 0.45 s after Shoot.
 3. The camera is sampled every 50 ms for 0.6 s. A frame counts as the most similar gesture if that similarity is at least 60% (`MATCH` in `RpsPlay.tsx`; Learn keeps the stricter `DETECTION.minSimilarity` of 72%). The child's move is the gesture seen most often, if it was seen in at least a third of the samples; otherwise the countdown restarts.
 4. "Got it" shows for at least 1.3 s and until CORAL's arms have arrived. After a miss, CORAL is reset to stand once its move has finished, well before the next Shoot.
-5. Judge, update the score, show the result and announce it by voice.
+5. Judge, update the score, show the result and announce it by voice; 1.5 s later CORAL reacts. The next round starts only when **Next round** is pressed; after the last round the final screen follows after 6 s (`coralMoves.react`), and the next round waits for that move to finish.
 
-CORAL speaks in the first person and stays kind when it wins ("I win this round. Good try."). The screen shows "CORAL wins this round". The spoken lines are `SPOKEN_ROUND_TEXT` and the on-screen lines are `ROUND_TEXT` in `RpsPlay.tsx`. Text in the game has no exclamation marks: with them the TTS voice sounded harsh.
+CORAL speaks in the first person ("You got me!", "I win this one!"). Spoken lines live in `rps/voiceLines.json`; the round result bubble shows only the short ending (`ROUND_LINE` in `RpsPlay.tsx`). The clips keep the "!" (the earlier no-"!" rule was for OpenAI's voice, which sounded harsh with them).
 
-CORAL's voice is the browser's own speech synthesis (Web Speech API, `audio/speech.ts`), with the Mac's Samantha voice at its normal pace (about `say -r 180`), chosen by ear. It starts within a few ms and needs no network. The first version of the game spoke the same way, through `say` on a speaker server; when that server was removed, RPS moved to OpenAI TTS through the backend's `/speak`, which took 1 to 3 s per line and sometimes stalled for 10 s or more, so lines came late or not at all. On a machine without Samantha the browser uses another local US English voice, so the voice differs on Windows or Linux.
+**CORAL's voice (Play)** is a set of pre-generated ElevenLabs clips (2026-10-29). Play only ever says 21 fixed lines, listed in `frontend/src/rps/voiceLines.json` (greeting, placement tips, Got it, misses, the 9 round results, 3 match endings); the on-screen bubble text comes from the same file. `backend/tools/generate_rps_voice.py` turns them into MP3s in `frontend/public/rps/voice/<id>.mp3` with the premade voice Jessica (`cgSgspJ2msm6clMCkdW9`), the `eleven_v4` model and stability 0.7 (at 0.45 the tone changed from sentence to sentence within a line); `rps/voice.ts` preloads and plays them (`sayLine(id)`). So the voice is instant, the same on every OS, and needs no API key or network while playing. If a clip is missing, the browser's speech synthesis (`audio/speech.ts`) says the text instead. Why clips: billing is per character, so generating once (842 characters) costs far less than speaking live every game, and latency doesn't matter, so the best model can be used.
+
+History: the first version spoke through `say` on a speaker server; then OpenAI TTS through `/speak` (1 to 3 s per line, sometimes 10 s stalls); then the browser's speech synthesis (Mac's Samantha; silent or different on Windows and Linux). OpenAI's TTS models (`tts-1`, `tts-1-hd`, `gpt-4o-mini-tts`) shut down on 2027-01-06. Learn and Make your own moves still use the browser voice.
 
 ---
 
@@ -140,21 +149,33 @@ CORAL's voice is the browser's own speech synthesis (Web Speech API, `audio/spee
 | `frontend/src/pages/RockPaperScissorsMenu.tsx` | Menu screen |
 | `frontend/src/pages/RockPaperScissors.tsx` | The Learn screen |
 | `frontend/src/pages/RpsPlay.tsx` | The Play screen: three-round match |
+| `frontend/src/pages/RpsGame.css` | The Play screen's look, scoped under `.rpsg` |
+| `frontend/src/rps/CoralEye.tsx` | CORAL's eye: the chunky skeleton, green frame while getting in place |
+| `frontend/src/rps/CoralBeam.tsx` | The beam from CORAL's head to the eye. The head's screen position comes from `RobotViewer`'s `onHeadMove` (the head mesh projected each frame) |
+| `frontend/src/rps/bodyFit.ts` | Is the child's upper body in view; has an arm left the picture (pure functions) |
+| `frontend/src/rps/PoseArt.tsx` | The chunky move pictures, and `MOVE_COLOR` |
+| `frontend/src/rps/coralMoves.ts` | CORAL's wave, round reactions and end-of-match dance |
+| `frontend/src/rps/CornerMenu.tsx` | The grown-ups' corner menu with press-and-hold Exit |
+| `frontend/src/rps/sounds.ts` | Play's sound effects (WebAudio) |
 | `frontend/src/pages/RpsCustom.tsx` | Make your own moves: hands-free recording |
 | `frontend/src/rps/gestureSet.ts` | A playable set of three moves: the standard set, or one built from custom moves |
 | `frontend/src/rps/customMoves.ts` | The recorded custom moves (session memory) and the too-alike check |
 | `frontend/src/rps/useRobotFollow.ts` | Hook: the robot follows the child while a screen is open; retries until the server is up |
-| `frontend/src/rps/useSmoothedScores.ts` | Hook: similarity scores made readable for a child (averaged, 4 updates a second, rounded to 10%) |
-| `frontend/src/audio/speech.ts` | `speak()`: CORAL's lines through the browser's speech synthesis (Samantha) |
+| `frontend/src/rps/useSmoothedScores.ts` | Hook: similarity scores for display (averaged over 200 ms, 20 updates a second, whole percent; a matched move stays green until it drops 4% below the line). Play uses its `matched` to light the move cards |
+| `frontend/src/rps/voice.ts` | Play's voice: preloads and plays the ElevenLabs clips (`sayLine`), browser-speech fallback, mute |
+| `frontend/src/rps/voiceLines.json` | Every line CORAL says in Play, by id. The clips and the on-screen text both come from here |
+| `frontend/public/rps/voice/*.mp3` | The generated clips (21, about 1.2 MB) |
+| `backend/tools/generate_rps_voice.py` | Generates the clips with ElevenLabs (`uv run`, inline dependencies) |
+| `frontend/src/audio/speech.ts` | `speak()`: the browser's speech synthesis (Learn, Make your own moves, and Play's fallback) |
 | `frontend/src/rps/useRobotSettle.ts` | Hook: has the following robot caught up? Shared with Gesture Studio |
 | `frontend/src/rps/RpsTopbar.tsx` | Top bar of the Menu and Learn screens |
-| `frontend/src/rps/RpsBar.tsx` | Top bar of Play and Make your own moves: Menu and End always clickable |
-| `frontend/src/pages/RpsPlay.css` | The redesigned look of Play and Make your own moves, scoped under `.rpsp` |
+| `frontend/src/rps/RpsBar.tsx` | Top bar of Make your own moves: Menu and End always clickable |
+| `frontend/src/pages/RpsPlay.css` | The look of Make your own moves, scoped under `.rpsp` (Play moved to `RpsGame.css`) |
 | `frontend/src/pages/RockPaperScissors.css` | Styles for Menu and Learn, plus pieces Gesture Studio shares |
 | `frontend/src/pose/poseSimilarity.ts` | **Generic, reusable** pose matching. No game code |
 | `frontend/src/rps/gestures.ts` | **The one place to define the gestures**: labels, teaching text, stick figure, robot pose, detection settings |
 | `frontend/src/rps/classify.ts` | Thin wrapper: `classifyGesture()` and `gestureScores()` using the generic matcher |
-| `frontend/src/rps/robotPose.ts` | Moves the simulator robot's arms to a pose at gentle-follow speed. Pass `from` when the start pose is known, to skip reading it |
+| `frontend/src/rps/robotPose.ts` | Moves the robot's arms (sim, plus the physical robot in robot mode) to a pose at gentle-follow speed. Pass `from` when the start pose is known, to skip reading it |
 | `frontend/src/rps/GestureFigure.tsx` | Draws a gesture's stick figure |
 | `frontend/src/rps/StandardPicture.tsx` | View 1: image from `public/rps/` or the stick figure |
 | `frontend/src/rps/SkeletonView.tsx` | View 4: the tracker's stick figure and the readiness message |
@@ -162,7 +183,7 @@ CORAL's voice is the browser's own speech synthesis (Web Speech API, `audio/spee
 | `frontend/src/api/robot.ts` | `setHiplessFollow()`, `getJointPulses()`; `SERVO_ID` is exported for Gesture Studio |
 | `frontend/src/components/ChatArea.tsx`, `ConnectionStatus.tsx` | Chat panel and health dot, shared with the Refined Demo |
 | `frontend/src/pages/Gesture*.tsx`, `frontend/src/gestures/` | Gesture Studio (see above) |
-| `frontend/src/components/RobotViewer.tsx` | The 3D sim viewer (shared). It normalizes streamed quaternions, see known issue 15 |
+| `frontend/src/components/RobotViewer.tsx` | The 3D sim viewer (shared). It normalizes streamed quaternions, see known issue 15. `look="stage"` is Play's coral-coloured, warm-lit, front-facing look; the default `lab` look is unchanged |
 | `run.sh` | Starts the stack. On Apple-chip Macs it runs the backend on the host (from Kristika Sedai's branch) |
 
 ### Backend
@@ -191,7 +212,7 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 - On an Apple-chip Mac, `run.sh` runs the backend on the host with `uv run server`, logging to `logs/backend.log`. Postgres and the frontend stay in Docker. The reason: mediapipe has no Linux-ARM wheel, so the backend image only builds for Intel, and under emulation MuJoCo returns wrong-length quaternions (known issue 15). On other machines the backend stays in Docker.
 - Ctrl+C stops everything, including the host backend and the vision server.
 - Simulation mode is enough. No robot is needed.
-- CORAL's voice is the browser's speech synthesis, so the game speaks without `OPENAI_API_KEY`. The browser may block speech until the page has been clicked once.
+- Play's voice is pre-generated clips in the repo, so it needs no API key. Only regenerating them needs `ELEVENLABS_API_KEY` in `.env`. The browser may block audio until the page has been clicked once. The Docker frontend serves the clips from its build, so rebuild it (`./run.sh` does) after regenerating.
 - Restart the backend after pulling these changes. The new endpoints do not exist in an already-running server, and the follow behaviour will not change until it restarts.
 - After a frontend hot reload, refresh the page so custom moves and follow sessions start clean.
 - Stand so that your head, shoulders and both arms are in view. Hips are not needed.
@@ -207,9 +228,17 @@ Open <http://localhost:5173> and click **Rock Paper Scissors**.
 | Make detection stricter or looser | `DETECTION` in `rps/gestures.ts`: `minSimilarity` (lower is looser), `maxDistance` (higher is looser), `margin`. The game itself ignores `minSimilarity` and `margin` (best match wins) |
 | Change how fast CORAL strikes its move | `GENTLE_PULSES_PER_S` in `rps/robotPose.ts` |
 | Change when CORAL starts its move | `THROW_AT` in `pages/RpsPlay.tsx` |
-| Change how calm the similarity bars are | `SMOOTH_MS`, `SHOW_EVERY_MS`, `SHOW_STEP`, `SHOW_DEADBAND` in `rps/useSmoothedScores.ts` |
-| Change how CORAL sounds | `VOICE_NAMES` and `RATE` in `audio/speech.ts` (`say -v '?'` lists the Mac's voices) |
-| Change how long the round result stays up | `RESULT_MS` in `pages/RpsPlay.tsx` |
+| Change how smooth or calm the similarity rings are, or how readily a move card stays lit (Play) | `SMOOTH_MS`, `SHOW_EVERY_MS`, `SHOW_STEP`, `MATCH_HYSTERESIS` in `rps/useSmoothedScores.ts` |
+| Change where the child must stand | `TOO_CLOSE`, `TOO_FAR`, `CENTRE_SLACK` in `rps/bodyFit.ts` |
+| Change the similarity rings | `ScoreRing` and `scoreColor` in `pages/RpsPlay.tsx` (green at `MATCH`) |
+| Change CORAL's wave, reactions or dance | Pulse sets in `rps/coralMoves.ts` (arms and head only) |
+| Change CORAL's colour, size or the stage lighting | `STAGE_*` colours and the `stage` branch of `components/RobotViewer.tsx` (camera position sets the size); `.coral-stage .robot` in `RpsGame.css` sets how much of the stage it gets |
+| Change the move colours or pictures | `MOVE_COLOR` and the drawing in `rps/PoseArt.tsx` (drawn from each gesture's `figure`) |
+| Change how long the last round's result stays up | `LAST_RESULT_MS` in `pages/RpsPlay.tsx` |
+| Change CORAL's on-screen round endings | `ROUND_LINE` in `pages/RpsPlay.tsx` (the rest of the bubble text comes from `rps/voiceLines.json`) |
+| Change what CORAL says in Play | Edit the line in `rps/voiceLines.json`, then `uv run backend/tools/generate_rps_voice.py --only <id>` (all missing clips: no arguments; everything: `--force`) |
+| Change CORAL's voice in Play | `VOICE_ID`, `MODEL_ID`, `SETTINGS` in `backend/tools/generate_rps_voice.py`, then regenerate with `--force`. Try a voice first with `--voice <id> --only hello --out /tmp/try` |
+| Change the browser fallback voice (Learn, Make your own moves) | `VOICE_NAMES` and `RATE` in `audio/speech.ts` |
 | Change how long to hold when recording | `STILL_MS`, `STILL_TOLERANCE`, `MAX_HOLD_MS` in `pages/RpsCustom.tsx`; `HOLD_MS` in `gestures/useHoldStill.ts` for Gesture Studio |
 | Change when the robot counts as caught up | `SETTLE_PULSES`, `SETTLE_MS` in `rps/useRobotSettle.ts` |
 | Use real screenshots in view 1 | Add `rock.png`, `paper.png`, `scissors.png` to `frontend/public/rps/` |
@@ -235,24 +264,25 @@ Coordinates are in shoulder widths from the middle of the shoulders, x to the ri
 
 ## 6. Known issues and open items
 
-1. **The robot's "rock" pose is approximate.** In the simulator it looks like arms bent in front of the chest, not a true cross. The simulator's camera angle makes crossed arms hard to judge. Tune `robotPulses` for rock in `gestures.ts`.
+1. **CORAL's Rock doesn't cross its arms.** (2026-10-29) Arms straight forward at shoulder height (`sho_pitch` 500), roll and elbow bend as in the stand pose, with the elbows twisted in (`el_pitch` 650/350) so the forearms angle toward each other; tuned by hand. It lands fully (collision check: not clamped). A real cross isn't practical: the forearms are long for the body, so the collision check stops them before they pass each other, and a stepwise path to a cross was tried and dropped as too slow and odd-looking.
 2. **Detection thresholds are estimates.** They were checked with synthetic data only (ideal poses plus noise, and everyday poses such as arms down and hands on hips). With realistic landmark jitter the three gestures were recognised 96 to 100% of the time in that test. They have not been validated with real children. Expect to tune `minSimilarity` for Learn; the game uses best match.
 3. **Arms pointing at the camera look like rock** in a 2D image (similarity about 0.70). `minSimilarity` is set to 0.72 to keep this out, which makes detection fairly strict.
 4. **Gentle follow mode** was checked in the simulator and the speed was judged good, with no toppling. It has **not** been tried on the physical robot, so re-check the `_GENTLE_*` values before using it there.
 5. **Hip-less mode assumes an upright torso.** If the child leans a lot, the arm angles will be off.
 6. **The follow settings are global state in the main server process**, switched by `POST /follow/hipless-arms`. Two Learn screens open at once, or a crash that skips the cleanup request, can leave them on. Restarting the backend resets them. There is also only one follower: the newest page to ask for it owns it.
-7. **Robot motion in the game is simulator-only.** `POST /set-pose` with `duration_ms` glides there in the sim only, after the collision and fall checks; a pose the fall check blocks simply doesn't move (`poseRobot` doesn't report it). Running this on the physical robot would need the `/move` route or similar.
+7. **Robot motion reaches the physical robot in robot mode (2026-10-30, not yet tried on hardware).** `poseRobot` posts `/set-pose` with `to_robot: true`: after the collision and fall checks the glide goes to the sim and, when the server runs with `-live`, the robot; a pose the fall check blocks simply doesn't move (`poseRobot` doesn't report it). The Pi's own servo limits (`backend/app/robot/pi/nodes/server.py` `SERVO_LIMITS`) are tighter than the sim's, so on the robot Paper's elbows stay bent (left `el_yaw` 504→360, right 454→573), Scissors and the cheer raise the left arm less (`sho_pitch` 185→333), and the wave and flex/shrug/slump are slightly smaller. Gesture Studio previews move the robot too.
 8. **Each round starts with `/reset`**, which drops the robot straight into the stand pose rather than easing there. It has looked fine in the simulator.
 9. **`poseRobot` calls are not cancellable.** Two overlapping calls interpolate the same joints at once until the older finishes. The game never overlaps them; Gesture Studio's fine-tuning can, briefly.
 10. **The robot-caught-up limits** (60 pulses over 0.8 s) were set from one adult sitting at a desk. Check them with children standing.
 11. **Nothing is stored yet**: no student ID, no per-round log, no screen recording, no pre-training quiz. Sayali asked to wait for the PIs (meeting on 2026-10-13). Each round already computes `similarity` and `reactionMs` for when logging is added.
 12. **The 3D viewer sometimes stays blank in an embedded preview** until the window is resized. This was seen only in the Claude preview pane, not in Chrome.
 13. **No automated tests.** The frontend has no test runner. The matcher is a pure function and is easy to unit-test if one is added.
-14. **Voice depends on the computer.** Samantha comes with macOS; elsewhere the browser falls back to another local English voice, or stays silent if it has none. Chrome also refuses to speak before the page has had a click, so a page opened directly by URL may miss its first line.
+14. **Voice.** Play uses ElevenLabs clips and sounds the same everywhere. Learn and Make your own moves still use the browser's speech synthesis: Samantha on a Mac, another local English voice elsewhere, or silence if there is none. Chrome blocks audio before the page has had a click, so a page opened directly by URL may miss its first line. The clips were made on an ElevenLabs **free plan**; check ElevenLabs' terms for free-plan audio (attribution, non-commercial use) before using them in the study. The project's key is restricted: it can make speech but not list voices (`voices_read`), and library voices need a paid plan.
 15. **The backend in Docker on an Apple-chip Mac gets rotations wrong.** That image is Intel-only and runs under emulation, where MuJoCo 3.6's `mju_mat2Quat` returns quaternions with the right direction but the wrong length for some large rotations (a 120° turn about Y came out with length 2.0). three.js reads that as scale, so the robot showed huge stretched grey slabs. `RobotViewer.tsx` now normalizes every quaternion, and `run.sh` avoids emulation by running the backend on the host. The bad values come from the per-frame conversion in `mujoco_sim.py` (`mju_mat2Quat` on `geom_xmat`), so any other client of `/ws/sim` on an emulated backend would also need to normalize.
 16. **`run.sh` is untested on an Intel Mac and on Linux** since the Apple-chip change. Those paths should be unchanged (the whole stack in Docker), but nobody has run them.
-17. **CORAL's move is visible before the child shoots.** It starts at 2, so a quick child could see CORAL's arms and pick the winning move in the 1.8 s before Shoot. CORAL's pick is still random and doesn't see the child. If this matters for the study, start at 1 (`THROW_AT`), at the cost of CORAL arriving later.
+17. **CORAL's move is visible before the child shoots.** It starts at Paper, so a quick child could see CORAL's arms and pick the winning move in the 1.8 s before Shoot. CORAL's pick is still random and doesn't see the child. If this matters for the study, start at Scissors (`THROW_AT`), at the cost of CORAL arriving later.
 18. **Kristika's branch `rps-redesign-ui-robot-test`** also has `tests/test_hardware_controller_positions.py`, which was left out: its import path is wrong (`robot.hardware_controller`), and with that fixed 2 of its 4 tests fail because the hardware-controller fix it tests isn't in the code. Ask her whether that fix is coming.
+19. **The redesigned Play screen (2026-10-29) was checked only in a headless browser with simulated poses**, not with a real child or at six feet. Sizes, the placement thresholds in `rps/bodyFit.ts` and the sounds' volume need a check in the room. Sitting close is allowed, but Paper's arms span about four shoulder widths: once the shoulders are wider than about 22% of the frame the hands leave the picture and Paper gets no score at all (checked with simulated landmarks). The "Step back a little so I can see your hands!" miss line is the only guard. CORAL's reactions go through `poseRobot`, like its moves (item 7).
 
 ### Ideas for next steps
 

@@ -1,4 +1,4 @@
-"""Tests for POST /set-pose, the Pose Tester's sim endpoint."""
+"""Tests for POST /set-pose (Pose Tester and Rock Paper Scissors)."""
 
 from __future__ import annotations
 
@@ -64,6 +64,38 @@ def test_duration_glides_through_the_dispatcher(client, monkeypatch):
     [(commands, sim_only)] = calls
     assert sim_only is True
     assert [c.duration_ms for c in commands] == [800]
+
+
+def test_to_robot_follows_the_robot_mode(client, monkeypatch):
+    """Rock Paper Scissors asks for its moves to reach the robot: the dispatch
+    then follows the server's sim/robot mode (sim_only=None) instead of being
+    pinned to the sim."""
+    calls = []
+
+    async def record(commands, sim_only=None):
+        calls.append(sim_only)
+
+    monkeypatch.setattr(motion_routes, "dispatch_servo_commands", record)
+
+    client.post(
+        "/set-pose",
+        json={"pulses": {"l_sho_pitch": 500}, "duration_ms": 800, "to_robot": True},
+    )
+
+    assert calls == [None]
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [{"skip_collision_check": True}, {"duration_ms": 0}],
+    ids=["unchecked", "instant"],
+)
+def test_to_robot_refuses_unchecked_or_instant_poses(client, unsafe):
+    """A pose for the robot must go through the safety gate and be a timed
+    glide: an unchecked or instant pose stays a Pose Tester (sim) thing."""
+    body = {"pulses": {"l_sho_pitch": 500}, "duration_ms": 800, "to_robot": True, **unsafe}
+
+    assert client.post("/set-pose", json=body).status_code == 422
 
 
 def test_unknown_joint_is_skipped(client):
