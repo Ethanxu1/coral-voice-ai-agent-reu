@@ -4,7 +4,11 @@
 import { SERVER_BASE } from '../config'
 import { postJSON } from './http'
 
-export type DesignAction = 'propose' | 'accept' | 'reject' | 'done' | 'chat'
+/**
+ * 'wake': just "hey CORAL" (listen for the request next). 'ignore': heard while
+ * CORAL was asleep, without "hey CORAL", so not meant for CORAL.
+ */
+export type DesignAction = 'propose' | 'accept' | 'reject' | 'done' | 'chat' | 'wake' | 'ignore'
 
 /** One control moved, e.g. { label: 'Right arm forward/up', degrees: 10 }. */
 export interface DesignChange {
@@ -31,19 +35,21 @@ export interface ChatTurn {
 /**
  * Ask CORAL what the child wants done to the pose. `proposal` is the change still
  * waiting for a yes or no, as {control: degrees}; `history` the conversation so far.
+ * `needsWakeWord` (heard while CORAL is asleep): only counts with "hey CORAL", else 'ignore'.
  */
 export async function designTurn(
   text: string,
   pulses: Record<string, number>,
   proposal: Record<string, number>,
   history: ChatTurn[],
+  needsWakeWord: boolean,
 ): Promise<DesignTurn> {
   const data = await postJSON<{
     action: DesignAction
     reply: string
     changes: DesignChange[]
     proposed_pulses: Record<string, number> | null
-  }>(`${SERVER_BASE}/pose-design/turn`, { text, pulses, proposal, history }, 'pose design turn')
+  }>(`${SERVER_BASE}/pose-design/turn`, { text, pulses, proposal, history, needs_wake_word: needsWakeWord }, 'pose design turn')
   return { action: data.action, reply: data.reply, changes: data.changes, proposedPulses: data.proposed_pulses }
 }
 

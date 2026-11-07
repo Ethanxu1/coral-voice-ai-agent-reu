@@ -192,3 +192,67 @@ def test_other_speech_is_not_a_save_command(text):
 def test_save_command_route(client):
     assert client.post("/pose-design/save-command", json={"text": "save this pose"}).json() == {"save": True}
     assert client.post("/pose-design/save-command", json={"text": "keep going"}).json() == {"save": False}
+
+
+# ── Wake word ("hey CORAL") for spoken turns ──────────────────────────────────
+
+
+@pytest.mark.parametrize("text, rest", [
+    ("Hey CORAL, lift your right arm higher.", "lift your right arm higher"),
+    ("hi coral lift your arm", "lift your arm"),
+    ("Hello, Coral! Yes.", "Yes"),
+    ("Okay hey Carol, bend your left elbow", "bend your left elbow"),  # Whisper's usual mishearing
+    ("Hey Corral, I'm done", "I'm done"),
+    ("Hey coral.", ""),
+])
+def test_wake_word_is_found_and_stripped(text, rest):
+    assert pose_design.strip_wake_word(text) == rest
+
+
+@pytest.mark.parametrize("text", [
+    "lift your right arm higher", "Thank you.", "hey", "I like coral reefs", "hey mom, look",
+])
+def test_speech_without_the_wake_word_is_not_for_coral(text):
+    assert pose_design.strip_wake_word(text) is None
+
+
+@pytest.mark.db
+def test_asleep_speech_without_wake_word_is_ignored_without_asking_the_llm(client, monkeypatch):
+    seen: list = []
+    _llm_answers(monkeypatch, "{}", seen)
+    data = client.post("/pose-design/turn", json={
+        "text": "lift your right arm higher", "pulses": ARM_STAND, "needs_wake_word": True,
+    }).json()
+    assert data == {"action": "ignore", "reply": "", "changes": [], "proposed_pulses": None}
+    assert seen == []
+
+
+@pytest.mark.db
+def test_wake_word_and_request_in_one_go_gets_the_llm_only_the_request(client, monkeypatch):
+    seen: list = []
+    _llm_answers(monkeypatch, json.dumps({"action": "chat", "reply": "Okay!", "changes": []}), seen)
+    client.post("/pose-design/turn", json={
+        "text": "Hey CORAL, lift your right arm higher", "pulses": ARM_STAND, "needs_wake_word": True,
+    })
+    assert seen[0][-1]["content"].endswith('Child said: "lift your right arm higher"')
+
+
+@pytest.mark.parametrize("needs_wake_word", [True, False])
+@pytest.mark.db
+def test_wake_word_alone_wakes_coral_without_asking_the_llm(client, monkeypatch, needs_wake_word):
+    seen: list = []
+    _llm_answers(monkeypatch, "{}", seen)
+    data = client.post("/pose-design/turn", json={
+        "text": "Hey coral!", "pulses": ARM_STAND, "needs_wake_word": needs_wake_word,
+    }).json()
+    assert data == {"action": "wake", "reply": "", "changes": [], "proposed_pulses": None}
+    assert seen == []
+
+
+@pytest.mark.parametrize("text", ["lift your right arm higher", "Hey coral, lift your right arm higher"])
+@pytest.mark.db
+def test_awake_or_typed_turn_needs_no_wake_word(client, monkeypatch, text):
+    seen: list = []
+    _llm_answers(monkeypatch, json.dumps({"action": "chat", "reply": "Okay!", "changes": []}), seen)
+    client.post("/pose-design/turn", json={"text": text, "pulses": ARM_STAND})
+    assert seen[0][-1]["content"].endswith('Child said: "lift your right arm higher"')

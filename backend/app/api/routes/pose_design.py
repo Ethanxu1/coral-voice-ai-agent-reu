@@ -12,6 +12,7 @@ from app.services.pose_design import (
     is_save_command,
     merge_changes,
     reachable_changes,
+    strip_wake_word,
 )
 from app.state import state
 from fastapi import APIRouter, HTTPException
@@ -24,19 +25,23 @@ router = APIRouter()
 async def pose_design_turn(req: PoseDesignTurnRequest) -> dict[str, Any]:
     """What the child wants done to the pose. Moves nothing: for a proposal it
     returns the proposed pose, which the page previews and applies only once
-    the child accepts."""
+    the child accepts. The wake word ("hey CORAL") is stripped; alone it is a
+    `wake` (the page starts listening for the request). Without it, a turn that
+    `needs_wake_word` is `ignore`d. Neither asks the LLM."""
     unknown = set(req.proposal) - set(CONTROLS)
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown controls: {sorted(unknown)}")
-    turn = await design_turn(
-        req.text, req.pulses, req.proposal, [t.model_dump() for t in req.history]
-    )
+    rest = strip_wake_word(req.text)
+    if rest == "" or (rest is None and req.needs_wake_word):
+        return {"action": "wake" if rest == "" else "ignore", "reply": "", "changes": [], "proposed_pulses": None}
+    text = req.text if rest is None else rest
+    turn = await design_turn(text, req.pulses, req.proposal, [t.model_dump() for t in req.history])
     action, reply, changes = turn.action, turn.reply, {}
     if action == "propose":
         changes = reachable_changes(req.pulses, merge_changes(turn.changes))
         if not changes:
             action, reply = "chat", CANT_MOVE_REPLY
-    logger.info(f"pose design: {req.text!r} -> {action} {changes}")
+    logger.info(f"pose design: {text!r} -> {action} {changes}")
     return {
         "action": action,
         "reply": reply,

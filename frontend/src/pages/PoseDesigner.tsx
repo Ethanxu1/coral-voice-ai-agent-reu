@@ -5,7 +5,7 @@ import RobotViewer from '../components/RobotViewer'
 import type { ActionSession } from '../api/actionSession'
 import { resetPose } from '../api/robot'
 import { stopSubjectSelection } from '../api/vision'
-import { killSpeech, playShutter, speak } from '../audio/speech'
+import { playShutter } from '../audio/speech'
 import CornerMenu from '../rps/CornerMenu'
 import { startFollowing, stopFollowing } from '../rps/useRobotFollow'
 import { copyPoseFromCamera, poseFromRobot, waitForSaveCommand } from '../poseDesigner/capture'
@@ -24,14 +24,14 @@ const COUNTDOWN_S = 5
 const SAVED_MS = 1500
 
 const MIC_TEXT: Record<MicState, string> = {
+  asleep: 'Say “hey CORAL” to talk to me',
   listening: "I'm listening…",
   thinking: 'Thinking…',
-  speaking: 'Talking…',
   off: "I can't hear you. Check the microphone, or type below.",
 }
 
 const INTRO =
-  "Here's your pose! Tell me what to change, like lift your right arm higher. Say I'm done when you like it."
+  "Here's your pose! Say “hey CORAL”, then tell me what to change, like “lift your right arm higher”. Say “I'm done” when you like it."
 
 function HowToPlay({ onClose }: { onClose: () => void }) {
   return (
@@ -40,8 +40,8 @@ function HowToPlay({ onClose }: { onClose: () => void }) {
         <h2>How to play</h2>
         <ol className="help-steps">
           <li><span>📸</span><p><b>Copy my pose</b> takes a picture of you; <b>Follow me</b> lets CORAL copy you live until you say <b>save this pose</b>.</p></li>
-          <li><span>🗣️</span><p>Tell CORAL what to change: "lift your right arm higher", "bring your arms closer". The see-through CORAL shows the change.</p></li>
-          <li><span>👍</span><p>Say <b>yes</b> to make the change, or tell CORAL to do it differently. Say <b>I'm done</b> to name your pose.</p></li>
+          <li><span>🗣️</span><p>Say <b>hey CORAL</b>. When CORAL is listening, tell it what to change: "lift your right arm higher". The see-through CORAL shows the change.</p></li>
+          <li><span>👍</span><p>Say <b>yes</b> (or tap 👍) to make the change, or tell CORAL to do it differently. Say <b>I'm done</b> to name your pose. If CORAL stops listening, say <b>hey CORAL</b> again.</p></li>
         </ol>
         <p className="help-note">Left and right are CORAL's own. Only the arms can change. Saved poses show up in the Dance Game.</p>
         <button className="big-btn small" onClick={onClose}>OK</button>
@@ -93,23 +93,17 @@ export default function PoseDesigner() {
     resetPose().catch(() => {})
     return () => {
       tokenRef.current++
-      killSpeech()
       stopFollow().finally(() => resetPose().catch(() => {}))
     }
   }, [])
 
-  const sayAndWait = (text: string) => {
-    setNote(text)
-    return speak({ text }).catch(() => {})
-  }
-  const say = (text: string) => void sayAndWait(text)
 
   const choose = async (m: Mode) => {
     const token = ++tokenRef.current
     setMode(m)
     setStep('capture')
     if (m === 'snap') {
-      say("Strike a pose! Press the button and I'll take a picture.")
+      setNote("Strike a pose! Press the button and I'll take a picture.")
       return
     }
     setNote('Getting ready to copy you…')
@@ -117,8 +111,8 @@ export default function PoseDesigner() {
       const session = await startFollowing()
       if (tokenRef.current !== token) return void stopFollowing(session)
       followRef.current = session
-      await sayAndWait("I'm copying you! Make your pose, then say save this pose.")
-      if (tokenRef.current === token) listenForSave()
+      setNote("I'm copying you! Make your pose, then say “save this pose”.")
+      listenForSave()
     } catch (e) {
       console.warn('follow failed', e)
       setNote("I can't copy you right now. Is the server running?")
@@ -169,7 +163,7 @@ export default function PoseDesigner() {
         await stopFollow()
       } else {
         const problem = await copyPoseFromCamera()
-        if (problem) return void (alive() && say(problem))
+        if (problem) return void (alive() && setNote(problem))
       }
       if (!alive()) return
       poseRef.current = await poseFromRobot(pulses)
@@ -182,7 +176,6 @@ export default function PoseDesigner() {
 
   const startOver = async () => {
     tokenRef.current++
-    killSpeech()
     setCountdown(null)
     setNote(null)
     setStep('choose')
@@ -193,7 +186,6 @@ export default function PoseDesigner() {
   const save = async () => {
     saveCustomPose(name, poseRef.current)
     setSaved(true)
-    speak({ text: `Saved ${name.trim()}!` }).catch(() => {})
     await sleep(SAVED_MS)
     navigate(back)
   }

@@ -58,7 +58,6 @@
 .pd .pd-mic { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; color: var(--game-text-soft); }
 .pd .pd-mic .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--pal-navy-pale); transition: transform .08s; }
 .pd .pd-mic.listening .dot { background: var(--pal-coral); transform: scale(calc(1 + var(--level, 0))); }
-.pd .pd-mic.speaking .dot { background: var(--pal-teal); }
 .pd .pd-mic .heard { flex-basis: 100%; font-weight: 700; font-size: 17px; color: var(--game-text); }
 
 .pd .pd-type { display: flex; gap: 10px; }

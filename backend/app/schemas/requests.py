@@ -83,6 +83,8 @@ class PoseDesignTurnRequest(BaseModel):
     # {control: degrees} (services/pose_design.py CONTROLS).
     proposal: dict[str, Annotated[float, Field(ge=-180, le=180)]] = {}
     history: list[ChatTurn] = Field(default=[], max_length=12)
+    # Heard by the mic while CORAL is asleep: only counts with "hey CORAL".
+    needs_wake_word: bool = False
 
 
 class SaveCommandRequest(BaseModel):

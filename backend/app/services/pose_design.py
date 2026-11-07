@@ -132,6 +132,20 @@ def is_save_command(text: str) -> bool:
     return bool(_SAVE_RE.search(t)) and not _NEGATED_RE.search(t)
 
 
+# While CORAL is asleep, speech counts only with a wake word ("hey CORAL", alone
+# or followed by the request), so background talk and noise aren't taken as
+# instructions. Includes the names Whisper hears instead of "Coral".
+_WAKE_RE = re.compile(
+    r"\b(hey|hi|hello|okay|ok)\b[\s,.!?]*\b(coral|corral|carol|karol|carroll|choral|kora|cora)\b[\s,.!?]*"
+)
+
+
+def strip_wake_word(text: str) -> str | None:
+    """What follows the wake word ("" if nothing does), or None if `text` has none."""
+    m = _WAKE_RE.search(text.lower())
+    return None if m is None else text[m.end():].strip().rstrip(".!?,").strip()
+
+
 # An arm whose forward and out angles are both within this of 0 is hanging down.
 HANGING_DEG = 10
 

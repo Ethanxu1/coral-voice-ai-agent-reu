@@ -77,6 +77,28 @@ export async function killSpeech(): Promise<void> {
   current = null
 }
 
+// Soft two-note chime via WebAudio: "I heard you, go ahead" (wake word).
+export function playChime(): void {
+  try {
+    const ctx = new AudioContext()
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35)
+    gain.connect(ctx.destination)
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(660, ctx.currentTime)
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12)
+    osc.connect(gain)
+    osc.start()
+    osc.stop(ctx.currentTime + 0.35)
+    osc.onended = () => ctx.close().catch(() => {})
+  } catch {
+    /* audio is optional */
+  }
+}
+
 // Short camera-shutter blip via WebAudio (no asset needed).
 export function playShutter(): void {
   try {
