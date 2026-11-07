@@ -7,16 +7,22 @@
 // can see which.
 
 import * as Blockly from 'blockly/core'
-import { DANCE_POSES, SPEED_LABEL, type DancePoseId, type DanceSpeed } from './poses'
+import { loadCustomPoses } from '../poseDesigner/customPoses'
+import { CUSTOM_EMOJI, DANCE_POSES, SPEED_LABEL, type DancePoseId, type DanceSpeed } from './poses'
 
 export const START_BLOCK = 'dance_start'
 const REPEAT_BLOCK = 'dance_repeat'
+/** A pose made in the Pose Designer; its POSE dropdown holds the CustomPose id. */
+const CUSTOM_BLOCK = 'dance_custom'
 const poseBlockType = (id: DancePoseId) => `dance_pose_${id}`
 const POSE_BY_BLOCK_TYPE = new Map(DANCE_POSES.map((p) => [poseBlockType(p.id), p.id]))
 
-/** One step of a dance program. `blockId` is the Blockly block it came from, for highlighting. */
+/**
+ * One step of a dance program. `blockId` is the Blockly block it came from, for
+ * highlighting; `pose` a preset's DancePoseId or a CustomPose id (see danceMove).
+ */
 export type Step =
-  | { kind: 'pose'; blockId: string; pose: DancePoseId; speed: DanceSpeed }
+  | { kind: 'pose'; blockId: string; pose: string; speed: DanceSpeed }
   | { kind: 'repeat'; blockId: string; times: number; body: Step[] }
 
 const MAX_REPEAT = 20
@@ -49,6 +55,24 @@ export function defineDanceBlocks(): void {
       nextStatement: null,
     })),
   ])
+  // Defined in code, not JSON, because its pose list is read when the menu opens.
+  Blockly.Blocks[CUSTOM_BLOCK] = {
+    init(this: Blockly.Block) {
+      this.appendDummyInput()
+        .appendField(CUSTOM_EMOJI)
+        .appendField(new Blockly.FieldDropdown(customPoseOptions), 'POSE')
+        .appendField(new Blockly.FieldDropdown(speedOptions as Blockly.MenuOption[]), 'SPEED')
+      this.setStyle('custom_blocks')
+      this.setPreviousStatement(true)
+      this.setNextStatement(true)
+    },
+  }
+}
+
+/** The POSE dropdown's choices: every saved Pose Designer pose. */
+function customPoseOptions(): Blockly.MenuOption[] {
+  const poses = loadCustomPoses()
+  return poses.length > 0 ? poses.map((p) => [p.name, p.id]) : [['?', '']]
 }
 
 /** A palette colour from src/theme/palette.css (Blockly needs real colour values, not var()). */
@@ -63,6 +87,7 @@ export function danceTheme(): Blockly.Theme {
       start_blocks: { colourPrimary: pal('navy'), colourSecondary: pal('navy-light'), colourTertiary: pal('navy-deep'), hat: 'cap' },
       loop_blocks: { colourPrimary: pal('teal'), colourSecondary: pal('teal-pale'), colourTertiary: pal('navy') },
       move_blocks: { colourPrimary: pal('coral'), colourSecondary: pal('pink'), colourTertiary: pal('coral-deep') },
+      custom_blocks: { colourPrimary: pal('coral-deep'), colourSecondary: pal('pink'), colourTertiary: pal('navy') },
     },
     componentStyles: {
       workspaceBackgroundColour: pal('white'),
@@ -76,15 +101,20 @@ export function danceTheme(): Blockly.Theme {
   })
 }
 
-/** The always-open block shelf: the loop, then every move at normal speed. */
-export const TOOLBOX: Blockly.utils.toolbox.ToolboxInfo = {
-  kind: 'flyoutToolbox',
-  contents: [
-    { kind: 'label', text: 'Loops' },
-    { kind: 'block', type: REPEAT_BLOCK },
-    { kind: 'label', text: 'Moves' },
-    ...DANCE_POSES.map((p) => ({ kind: 'block', type: poseBlockType(p.id), fields: { SPEED: 'normal' } })),
-  ],
+/** The always-open block shelf: the loop, every move, then the child's own poses, at normal speed. */
+export function toolbox(): Blockly.utils.toolbox.ToolboxInfo {
+  const custom = loadCustomPoses()
+  return {
+    kind: 'flyoutToolbox',
+    contents: [
+      { kind: 'label', text: 'Loops' },
+      { kind: 'block', type: REPEAT_BLOCK },
+      { kind: 'label', text: 'Moves' },
+      ...DANCE_POSES.map((p) => ({ kind: 'block', type: poseBlockType(p.id), fields: { SPEED: 'normal' } })),
+      ...(custom.length > 0 ? [{ kind: 'label', text: 'My poses' }] : []),
+      ...custom.map((p) => ({ kind: 'block', type: CUSTOM_BLOCK, fields: { POSE: p.id, SPEED: 'normal' } })),
+    ],
+  }
 }
 
 /** Steps for a stack of blocks starting at `first`, skipping any a child disabled. */
@@ -96,7 +126,7 @@ function readStack(first: Blockly.Block | null): Step[] {
       steps.push({ kind: 'repeat', blockId: b.id, times: Number(b.getFieldValue('TIMES')), body: readStack(b.getInputTargetBlock('DO')) })
       continue
     }
-    const pose = POSE_BY_BLOCK_TYPE.get(b.type)
+    const pose = b.type === CUSTOM_BLOCK ? b.getFieldValue('POSE') : POSE_BY_BLOCK_TYPE.get(b.type)
     if (pose) steps.push({ kind: 'pose', blockId: b.id, pose, speed: b.getFieldValue('SPEED') as DanceSpeed })
   }
   return steps

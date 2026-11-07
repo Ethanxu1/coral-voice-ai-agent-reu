@@ -7,9 +7,33 @@ import { sleep } from '../utils/sleep'
 const RETRY_MS = 2000
 
 /**
- * While mounted, the simulator robot follows the child (the same follow
- * pipeline the main demo uses), arms and head only, in gentle mode. On unmount
- * it stops following and returns to a stand.
+ * Stand the robot up and start it following the child (the same follow
+ * pipeline the main demo uses), arms and head only, in gentle mode.
+ */
+export async function startFollowing(): Promise<ActionSession> {
+  await resetRobot()
+  await sleep(600)
+  await setHiplessFollow(true)
+  const session = openActionSession()
+  try {
+    await session.sendText('follow my movement', 'immediate')
+  } catch (e) {
+    session.close()
+    throw e
+  }
+  return session
+}
+
+/** Stop following. The robot holds the pose it had reached. */
+export async function stopFollowing(session: ActionSession): Promise<void> {
+  await session.sendText('stop following', 'immediate').catch(() => {})
+  session.close()
+  setHiplessFollow(false)
+}
+
+/**
+ * While mounted, the simulator robot follows the child (startFollowing). On
+ * unmount it stops following and returns to a stand.
  *
  * If the main server isn't up yet (e.g. the page was open before the backend
  * finished starting), it keeps retrying. Returns true once following has started.
@@ -20,22 +44,20 @@ export function useRobotFollow(): boolean {
   useEffect(() => {
     let cancelled = false
     let session: ActionSession | null = null
+    const stop = (s: ActionSession) => stopFollowing(s).finally(() => resetPose().catch(() => {}))
     const run = async () => {
       while (!cancelled) {
         try {
-          await resetRobot()
-          await sleep(600)
-          if (cancelled) return
-          await setHiplessFollow(true)
-          if (cancelled) return
-          session = openActionSession()
-          await session.sendText('follow my movement', 'immediate')
-          if (!cancelled) setFollowing(true)
+          const s = await startFollowing()
+          if (cancelled) {
+            stop(s)
+            return
+          }
+          session = s
+          setFollowing(true)
           return
         } catch (e) {
           console.warn('start follow failed, retrying', e)
-          session?.close()
-          session = null
           await sleep(RETRY_MS)
         }
       }
@@ -43,19 +65,8 @@ export function useRobotFollow(): boolean {
     run()
     return () => {
       cancelled = true
-      const s = session
-      session = null
-      if (s) {
-        s.sendText('stop following', 'immediate')
-          .catch(() => {})
-          .finally(() => {
-            s.close()
-            resetPose().catch(() => {})
-            setHiplessFollow(false)
-          })
-      } else {
-        setHiplessFollow(false)
-      }
+      if (session) stop(session)
+      else setHiplessFollow(false)
     }
   }, [])
 

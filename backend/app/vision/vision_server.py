@@ -24,6 +24,7 @@ from .pose_estimator import PoseEstimator
 from .pose_to_robot import (
     compute_joint_targets,
     hips_detected,
+    shoulders_detected,
     knees_confidently_visible,
 )
 
@@ -161,7 +162,7 @@ _FOLLOW_DURATION_MS = 1000
 
 
 @app.post("/map-features")
-async def map_features(leg_mode: str = "buckets"):
+async def map_features(leg_mode: str = "buckets", hipless: bool = False):
     """Retarget the latest MediaPipe landmarks to robot servo commands.
 
     Instead of picking a canned pose class, we map the person's actual body
@@ -177,6 +178,9 @@ async def map_features(leg_mode: str = "buckets"):
                   bucket's fixed target (default).
       "retarget"  live pelvis-frame hip pitch/roll + knee bend.
       "legacy"    the old anatomically-wrong atan2 mapping (hip_yaw ← swing).
+
+    `hipless=true` retargets the arms from the shoulders alone when the hips are
+    out of frame (a desk webcam), for callers that only use the arms.
     """
     if leg_mode not in leg_modes.LEG_MODES:
         raise HTTPException(
@@ -203,7 +207,7 @@ async def map_features(leg_mode: str = "buckets"):
 
     # The arm retargeting is anchored on the hips; without them we'd only be able
     # to move the head, so ask the caller to reframe and retake instead.
-    if not hips_detected(body):
+    if not (hips_detected(body) or (hipless and shoulders_detected(body))):
         return {
             "pose_detected": False,
             "detail": "Make sure your wrists, shoulders, and hips are visible in the frame!",
@@ -216,7 +220,7 @@ async def map_features(leg_mode: str = "buckets"):
         }
 
     head = _latest_head_pose
-    targets = compute_joint_targets(body, head)
+    targets = compute_joint_targets(body, head, allow_hipless=hipless or None)
 
     if not config.ENABLE_LEG_TRACKING:
         # Leg tracking is disabled by default for live-demo stability. Keep the

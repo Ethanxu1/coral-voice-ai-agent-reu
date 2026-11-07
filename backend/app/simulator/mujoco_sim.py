@@ -75,6 +75,8 @@ class AiNexSimulator:
         # MuJoCo solver stack is not thread-safe, so the physics thread, the
         # viewer sync, and command/reset paths must be mutually exclusive.
         self._lock = threading.Lock()
+        # Scratch state for get_geom_poses(preview=...).
+        self._preview_data = mujoco.MjData(self.model)
 
         self._apply_stand_keyframe()
 
@@ -334,7 +336,7 @@ class AiNexSimulator:
                 })
         return frames
 
-    def get_geom_poses(self) -> bytes:
+    def get_geom_poses(self, preview: dict[str, float] | None = None) -> bytes:
         """World-space pose of every render geom as a packed float32 buffer.
 
         Layout: for each geom (in get_render_geom_info() order) 7 little-endian
@@ -345,23 +347,34 @@ class AiNexSimulator:
         A trailing 3 float32s carry the whole-robot center of mass in the same
         world frame (MuJoCo's subtree_com for body 0, i.e. the mass-weighted
         average over every body). The browser uses this for a balance readout.
+
+        `preview` ({joint: radians}) poses those joints over the robot as it is
+        now, on a scratch copy (the live sim is untouched): the Pose Designer's
+        ghost of a proposed pose.
         """
         n = len(self._render_geom_ids)
         buf = np.empty(n * 7 + 3, dtype=np.float32)
         quat = np.empty(4, dtype=np.float64)
         with self._lock:
-            # Refresh forward kinematics so geom_xpos/geom_xmat reflect the
-            # current qpos even when the physics loop isn't stepping (e.g. the
-            # native viewer thread never started / failed to launch on macOS).
-            # It recomputes from state without integrating, so it's safe to
-            # interleave with the stepping loop under the same lock.
-            mujoco.mj_forward(self.model, self.data)
+            if preview is None:
+                # Refresh forward kinematics so geom_xpos/geom_xmat reflect the
+                # current qpos even when the physics loop isn't stepping (e.g. the
+                # native viewer thread never started / failed to launch on macOS).
+                # It recomputes from state without integrating, so it's safe to
+                # interleave with the stepping loop under the same lock.
+                data = self.data
+            else:
+                data = self._preview_data
+                data.qpos[:] = self.data.qpos
+                for name, rad in preview.items():
+                    data.qpos[self.model.jnt_qposadr[self._joint_ids[name]]] = rad
+            mujoco.mj_forward(self.model, data)
             for row, gid in enumerate(self._render_geom_ids):
                 o = row * 7
-                buf[o:o + 3] = self.data.geom_xpos[gid]
-                mujoco.mju_mat2Quat(quat, self.data.geom_xmat[gid])
+                buf[o:o + 3] = data.geom_xpos[gid]
+                mujoco.mju_mat2Quat(quat, data.geom_xmat[gid])
                 buf[o + 3:o + 7] = quat
-            buf[n * 7:n * 7 + 3] = self.data.subtree_com[0]
+            buf[n * 7:n * 7 + 3] = data.subtree_com[0]
         return buf.tobytes()
 
     def start_viewer(

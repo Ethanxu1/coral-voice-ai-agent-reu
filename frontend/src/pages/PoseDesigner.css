@@ -1,0 +1,76 @@
+/* Pose Designer: the Dance Game look (DanceGame.css's .dance room, stage,
+   bubble and big buttons), plus its own pieces under .pd. Colours from the
+   shared palette (src/theme/palette.css). */
+
+/* ── Choose how CORAL learns the pose ──────────────────────────────────── */
+.pd .pd-choose { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 0 32px 48px; }
+.pd .pd-lead { margin: 0; font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 30px; color: var(--game-text-soft); }
+.pd .pd-options { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; }
+.pd .pd-option {
+  width: 320px; padding: 30px 26px; border-radius: 30px; background: var(--pal-white); color: var(--game-text);
+  display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
+  box-shadow: 0 10px 0 var(--pal-coral), 0 22px 40px color-mix(in srgb, var(--pal-navy) 12%, transparent);
+  transition: transform .15s;
+}
+.pd .pd-option.follow { box-shadow: 0 10px 0 var(--pal-teal), 0 22px 40px color-mix(in srgb, var(--pal-navy) 12%, transparent); }
+.pd .pd-option:hover { transform: translateY(-4px); }
+.pd .pd-option:active { transform: translateY(6px); }
+.pd .pd-option .em { font-size: 72px; line-height: 1; }
+.pd .pd-option b { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 34px; color: var(--pal-navy); }
+.pd .pd-option small { font-size: 18px; font-weight: 700; color: var(--game-text-soft); }
+
+.pd .pd-link { background: none; font-size: 19px; font-weight: 800; color: var(--game-text-soft); padding: 8px 12px; border-radius: 12px; }
+.pd .pd-link:hover { background: color-mix(in srgb, var(--pal-navy) 8%, transparent); }
+
+/* ── Capture (camera | CORAL) and refine (CORAL | conversation) ────────── */
+.pd .pd-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; padding: 10px 32px 28px; min-height: 0; }
+.pd .pd-main.refine { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+.pd .pd-actions { flex: none; display: flex; align-items: center; justify-content: center; gap: 20px; margin-top: 18px; }
+.pd .pd-actions .big-btn { margin-top: 0; }
+.pd .big-btn { font-size: 40px; padding: 12px 56px 16px; }
+
+.pd .pd-cam { position: relative; min-height: 0; border-radius: 28px; overflow: hidden; display: grid; place-items: center; background: var(--pal-navy-deep); box-shadow: 0 8px 0 color-mix(in srgb, var(--pal-navy) 8%, transparent); }
+.pd .pd-cam .tui-stream { max-width: 100%; max-height: 100%; }
+.pd .pd-count {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 220px; color: #fff;
+  text-shadow: 0 8px 0 var(--pal-coral-deep), 0 20px 60px color-mix(in srgb, var(--pal-navy) 50%, transparent);
+  animation: dance-pop .35s cubic-bezier(.3,1.6,.6,1);
+}
+
+.pd .pd-talk { min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+.pd .pd-talk .bubble { align-self: stretch; font-size: clamp(22px, 2vw, 30px); }
+.pd .pd-talk .bubble::after { display: none; }
+
+/* The proposal: what changes, and yes / no. */
+.pd .pd-proposal { background: var(--pal-white); border-radius: 24px; padding: 16px 22px; border: 3px solid var(--pal-teal); display: flex; flex-direction: column; gap: 10px; }
+.pd .pd-ghost-key { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--pal-teal); font-size: 17px; }
+.pd .pd-ghost-key i { width: 18px; height: 18px; border-radius: 50%; background: color-mix(in srgb, var(--pal-teal) 50%, transparent); border: 2px solid var(--pal-teal); }
+.pd .pd-proposal ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.pd .pd-proposal li { background: var(--pal-teal-pale); color: var(--pal-navy-deep); border-radius: 999px; padding: 6px 14px; font-weight: 700; font-size: 18px; }
+.pd .pd-yesno { display: flex; gap: 14px; }
+.pd .pd-yesno button { flex: 1; font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 28px; padding: 8px 0 10px; border-radius: 999px; color: #fff; }
+.pd .pd-yesno .yes { background: var(--pal-teal); box-shadow: 0 6px 0 var(--pal-navy); }
+.pd .pd-yesno .no { background: var(--pal-navy-soft); box-shadow: 0 6px 0 var(--pal-navy-deep); }
+.pd .pd-yesno button:active { transform: translateY(4px); box-shadow: none; }
+
+/* Who's talking: a dot that pulses with the mic level while listening. */
+.pd .pd-mic { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; color: var(--game-text-soft); }
+.pd .pd-mic .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--pal-navy-pale); transition: transform .08s; }
+.pd .pd-mic.listening .dot { background: var(--pal-coral); transform: scale(calc(1 + var(--level, 0))); }
+.pd .pd-mic.speaking .dot { background: var(--pal-teal); }
+.pd .pd-mic .heard { flex-basis: 100%; font-weight: 700; font-size: 17px; color: var(--game-text); }
+
+.pd .pd-type { display: flex; gap: 10px; }
+.pd .pd-type input, .pd .pd-name input {
+  flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 700; color: var(--game-text);
+  border: 2px solid var(--pal-navy-pale); border-radius: 16px; padding: 10px 14px; background: var(--pal-white);
+}
+.pd .pd-type button { font-weight: 800; font-size: 17px; border-radius: 16px; padding: 0 18px; color: #fff; background: var(--pal-navy); }
+.pd .pd-type button:disabled { background: var(--pal-navy-pale); cursor: default; }
+
+/* Naming the pose. */
+.pd .pd-name { display: flex; flex-direction: column; gap: 16px; }
+.pd .pd-name label { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 36px; color: var(--pal-navy); }
+.pd .pd-name input { flex: none; font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 34px; padding: 14px 20px; border-width: 3px; }
+.pd .pd-name input:focus, .pd .pd-type input:focus { outline: none; border-color: var(--pal-teal); }

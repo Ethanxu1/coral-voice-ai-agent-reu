@@ -20,6 +20,8 @@ The screen has the same look as Rock Paper Scissors Play (sand room, Fredoka typ
 | Right | CORAL's speech bubble, the simulator robot, and the big **Dance!** / **Stop** button |
 | Corner | The grown-up menu shared with RPS (connection, How to play, hold-to-exit) |
 
+If the child has made poses in the [Pose Designer](pose-designer.md), they appear at the bottom of the shelf under **My poses**, one ⭐ block each.
+
 Students drag blocks off the shelf and snap them under the start block; a repeat block is C-shaped and takes blocks inside it, including other repeat blocks. Each move block has a speed dropdown (🐢 slow / 🚶 normal / 🐇 fast); each repeat block has an editable count (1-20). Only blocks connected under the start block play: Blockly greys out loose ones. Dragging a block back to the shelf (or onto the trash can) deletes it.
 
 **Dance!** is disabled until there is at least one move under the start block. Pressing it locks the blocks (the workspace goes read-only and the shelf dims), resets the robot to a clean stand, walks the program in order, holds the last pose for a second, and resets to stand. While it plays, the running block glows gold and the bubble shows the current move. Moves never stop part-way because of self-collision: if the direct motion would bump a limb into the body, the server goes around it through an intermediate pose. Each move waits until the robot has physically arrived in the pose before the next one starts. **Stop** cancels after the current move.
@@ -85,6 +87,7 @@ Cancellation is a single incrementing token owned by the page (`DanceGame.tsx`),
 | `frontend/src/dance/blocks.ts` | Blockly block definitions, palette theme, shelf, `readProgram` |
 | `frontend/src/dance/DanceWorkspace.tsx` | React wrapper around the Blockly workspace |
 | `frontend/src/dance/sequencePlayer.ts` | Walks the program and drives the simulator |
+| `frontend/src/poseDesigner/customPoses.ts` | The child's own poses (from the Pose Designer), read for the "My poses" shelf section |
 | `frontend/src/rps/CornerMenu.tsx`, `CornerMenu.css` | Grown-up corner menu shared with RPS (`menuPath={null}` hides "Game menu") |
 | `frontend/src/App.tsx` | Home-page button and the lazy `/dance-game` route |
 
@@ -125,4 +128,4 @@ Open <http://localhost:5173> and click **Dance Game**. Simulation mode is enough
 6. **`wave` is one static frame, not the full animation.** `motions.py`'s `WAVE` is a 9-frame sequence whose last frame equals the stand-arms pose, so frame 0 (arms raised) is used as a single representative pose.
 7. **Block icons are emoji, not stick figures.** There's no code yet that derives full-body limb geometry from a pulse dict.
 8. **No automated tests.** The frontend has no test runner. `readProgram` is the piece worth unit-testing if one is added.
-9. **No custom moves or music yet.** A new move only needs to land in `DANCE_POSES`; the block/player architecture doesn't need to change.
+9. **No music yet.** Custom moves come from the [Pose Designer](pose-designer.md): `dance_custom` blocks (`blocks.ts`), resolved by `danceMove()` (`poses.ts`). The shelf is built when the page opens, so a pose saved in another tab shows up after a reload.

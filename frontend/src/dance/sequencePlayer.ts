@@ -4,7 +4,7 @@
 // state, this just walks the steps.
 
 import { resetPose, setPose } from '../api/robot'
-import { DANCE_POSE_BY_ID, SPEED_MS } from './poses'
+import { SPEED_MS, danceMove } from './poses'
 import type { Step } from './blocks'
 
 type PoseStep = Extract<Step, { kind: 'pose' }>
@@ -23,8 +23,10 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * actually arrived there (or stopped short), so the next move starts from the
  * finished pose. An instant snap can topple the physics model, so every move is a glide.
  */
-const glideTo = (pose: PoseStep['pose'], durationMs: number) =>
-  setPose(DANCE_POSE_BY_ID[pose].robotPulses, { durationMs, waitUntilArrived: true })
+async function glideTo(pose: PoseStep['pose'], durationMs: number): Promise<void> {
+  const move = danceMove(pose)
+  if (move) await setPose(move.robotPulses, { durationMs, waitUntilArrived: true })
+}
 
 async function playSteps(steps: Step[], isAlive: () => boolean, onStep?: (step: PoseStep) => void): Promise<void> {
   for (const step of steps) {

@@ -5,7 +5,7 @@ import { stopSubjectSelection } from '../api/vision'
 import CornerMenu from '../rps/CornerMenu'
 import DanceWorkspace, { type DanceWorkspaceHandle } from '../dance/DanceWorkspace'
 import { hasMoves, type Step } from '../dance/blocks'
-import { DANCE_POSE_BY_ID, type DancePoseId } from '../dance/poses'
+import { danceMove } from '../dance/poses'
 import { playSequence } from '../dance/sequencePlayer'
 import './DanceGame.css'
 
@@ -31,7 +31,7 @@ export default function DanceGame() {
   const [program, setProgram] = useState<Step[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
   /** The move playing now, and a count so the same move twice in a row pops the bubble again. */
-  const [move, setMove] = useState<{ pose: DancePoseId; n: number } | null>(null)
+  const [move, setMove] = useState<{ pose: string; n: number } | null>(null)
   const [help, setHelp] = useState(false)
   const workspaceRef = useRef<DanceWorkspaceHandle>(null)
   const tokenRef = useRef(0)
@@ -75,7 +75,7 @@ export default function DanceGame() {
   }
 
   const ready = hasMoves(program)
-  const pose = move && DANCE_POSE_BY_ID[move.pose]
+  const pose = move && danceMove(move.pose)
   const bubble = pose
     ? `${pose.emoji} ${pose.label}!`
     : ready

@@ -26,6 +26,8 @@
 // contact (a few degrees; marked "eased" below), so each pose is reached in
 // full. backend/tests/test_dance_poses.py checks every pose here is clear.
 
+import { loadCustomPoses } from '../poseDesigner/customPoses'
+
 export type DancePoseId =
   | 'stand'
   | 't-pose'
@@ -246,4 +248,17 @@ export const SPEED_LABEL: Record<DanceSpeed, string> = {
   slow: '🐢 slow',
   normal: '🚶 normal',
   fast: '🐇 fast',
+}
+
+/** A move a block can play: a preset above, or a pose made in the Pose Designer. */
+export type DanceMove = Pick<DancePoseDef, 'label' | 'emoji' | 'robotPulses'>
+
+/** The emoji on a Pose Designer pose's block. */
+export const CUSTOM_EMOJI = '⭐'
+
+/** The move with this id (a preset's, or a CustomPose's), or undefined if it no longer exists. */
+export function danceMove(id: string): DanceMove | undefined {
+  if (id in DANCE_POSE_BY_ID) return DANCE_POSE_BY_ID[id as DancePoseId]
+  const custom = loadCustomPoses().find((p) => p.id === id)
+  return custom && { label: custom.name, emoji: CUSTOM_EMOJI, robotPulses: custom.pulses }
 }

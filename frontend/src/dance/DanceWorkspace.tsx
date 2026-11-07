@@ -4,7 +4,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import * as Blockly from 'blockly/core'
 import * as En from 'blockly/msg/en'
-import { START_BLOCK, TOOLBOX, danceTheme, defineDanceBlocks, readProgram, type Step } from './blocks'
+import { START_BLOCK, danceTheme, defineDanceBlocks, readProgram, toolbox, type Step } from './blocks'
 
 Blockly.setLocale(En as unknown as Record<string, string>)
 
@@ -30,7 +30,7 @@ const DanceWorkspace = forwardRef<DanceWorkspaceHandle, Props>(function DanceWor
     defineDanceBlocks()
     const host = hostRef.current!
     const workspace = Blockly.inject(host, {
-      toolbox: TOOLBOX,
+      toolbox: toolbox(),
       theme: danceTheme(),
       renderer: 'zelos',
       trashcan: true,
