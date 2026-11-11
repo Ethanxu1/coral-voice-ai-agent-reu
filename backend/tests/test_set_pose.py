@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import motion as motion_routes
 from app.main import create_app
+from app.robot.angle_utils import rad_to_servo_units
+from app.robot.hardware_angle_utils import hardware_units_to_rad
+from app.robot.servo_config import SERVO_ID_MAP
 from app.state import state
 
 pytestmark = pytest.mark.db
@@ -64,6 +67,54 @@ def test_duration_glides_through_the_dispatcher(client, monkeypatch):
     [(commands, sim_only)] = calls
     assert sim_only is True
     assert [c.duration_ms for c in commands] == [800]
+
+
+def test_wait_until_arrived_returns_once_the_body_is_there(client):
+    """The Dance Game starts its next move when /set-pose returns. The position
+    motors trail the glide (the soft arms by ~0.25 rad here), so with
+    wait_until_arrived the joint must physically be at the pose by then, not
+    just its motor target."""
+    target = hardware_units_to_rad(513, "l_sho_roll")  # arm out to the side
+
+    data = client.post(
+        "/set-pose",
+        json={
+            "pulses": {"l_sho_roll": 513},
+            "duration_ms": 700,
+            "skip_collision_check": True,
+            "wait_until_arrived": True,
+        },
+    ).json()
+
+    assert data["status"] == "done"
+    actual = state.simulator.get_actual_joint_positions(["l_sho_roll"])["l_sho_roll"]
+    assert actual == pytest.approx(target, abs=0.06)
+
+
+def test_glide_routes_around_a_collision_on_the_way(client, monkeypatch):
+    """Wave -> Dab (Dance Game) collides part-way on the straight path. The
+    glide must go around through intermediate poses and still end at Dab,
+    instead of stopping at the last safe point."""
+    wave = {"r_sho_pitch": 0, "r_sho_roll": 500, "r_el_pitch": 500, "r_el_yaw": 940}
+    dab = {"r_sho_pitch": 675, "r_sho_roll": 225, "r_el_pitch": 120, "r_el_yaw": 890}
+    for joint, pulse in wave.items():
+        state.simulator.set_joint_position(joint, hardware_units_to_rad(pulse, joint))
+    legs = []
+
+    async def record(commands, sim_only=None):
+        legs.append({c.servo_id: c.position for c in commands})
+
+    monkeypatch.setattr(motion_routes, "dispatch_servo_commands", record)
+
+    data = client.post(
+        "/set-pose", json={"pulses": dab, "duration_ms": 1000, "check_fall": False}
+    ).json()
+
+    assert data["safety"]["collision_clamped"] is False
+    assert len(legs) >= 2, "expected the glide to go through an intermediate pose"
+    for joint, pulse in dab.items():
+        expected = rad_to_servo_units(hardware_units_to_rad(pulse, joint))
+        assert legs[-1][SERVO_ID_MAP[joint]] == pytest.approx(expected, abs=1)
 
 
 def test_to_robot_follows_the_robot_mode(client, monkeypatch):
@@ -125,3 +176,25 @@ def test_upright_pin_endpoint_toggles_the_sim(client):
     assert state.simulator.upright_pinned is True
     client.post("/sim/upright", json={"enabled": False})
     assert state.simulator.upright_pinned is False
+
+
+class _RecordingHardware:
+    def __init__(self):
+        self.sent = []
+
+    def send_commands(self, commands):
+        self.sent.append(list(commands))
+
+
+def test_reset_animates_the_robot_unless_sim_only(client, monkeypatch):
+    """Dance Game Simulate (live mode) re-stands only the sim; a plain /reset
+    still stands the physical robot up too."""
+    hardware = _RecordingHardware()
+    monkeypatch.setattr(state, "robot_mode", "robot")
+    monkeypatch.setattr(state, "hardware_dispatcher", hardware)
+
+    assert client.post("/reset?sim_only=true").json()["status"] == "done"
+    assert hardware.sent == []
+
+    client.post("/reset")
+    assert len(hardware.sent) == 1

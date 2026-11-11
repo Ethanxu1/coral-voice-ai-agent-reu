@@ -9,10 +9,15 @@ permits.
 
 Uses mj_forward (kinematics + collision detection, no integration) so a
 20-step rollout costs well under a millisecond on AiNex.
+
+plan_path() goes further: when the straight motion would collide, it looks for
+a route around through one or two intermediate poses (see its docstring).
 """
 
 import mujoco
 from app.config import AINEX_MODEL_PATH
+from app.robot.hardware_angle_utils import hardware_units_to_rad
+from app.robot.motions import T_POSE_PULSE
 from loguru import logger
 
 # Geom pairs whose contact is expected/harmless and must never count as a
@@ -22,6 +27,17 @@ from loguru import logger
 _IGNORED_CONTACT_PAIRS: frozenset[frozenset[str]] = frozenset({
     frozenset({"l_foot2", "r_foot2"}),
 })
+
+
+Pose = dict[str, float]
+
+# Arm joints (shoulders and elbows): the limbs plan_path moves out of the way.
+_ARM_JOINT_PREFIXES = ("l_sho", "l_el", "r_sho", "r_el")
+
+
+def _path_length(path: list[Pose]) -> float:
+    """Total joint travel along a path of poses (radians, summed over joints)."""
+    return sum(sum(abs(b[j] - a[j]) for j in b) for a, b in zip(path, path[1:]))
 
 
 class CollisionChecker:
@@ -55,6 +71,15 @@ class CollisionChecker:
             jtype = self.model.jnt_type[i]
             if name and jtype == mujoco.mjtJoint.mjJNT_HINGE:
                 self._qpos_addr[name] = int(self.model.jnt_qposadr[i])
+
+        stand = self.stand_joints()
+        arms = [j for j in stand if j.startswith(_ARM_JOINT_PREFIXES)]
+        # Clear arm positions plan_path can route through: arms down at the
+        # sides (stand) and arms straight out (T-pose).
+        self._arm_hubs: list[Pose] = [
+            {j: stand[j] for j in arms},
+            {j: hardware_units_to_rad(T_POSE_PULSE[j], j) for j in arms if j in T_POSE_PULSE},
+        ]
 
         self._apply_stand_keyframe()
         logger.info(
@@ -172,3 +197,66 @@ class CollisionChecker:
                 return safe_joints, safe_fraction, bad
 
         return dict(target_joints), 1.0, []
+
+    def plan_path(self, current_joints: Pose, target_joints: Pose) -> list[Pose] | None:
+        """A self-collision-free route from ``current_joints`` to ``target_joints``.
+
+        Returns the poses to move through in order, each a full joint dict, the
+        last one being the target: just ``[target]`` when the straight motion is
+        clear. When it isn't, tries routes through intermediate poses, the way a
+        person would untangle the move:
+          1. reorder: move one joint first or last (twist, then fold the elbow);
+          2. tuck: move the arms down to the sides (stand) on the way;
+          3. via an arm hub (arms at the sides, or straight out), where each half
+             may use 1-2 itself.
+        Every leg is checked with check_trajectory; the shortest clear route wins.
+        Returns None when the target itself is in contact (no route can reach
+        it) or no route is found; the caller then stops at the last safe point.
+        """
+        start = dict(current_joints)
+        goal = {**start, **target_joints}
+        self.render_pose(start)
+        start_contacts = self._contact_pairs()
+        self.render_pose(goal)
+        if self._contact_pairs() - start_contacts:
+            return None
+        path = self._plan_direct(start, goal) or self._plan_via_hubs(start, goal)
+        return path[1:] if path else None
+
+    def _clear(self, a: Pose, b: Pose) -> bool:
+        return self.check_trajectory(a, b)[1] >= 1.0
+
+    def _plan_direct(self, start: Pose, goal: Pose) -> list[Pose] | None:
+        """Straight, else the shortest clear reorder/tuck route; start included."""
+        if self._clear(start, goal):
+            return [start, goal]
+        clear = [
+            path for path in self._detours(start, goal)
+            if all(self._clear(a, b) for a, b in zip(path, path[1:]))
+        ]
+        return min(clear, key=_path_length) if clear else None
+
+    def _detours(self, start: Pose, goal: Pose) -> list[list[Pose]]:
+        """Candidate routes through one or two intermediate poses."""
+        detours = []
+        for j in (j for j in goal if abs(goal[j] - start[j]) > 1e-6):
+            detours.append([start, {**start, j: goal[j]}, goal])  # j first
+            detours.append([start, {**goal, j: start[j]}, goal])  # j last
+        tucked = self._arm_hubs[0]
+        detours += [
+            [start, {**start, **tucked}, goal],
+            [start, {**goal, **tucked}, goal],
+            [start, {**start, **tucked}, {**goal, **tucked}, goal],
+        ]
+        return detours
+
+    def _plan_via_hubs(self, start: Pose, goal: Pose) -> list[Pose] | None:
+        """Shortest route through an arm hub, each half planned directly."""
+        routes = []
+        for hub in self._arm_hubs:
+            middle = {**goal, **hub}
+            first = self._plan_direct(start, middle)
+            second = first and self._plan_direct(middle, goal)
+            if second:
+                routes.append(first + second[1:])
+        return min(routes, key=_path_length) if routes else None

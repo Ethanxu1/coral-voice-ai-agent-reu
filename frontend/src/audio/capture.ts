@@ -15,10 +15,12 @@ export async function captureUtterance(
     maxMs?: number
     threshold?: number
     onLevel?: (rms: number) => void
+    /** Called once, the moment speech starts (the recording began earlier). */
+    onSpeechStart?: () => void
     signal?: AbortSignal
   } = {},
 ): Promise<Blob> {
-  const { silenceMs = 1200, maxMs = 12000, threshold = 10, onLevel, signal } = opts
+  const { silenceMs = 1200, maxMs = 12000, threshold = 10, onLevel, onSpeechStart, signal } = opts
 
   if (signal?.aborted) {
     throw new DOMException('captureUtterance aborted', 'AbortError')
@@ -121,7 +123,10 @@ export async function captureUtterance(
       try { onLevel?.(rms) } catch { /* callback errors are the caller's problem, not ours */ }
       const now = performance.now()
       if (rms > threshold) {
-        if (speechStartedAt == null) speechStartedAt = now
+        if (speechStartedAt == null) {
+          speechStartedAt = now
+          try { onSpeechStart?.() } catch { /* the caller's problem, like onLevel */ }
+        }
         silenceSince = null
       } else if (speechStartedAt != null) {
         if (silenceSince == null) silenceSince = now

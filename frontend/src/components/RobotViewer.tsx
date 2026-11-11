@@ -119,15 +119,67 @@ function RobotMeshes({
   )
 }
 
+/** The ghost's colour: the palette's teal (three.js can't read CSS variables). */
+const GHOST_COLOR = new THREE.Color('#1BA5AC')
+/** A ghost link this close to the real one (metres, or quaternion dot) is unchanged and hidden. */
+const GHOST_SAME_POS = 0.004
+const GHOST_SAME_ROT = 0.9995
+
+/**
+ * A see-through copy of the links that `ghost` (the /ws/sim frame layout) puts
+ * somewhere else than the live robot: a preview of a pose, drawn over CORAL.
+ * Links that wouldn't move are hidden, so only what changes shows.
+ */
+function GhostMeshes({
+  geometries,
+  posesRef,
+  ghost,
+}: {
+  geometries: THREE.BufferGeometry[]
+  posesRef: React.MutableRefObject<Float32Array | null>
+  ghost: Float32Array
+}) {
+  const meshRefs = useRef<(THREE.Mesh | null)[]>([])
+  const liveQuat = useRef(new THREE.Quaternion())
+
+  useFrame(() => {
+    const live = posesRef.current
+    for (let i = 0; i < geometries.length; i++) {
+      const m = meshRefs.current[i]
+      if (!m) continue
+      const o = i * FLOATS_PER_GEOM
+      m.position.set(ghost[o], ghost[o + 1], ghost[o + 2])
+      m.quaternion.set(ghost[o + 4], ghost[o + 5], ghost[o + 6], ghost[o + 3]).normalize()
+      if (!live) continue
+      const dist = Math.hypot(ghost[o] - live[o], ghost[o + 1] - live[o + 1], ghost[o + 2] - live[o + 2])
+      const dot = Math.abs(liveQuat.current.set(live[o + 4], live[o + 5], live[o + 6], live[o + 3]).normalize().dot(m.quaternion))
+      m.visible = dist > GHOST_SAME_POS || dot < GHOST_SAME_ROT
+    }
+  })
+
+  return (
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      {geometries.map((geo, i) => (
+        <mesh key={i} ref={(el) => (meshRefs.current[i] = el)} geometry={geo} renderOrder={1}>
+          <meshStandardMaterial color={GHOST_COLOR} emissive={GHOST_COLOR} emissiveIntensity={0.35} transparent opacity={0.45} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
 export default function RobotViewer({
   embedded = false,
   look = 'lab',
   onHeadMove,
+  ghost = null,
 }: {
   embedded?: boolean
   look?: ViewerLook
   /** Called when the robot's head moves on screen (e.g. to point something at it). */
   onHeadMove?: HeadMoveHandler
+  /** A pose to preview over the robot, in the /ws/sim frame layout (stage look only). */
+  ghost?: Float32Array | null
 } = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
@@ -222,6 +274,7 @@ export default function RobotViewer({
           {geometries.length > 0 && (
             <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} onHeadMove={onHeadMove} />
           )}
+          {geometries.length > 0 && ghost && <GhostMeshes geometries={geometries} posesRef={posesRef} ghost={ghost} />}
           <OrbitControls makeDefault target={[0.02, 0.21, 0]} enablePan={false} />
         </Canvas>
       ) : (

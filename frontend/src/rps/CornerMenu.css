@@ -1,0 +1,13 @@
+/* The grown-ups' corner menu (CornerMenu.tsx), shared by the games. Each game
+   positions .corner-menu itself; colours come from the shared palette. */
+.corner-menu button { font-family: inherit; cursor: pointer; border: none; }
+.corner-menu .cm-toggle { width: 44px; height: 44px; border-radius: 50%; background: color-mix(in srgb, var(--pal-navy) 8%, transparent); color: color-mix(in srgb, var(--pal-navy) 55%, transparent); display: grid; place-items: center; }
+.corner-menu .cm-toggle:hover { background: color-mix(in srgb, var(--pal-navy) 14%, transparent); color: var(--pal-navy); }
+.corner-menu .cm-pop { position: absolute; right: 0; top: 52px; width: 220px; background: #fff; border-radius: 16px; padding: 10px; box-shadow: 0 12px 34px color-mix(in srgb, var(--pal-navy) 20%, transparent); display: flex; flex-direction: column; gap: 6px; }
+.corner-menu .cm-status { padding: 4px 6px 8px; }
+.corner-menu .cm-item { position: relative; overflow: hidden; text-align: left; padding: 11px 14px; border-radius: 10px; font-weight: 800; font-size: 15px; color: var(--game-text); background: var(--pal-sand-light); display: flex; align-items: center; }
+.corner-menu .cm-item:hover { background: var(--pal-sand); }
+.corner-menu .cm-item .txt { position: relative; flex: 1; }
+.corner-menu .cm-item small { position: relative; font-size: 12px; font-weight: 700; color: var(--pal-navy-soft); }
+.corner-menu .cm-item .fill { position: absolute; inset: 0; width: 0; background: color-mix(in srgb, var(--pal-coral-deep) 28%, transparent); }
+.corner-menu .cm-item.holding .fill { width: 100%; transition: width var(--hold) linear; }

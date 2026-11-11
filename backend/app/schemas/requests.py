@@ -1,6 +1,6 @@
 """Pydantic request models for the Coral API."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -29,6 +29,9 @@ class SetPoseRequest(BaseModel):
     # Rock Paper Scissors: also move the physical robot when the server is in
     # robot mode. Only for safety-checked, timed glides.
     to_robot: bool = False
+    # Dance Game: reply only once the sim's joints have physically reached the
+    # pose (or stopped short), not as soon as the motor targets have.
+    wait_until_arrived: bool = False
 
     @model_validator(mode="after")
     def _robot_pose_is_checked_and_timed(self) -> "SetPoseRequest":
@@ -60,3 +63,35 @@ class PlayPoseRequest(BaseModel):
 
 class ExtractNameRequest(BaseModel):
     text: str
+
+
+PosePulses = dict[str, Annotated[int, Field(ge=0, le=1000)]]
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=500)
+
+
+class PoseDesignTurnRequest(BaseModel):
+    """One spoken (or typed) turn of the Pose Designer conversation."""
+
+    text: str = Field(min_length=1, max_length=500)
+    # The pose being designed, as {joint: hardware_pulse}.
+    pulses: PosePulses
+    # The change proposed last turn and still waiting for a yes/no, as
+    # {control: degrees} (services/pose_design.py CONTROLS).
+    proposal: dict[str, Annotated[float, Field(ge=-180, le=180)]] = {}
+    history: list[ChatTurn] = Field(default=[], max_length=12)
+    # Heard by the mic while CORAL is asleep: only counts with "hey CORAL".
+    needs_wake_word: bool = False
+
+
+class SaveCommandRequest(BaseModel):
+    """Something the child said while CORAL follows them in the Pose Designer."""
+
+    text: str = Field(max_length=500)
+
+
+class PosePreviewRequest(BaseModel):
+    pulses: PosePulses

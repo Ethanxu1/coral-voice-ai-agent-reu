@@ -63,3 +63,12 @@ def test_sim_health_unavailable_without_simulator(client, monkeypatch):
     monkeypatch.setattr(state, "simulator", None)
     response = client.get("/sim/health")
     assert response.status_code == 503
+
+
+@pytest.mark.parametrize(("mode", "live"), [("sim", False), ("robot", True), ("hardware", True)])
+def test_robot_mode_says_whether_a_physical_robot_is_driven(client, monkeypatch, mode, live):
+    """The Dance Game shows its Simulate/Execute buttons only in live mode."""
+    from app.state import state
+
+    monkeypatch.setattr(state, "robot_mode", mode)
+    assert client.get("/robot/mode").json() == {"live": live}

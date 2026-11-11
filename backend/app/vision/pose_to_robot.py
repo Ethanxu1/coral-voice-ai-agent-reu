@@ -168,6 +168,17 @@ def hips_detected(body_landmarks: list[dict]) -> bool:
     )
 
 
+def shoulders_detected(body_landmarks: list[dict]) -> bool:
+    """True if both shoulders have world coords and pass the visibility gate:
+    enough for hip-less arm retargeting (see _torso_frame_from)."""
+    if len(body_landmarks) <= _LM_R_SHOULDER:
+        return False
+    return all(
+        _has_world(body_landmarks[i]) and _visible(body_landmarks[i])
+        for i in (_LM_L_SHOULDER, _LM_R_SHOULDER)
+    )
+
+
 def knees_confidently_visible(body_landmarks: list[dict]) -> bool:
     """True when BOTH knees clear the stricter knee visibility gate (0.6).
 
@@ -199,10 +210,9 @@ def hipless_arms_enabled() -> bool:
     return _allow_hipless_arms
 
 
-def _torso_frame_from(body: list[dict]):
+def _torso_frame_from(body: list[dict], allow_hipless: bool):
     """Build torso frame from world landmarks; returns None if the shoulders (or,
-    unless hip-less arms are allowed, the hips) are missing world coords or
-    visibility.
+    unless `allow_hipless`, the hips) are missing world coords or visibility.
     """
     for idx in (_LM_L_SHOULDER, _LM_R_SHOULDER):
         lm = body[idx]
@@ -222,7 +232,7 @@ def _torso_frame_from(body: list[dict]):
             geometry.world_xyz(body[_LM_L_HIP]),
             geometry.world_xyz(body[_LM_R_HIP]),
         )
-    if not _allow_hipless_arms:
+    if not allow_hipless:
         return None
 
     # Hips out of frame: stand in a pair of hips straight below the shoulders
@@ -258,6 +268,7 @@ def _limb_depth_gated(proximal: dict, distal: dict) -> bool:
 def compute_joint_targets(
     body_landmarks: list[dict],
     head_pose: Optional[dict],
+    allow_hipless: Optional[bool] = None,
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
@@ -266,7 +277,8 @@ def compute_joint_targets(
     the net real-world result is a shadow convention: the child's true right
     arm drives the robot's right arm. See the module docstring. Returns a
     subset of joint names — only those with confident landmarks and
-    non-degenerate viewing geometry.
+    non-degenerate viewing geometry. `allow_hipless` overrides the process-wide
+    hip-less arms setting (set_hipless_arms) for this call.
 
     Leg sign conventions (sim frame: X forward, Y left, Z up — pinned by the
     hip body placement in ainex.xml; cross-checked against the STAND_LOW_PULSE
@@ -280,7 +292,9 @@ def compute_joint_targets(
     if len(body_landmarks) > _LM_R_WRIST:
 
         # builds the torso frame used as the local coord system
-        R_torso = _torso_frame_from(body_landmarks)
+        R_torso = _torso_frame_from(
+            body_landmarks, _allow_hipless_arms if allow_hipless is None else allow_hipless
+        )
 
         if R_torso is not None:
             # Person's RIGHT side → robot's LEFT arm

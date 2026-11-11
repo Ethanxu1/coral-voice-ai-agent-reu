@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from app.robot.hardware_angle_utils import hardware_units_to_rad
 from app.simulator import AiNexSimulator
@@ -51,3 +52,29 @@ def test_unpinning_releases_the_base():
     sim.set_upright_pinned(True)
     sim.set_upright_pinned(False)
     assert sim.upright_pinned is False
+
+
+def _yaw_deg(quat_wxyz: np.ndarray) -> float:
+    w, x, y, z = quat_wxyz
+    return float(np.degrees(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))))
+
+
+@pytest.mark.parametrize("arms", [
+    {},  # plain stand
+    {"r_sho_pitch": 700, "l_sho_roll": 600, "l_el_yaw": 150},  # one arm up, one out (a Pose Designer pose)
+])
+def test_standing_robot_does_not_spin_or_slide(arms):
+    """Left alone, the robot stays where it stands. Without torsional floor
+    friction (condim 4) and noslip it spun ~0.5 deg/s and crept ~0.5 mm/s on
+    servo jitter, which threw the Pose Designer ghost off the live robot."""
+    sim = AiNexSimulator()
+    for joint, pulse in arms.items():
+        sim.set_joint_position(joint, hardware_units_to_rad(pulse, joint))
+    for _ in range(200):  # 2 s to settle into the pose
+        sim.step()
+    start = sim.base_pose()
+    for _ in range(3000):  # 30 s
+        sim.step()
+    end = sim.base_pose()
+    assert abs(_yaw_deg(end[3:]) - _yaw_deg(start[3:])) < 1.0
+    assert np.hypot(*(end[:2] - start[:2])) < 0.005

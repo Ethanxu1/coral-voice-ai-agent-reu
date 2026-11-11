@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ConnectionHealthDot, useConnectionStatus } from '../components/ConnectionStatus'
 import { RPS_PATH } from './RpsTopbar'
+import './CornerMenu.css'
 
 /** How long a leave button must be held, so a child can't end the game by accident. */
 const HOLD_MS = 1200
@@ -37,9 +38,10 @@ function HoldButton({ label, onDone }: { label: string; onDone: () => void }) {
 
 /**
  * The grown-ups' controls, folded into one small icon in the corner: connection,
- * how to play, and press-and-hold buttons to leave the game.
+ * how to play, and press-and-hold buttons to leave the game. `menuPath` is the
+ * game's own menu screen (null for a game without one).
  */
-export default function CornerMenu({ onHelp }: { onHelp: () => void }) {
+export default function CornerMenu({ onHelp, menuPath = RPS_PATH }: { onHelp: () => void; menuPath?: string | null }) {
   const navigate = useNavigate()
   const services = useConnectionStatus()
   const [open, setOpen] = useState(false)
@@ -66,7 +68,7 @@ export default function CornerMenu({ onHelp }: { onHelp: () => void }) {
           >
             How to play
           </button>
-          <HoldButton label="Game menu" onDone={() => navigate(RPS_PATH)} />
+          {menuPath && <HoldButton label="Game menu" onDone={() => navigate(menuPath)} />}
           <HoldButton label="Exit" onDone={() => navigate('/')} />
         </div>
       )}

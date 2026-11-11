@@ -16,9 +16,10 @@ export interface MapFeaturesResult {
 
 // Retarget the user's current pose to robot servo commands. The caller executes
 // the returned commands via move(). Also returns the frame the pose was read
-// from, for the UI.
-export async function mapFeatures(): Promise<MapFeaturesResult> {
-  const res = await fetch(`${VISION_BASE}/map-features`, { method: 'POST' })
+// from, for the UI. `hipless` retargets the arms from the shoulders alone when
+// the hips are out of frame (callers that only use the arms).
+export async function mapFeatures({ hipless = false } = {}): Promise<MapFeaturesResult> {
+  const res = await fetch(`${VISION_BASE}/map-features${hipless ? '?hipless=true' : ''}`, { method: 'POST' })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     throw new Error(`map-features failed: ${res.status} ${body?.detail ?? ''}`.trim())

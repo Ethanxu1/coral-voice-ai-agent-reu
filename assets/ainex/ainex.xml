@@ -2,8 +2,10 @@
   <compiler angle="radian" meshdir="meshes/"
             autolimits="true"/>
 
+  <!-- noslip_iterations: without it the feet creep across the floor on the
+       leg servos' small steady jitter (~0.5 mm/s standing still). -->
   <option timestep="0.002" gravity="0 0 -9.81" solver="Newton" iterations="100" tolerance="1e-10"
-          integrator="implicitfast" cone="elliptic">
+          integrator="implicitfast" cone="elliptic" noslip_iterations="10">
     <flag warmstart="enable" contact="enable"/>
   </option>
 
@@ -54,7 +56,10 @@
 
   <worldbody>
     <!-- Ground -->
-    <geom name="floor" type="plane" size="5 5 0.1" material="grid" conaffinity="1" contype="1"/>
+    <!-- condim 4 adds torsional friction to every foot contact (a contact
+         takes the larger condim of its two geoms). With the default 3 nothing
+         resists twisting and the standing robot slowly spins (~0.5 deg/s). -->
+    <geom name="floor" type="plane" size="5 5 0.1" material="grid" conaffinity="1" contype="1" condim="4"/>
 
     <!-- Lighting -->
     <light name="top" pos="0 0 3" dir="0 0 -1" diffuse="1.0 1.0 1.0" specular="0.5 0.5 0.5"/>

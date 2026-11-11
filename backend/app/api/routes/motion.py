@@ -29,7 +29,10 @@ from app.services.motion import (
     _get_robot_state,
     collision_checked_targets,
     dispatch_servo_commands,
+    leg_durations,
+    planned_safe_path,
     reset_to_stand,
+    wait_until_arrived,
 )
 from app.state import state
 from fastapi import APIRouter, HTTPException
@@ -112,9 +115,13 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
     radians with hardware_units_to_rad. Unless `skip_collision_check`, the pose
     goes through the same collision/fall gate as /move first (`check_fall=False`
     skips the fall half — the Pose Tester pins the sim upright instead), and the
-    verdict is returned. With `duration_ms` > 0 the sim glides there over that time;
+    verdict is returned. With `duration_ms` > 0 the sim glides there over that time,
+    going around a self-collision on the way through intermediate poses when it
+    can (planned_safe_path; the report then says `rerouted`);
     0 applies it instantly. Sim only, unless `to_robot` (Rock Paper Scissors):
-    then the glide also reaches the physical robot in robot mode.
+    then the glide also reaches the physical robot in robot mode. With
+    `wait_until_arrived` (Dance Game) it replies once the sim's joints have
+    physically got there, not just their motor targets.
     """
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
@@ -128,38 +135,52 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
 
     safety: dict[str, Any] = {"fall_blocked": False, "collision_clamped": False,
                               "safe_fraction": 1.0, "bad_pairs": []}
-    if not req.skip_collision_check:
+    # A glide goes around a self-collision on the way when it can; an instant
+    # pose has no way to, so it is clamped at the last safe point.
+    path = [targets]
+    if not req.skip_collision_check and req.duration_ms > 0:
+        path, safety = await asyncio.to_thread(
+            planned_safe_path, state.simulator, targets, "/set-pose", req.check_fall
+        )
+    elif not req.skip_collision_check:
         targets, safety = await asyncio.to_thread(
             collision_checked_targets, state.simulator, targets, "/set-pose", req.check_fall
         )
+        path = [targets]
     if safety["fall_blocked"]:
         return {"status": "blocked", "applied": [], "skipped": skipped, "safety": safety}
 
     if req.duration_ms > 0:
+        start = state.simulator.get_all_joint_states()
         try:
-            await dispatch_servo_commands(
-                joints_to_servo_commands(targets, req.duration_ms),
-                sim_only=None if req.to_robot else True,
-            )
+            for pose, ms in zip(path, leg_durations(start, path, req.duration_ms)):
+                await dispatch_servo_commands(
+                    joints_to_servo_commands(pose, ms),
+                    sim_only=None if req.to_robot else True,
+                )
         except RobotServerUnavailable as e:
             logger.warning(f"/set-pose: robot server unavailable: {e}")
             raise HTTPException(status_code=503, detail="robot server could not be reached")
     else:
         for joint, rad in targets.items():
             state.simulator.set_joint_position(joint, rad)
+    targets = path[-1]
+    if req.wait_until_arrived:
+        await wait_until_arrived(state.simulator, targets)
 
     applied = [joint for joint in req.pulses if joint in targets]
     return {"status": "done", "applied": applied, "skipped": skipped, "safety": safety}
 
 
 @router.post("/reset")
-async def reset_pose() -> dict[str, Any]:
+async def reset_pose(sim_only: bool = False) -> dict[str, Any]:
     """Snap the sim back to the stand pose and, in robot mode, animate the
-    hardware there smoothly."""
+    hardware there smoothly. `?sim_only=true` (Dance Game Simulate) leaves the
+    physical robot where it is."""
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
-    await reset_to_stand()
+    await reset_to_stand(sim_only=sim_only)
     return {"status": "done"}
 
 
