@@ -1,4 +1,5 @@
-// Runs a dance program (the steps under the start block) on the simulator robot.
+// Runs a dance program (the steps under the start block) on the simulator robot,
+// and on the physical robot too when `toRobot` (live mode's Execute).
 //
 // Pure async logic, no React: the page owns the cancellation token and React
 // state, this just walks the steps.
@@ -23,21 +24,26 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * actually arrived there (or stopped short), so the next move starts from the
  * finished pose. An instant snap can topple the physics model, so every move is a glide.
  */
-async function glideTo(pose: PoseStep['pose'], durationMs: number): Promise<void> {
+async function glideTo(pose: PoseStep['pose'], durationMs: number, toRobot: boolean): Promise<void> {
   const move = danceMove(pose)
-  if (move) await setPose(move.robotPulses, { durationMs, waitUntilArrived: true })
+  if (move) await setPose(move.robotPulses, { durationMs, waitUntilArrived: true, toRobot })
 }
 
-async function playSteps(steps: Step[], isAlive: () => boolean, onStep?: (step: PoseStep) => void): Promise<void> {
+async function playSteps(
+  steps: Step[],
+  isAlive: () => boolean,
+  toRobot: boolean,
+  onStep?: (step: PoseStep) => void,
+): Promise<void> {
   for (const step of steps) {
     if (!isAlive()) return
     if (step.kind === 'pose') {
       onStep?.(step)
-      await glideTo(step.pose, SPEED_MS[step.speed])
+      await glideTo(step.pose, SPEED_MS[step.speed], toRobot)
     } else {
       for (let i = 0; i < step.times; i++) {
         if (!isAlive()) return
-        await playSteps(step.body, isAlive, onStep)
+        await playSteps(step.body, isAlive, toRobot, onStep)
       }
     }
   }
@@ -50,14 +56,18 @@ async function playSteps(steps: Step[], isAlive: () => boolean, onStep?: (step: 
  * move so a cancellation (Stop, or the page unmounting) lands after the
  * current move has arrived instead of mid-glide. No stand between repeat laps: one pose
  * glides straight into the next, so the routine reads as continuous.
+ * `toRobot` also moves the physical robot when the server is in live mode;
+ * otherwise only the sim moves (its resets too).
  */
 export async function playSequence(
   steps: Step[],
   isAlive: () => boolean,
   onStep?: (step: PoseStep) => void,
+  { toRobot = false }: { toRobot?: boolean } = {},
 ): Promise<void> {
-  await resetPose()
-  if (isAlive()) await playSteps(steps, isAlive, onStep)
+  const reset = () => resetPose({ simOnly: !toRobot })
+  await reset()
+  if (isAlive()) await playSteps(steps, isAlive, toRobot, onStep)
   if (isAlive()) await sleep(FINAL_HOLD_MS)
-  if (isAlive()) await resetPose()
+  if (isAlive()) await reset()
 }

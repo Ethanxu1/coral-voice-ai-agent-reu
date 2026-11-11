@@ -70,6 +70,12 @@
 .dance .big-btn:disabled { background: var(--pal-navy-pale); box-shadow: 0 10px 0 var(--pal-navy-soft); animation: none; cursor: default; transform: none; }
 .dance .big-btn.stop { background: var(--pal-navy); box-shadow: 0 10px 0 var(--pal-navy-deep), 0 22px 40px color-mix(in srgb, var(--pal-navy) 30%, transparent); animation: none; }
 .dance .big-btn.stop:active { box-shadow: 0 4px 0 var(--pal-navy-deep); }
+/* Live mode: Simulate (sim only) and Execute (sim + physical robot) side by side. */
+.dance .btn-row { flex: none; display: flex; gap: 18px; }
+.dance .big-btn.pair { font-size: 36px; padding: 12px 36px 16px; }
+.dance .big-btn.execute { background: var(--pal-teal); box-shadow: 0 10px 0 color-mix(in srgb, var(--pal-teal) 65%, var(--pal-navy-deep)), 0 22px 40px color-mix(in srgb, var(--pal-teal) 35%, transparent); }
+.dance .big-btn.execute:active { box-shadow: 0 4px 0 color-mix(in srgb, var(--pal-teal) 65%, var(--pal-navy-deep)); }
+.dance .big-btn.execute:disabled { background: var(--pal-navy-pale); box-shadow: 0 10px 0 var(--pal-navy-soft); }
 .dance .big-btn.small { font-size: 30px; padding: 10px 48px 12px; margin-top: 0; animation: none; }
 @keyframes dance-breathe { 50% { transform: scale(1.04); } }
 

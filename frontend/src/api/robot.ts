@@ -61,8 +61,17 @@ export async function move(
 }
 
 // Snap the sim (and, in robot mode, animate the hardware) back to the stand pose.
-export async function resetPose(): Promise<void> {
-  await post(`${SERVER_BASE}/reset`, 'reset')
+// `simOnly` leaves the physical robot where it is.
+export async function resetPose({ simOnly = false }: { simOnly?: boolean } = {}): Promise<void> {
+  await post(`${SERVER_BASE}/reset${simOnly ? '?sim_only=true' : ''}`, 'reset')
+}
+
+// True when the server also drives the physical robot (./run.sh -live).
+export async function isLiveMode(): Promise<boolean> {
+  const res = await fetch(`${SERVER_BASE}/robot/mode`)
+  if (!res.ok) return false
+  const data = await res.json().catch(() => null)
+  return data?.live === true
 }
 
 export interface SetPoseResult {

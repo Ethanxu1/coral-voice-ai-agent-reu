@@ -295,17 +295,17 @@ async def _execute_on_hardware_if_connected(
         logger.warning(f"Could not execute pose on hardware: {e}")
 
 
-async def reset_to_stand() -> None:
+async def reset_to_stand(sim_only: bool = False) -> None:
     """Re-stand the robot.
 
     The sim drops into its stand keyframe from slightly above the floor, which
     also recovers a fallen robot (animating joints alone cannot). A physical
     robot can't be teleported, so connected hardware is animated to the stand
-    pose over RESET_TO_STAND_MS instead.
+    pose over RESET_TO_STAND_MS instead, unless `sim_only`.
     """
     sim = state.simulator
     await asyncio.to_thread(sim.reset_pose)
-    if state.hardware_dispatcher is None:
+    if sim_only or state.hardware_dispatcher is None:
         return
     commands = joints_to_servo_commands(sim.get_stand_joint_positions(), RESET_TO_STAND_MS)
     try:

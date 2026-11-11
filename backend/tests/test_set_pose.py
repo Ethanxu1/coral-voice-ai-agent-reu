@@ -176,3 +176,25 @@ def test_upright_pin_endpoint_toggles_the_sim(client):
     assert state.simulator.upright_pinned is True
     client.post("/sim/upright", json={"enabled": False})
     assert state.simulator.upright_pinned is False
+
+
+class _RecordingHardware:
+    def __init__(self):
+        self.sent = []
+
+    def send_commands(self, commands):
+        self.sent.append(list(commands))
+
+
+def test_reset_animates_the_robot_unless_sim_only(client, monkeypatch):
+    """Dance Game Simulate (live mode) re-stands only the sim; a plain /reset
+    still stands the physical robot up too."""
+    hardware = _RecordingHardware()
+    monkeypatch.setattr(state, "robot_mode", "robot")
+    monkeypatch.setattr(state, "hardware_dispatcher", hardware)
+
+    assert client.post("/reset?sim_only=true").json()["status"] == "done"
+    assert hardware.sent == []
+
+    client.post("/reset")
+    assert len(hardware.sent) == 1

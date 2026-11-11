@@ -173,13 +173,14 @@ async def set_pose(req: SetPoseRequest) -> dict[str, Any]:
 
 
 @router.post("/reset")
-async def reset_pose() -> dict[str, Any]:
+async def reset_pose(sim_only: bool = False) -> dict[str, Any]:
     """Snap the sim back to the stand pose and, in robot mode, animate the
-    hardware there smoothly."""
+    hardware there smoothly. `?sim_only=true` (Dance Game Simulate) leaves the
+    physical robot where it is."""
     if state.simulator is None:
         return {"status": "error", "detail": "simulator not initialized"}
 
-    await reset_to_stand()
+    await reset_to_stand(sim_only=sim_only)
     return {"status": "done"}
 
 

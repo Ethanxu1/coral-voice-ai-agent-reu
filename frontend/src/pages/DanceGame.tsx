@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import RobotViewer from '../components/RobotViewer'
-import { resetPose } from '../api/robot'
+import { isLiveMode, resetPose } from '../api/robot'
 import { stopSubjectSelection } from '../api/vision'
 import CornerMenu from '../rps/CornerMenu'
 import DanceWorkspace, { type DanceWorkspaceHandle } from '../dance/DanceWorkspace'
@@ -10,7 +10,7 @@ import { playSequence } from '../dance/sequencePlayer'
 import './DanceGame.css'
 
 /** For the grown-up: how the blocks work, from the corner menu. */
-function HowToPlay({ onClose }: { onClose: () => void }) {
+function HowToPlay({ live, onClose }: { live: boolean; onClose: () => void }) {
   return (
     <div className="help" onClick={onClose}>
       <div className="help-card" onClick={(e) => e.stopPropagation()}>
@@ -18,7 +18,11 @@ function HowToPlay({ onClose }: { onClose: () => void }) {
         <ol className="help-steps">
           <li><span>🧩</span><p>Drag moves from the shelf and snap them under <b>when ▶ Dance! is pressed</b>.</p></li>
           <li><span>🔁</span><p>Put moves inside <b>repeat</b> to do them again and again.</p></li>
-          <li><span>▶</span><p>Press <b>Dance!</b> and watch CORAL go.</p></li>
+          {live ? (
+            <li><span>▶</span><p>Press <b>Simulate</b> to watch CORAL on screen, or <b>Execute</b> to make the real robot dance too.</p></li>
+          ) : (
+            <li><span>▶</span><p>Press <b>Dance!</b> and watch CORAL go.</p></li>
+          )}
         </ol>
         <p className="help-note">Grey blocks aren't snapped on, so CORAL skips them. Drag a block back to the shelf to throw it away.</p>
         <button className="big-btn small" onClick={onClose}>OK</button>
@@ -33,6 +37,9 @@ export default function DanceGame() {
   /** The move playing now, and a count so the same move twice in a row pops the bubble again. */
   const [move, setMove] = useState<{ pose: string; n: number } | null>(null)
   const [help, setHelp] = useState(false)
+  /** Live mode (./run.sh -live): offer Simulate (sim only) and Execute (sim + physical robot). */
+  const [live, setLive] = useState(false)
+  const [failed, setFailed] = useState(false)
   const workspaceRef = useRef<DanceWorkspaceHandle>(null)
   const tokenRef = useRef(0)
 
@@ -40,6 +47,7 @@ export default function DanceGame() {
   useEffect(() => {
     stopSubjectSelection()
     resetPose().catch(() => {})
+    isLiveMode().then(setLive).catch(() => {})
     return () => {
       tokenRef.current++
       resetPose().catch(() => {})
@@ -52,17 +60,25 @@ export default function DanceGame() {
     workspaceRef.current?.highlight(null)
   }
 
-  const handlePlay = async () => {
+  /** `toRobot` (Execute) dances on the physical robot as well as the sim. */
+  const handlePlay = async (toRobot: boolean) => {
     const token = ++tokenRef.current
     const alive = () => tokenRef.current === token
     setIsPlaying(true)
+    setFailed(false)
     try {
-      await playSequence(program, alive, (step) => {
-        setMove((m) => ({ pose: step.pose, n: (m?.n ?? 0) + 1 }))
-        workspaceRef.current?.highlight(step.blockId)
-      })
+      await playSequence(
+        program,
+        alive,
+        (step) => {
+          setMove((m) => ({ pose: step.pose, n: (m?.n ?? 0) + 1 }))
+          workspaceRef.current?.highlight(step.blockId)
+        },
+        { toRobot },
+      )
     } catch (e) {
       console.warn('dance sequence failed', e)
+      if (alive()) setFailed(true)
     } finally {
       if (alive()) finish()
     }
@@ -78,9 +94,13 @@ export default function DanceGame() {
   const pose = move && danceMove(move.pose)
   const bubble = pose
     ? `${pose.emoji} ${pose.label}!`
-    : ready
-      ? 'Press Dance! to watch me go'
-      : 'Snap some moves on to make me dance'
+    : failed
+      ? "Oops! I couldn't finish that dance"
+      : !ready
+        ? 'Snap some moves on to make me dance'
+        : live
+          ? 'Press Simulate or Execute to watch me go'
+          : 'Press Dance! to watch me go'
 
   return (
     <div className="dance">
@@ -106,15 +126,24 @@ export default function DanceGame() {
             <button className="big-btn stop" onClick={handleStop}>
               ■ Stop
             </button>
+          ) : live ? (
+            <div className="btn-row">
+              <button className="big-btn pair" onClick={() => handlePlay(false)} disabled={!ready}>
+                ▶ Simulate
+              </button>
+              <button className="big-btn pair execute" onClick={() => handlePlay(true)} disabled={!ready}>
+                🤖 Execute
+              </button>
+            </div>
           ) : (
-            <button className="big-btn" onClick={handlePlay} disabled={!ready}>
+            <button className="big-btn" onClick={() => handlePlay(false)} disabled={!ready}>
               ▶ Dance!
             </button>
           )}
         </section>
       </main>
 
-      {help && <HowToPlay onClose={() => setHelp(false)} />}
+      {help && <HowToPlay live={live} onClose={() => setHelp(false)} />}
     </div>
   )
 }

@@ -18,3 +18,9 @@ async def sim_health() -> dict[str, str]:
     if state.simulator is None or not state.simulator.is_running():
         raise HTTPException(status_code=503, detail="simulator not running")
     return {"status": "ok"}
+
+
+@router.get("/robot/mode")
+async def robot_mode() -> dict[str, bool]:
+    """`live` is true when moves can also reach the physical robot (./run.sh -live)."""
+    return {"live": state.robot_mode in ("robot", "hardware")}
