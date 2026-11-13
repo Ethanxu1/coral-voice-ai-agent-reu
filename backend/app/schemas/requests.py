@@ -95,3 +95,8 @@ class SaveCommandRequest(BaseModel):
 
 class PosePreviewRequest(BaseModel):
     pulses: PosePulses
+
+
+class PoseSkeletonsRequest(BaseModel):
+    # {pose id: pose}: every pose a Dance Game shelf shows, in one call.
+    poses: dict[Annotated[str, Field(max_length=64)], PosePulses] = Field(max_length=100)

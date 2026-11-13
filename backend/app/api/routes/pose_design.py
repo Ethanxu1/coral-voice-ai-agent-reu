@@ -3,7 +3,12 @@
 from typing import Any
 
 from app.robot.hardware_angle_utils import hardware_units_to_rad
-from app.schemas.requests import PoseDesignTurnRequest, PosePreviewRequest, SaveCommandRequest
+from app.schemas.requests import (
+    PoseDesignTurnRequest,
+    PosePreviewRequest,
+    PoseSkeletonsRequest,
+    SaveCommandRequest,
+)
 from app.services.pose_design import (
     CANT_MOVE_REPLY,
     CONTROLS,
@@ -66,10 +71,28 @@ async def pose_design_preview(req: PosePreviewRequest) -> dict[str, list[float]]
     as it stands now but these joints set, for drawing a ghost of the pose."""
     if state.simulator is None:
         raise HTTPException(status_code=503, detail="simulator not initialized")
-    joints = {
+    buf = state.simulator.get_geom_poses(preview=_joints_rad(req.pulses))
+    return {"poses": memoryview(buf).cast("f").tolist()}
+
+
+@router.post("/pose-design/skeletons")
+async def pose_design_skeletons(req: PoseSkeletonsRequest) -> dict[str, Any]:
+    """A stick figure of each pose (Dance Game block icons): see
+    AiNexSimulator.get_skeleton. Joints a pose leaves out stay at stand."""
+    if state.simulator is None:
+        raise HTTPException(status_code=503, detail="simulator not initialized")
+    return {
+        "skeletons": {
+            pose_id: state.simulator.get_skeleton(_joints_rad(pulses))
+            for pose_id, pulses in req.poses.items()
+        }
+    }
+
+
+def _joints_rad(pulses: dict[str, int]) -> dict[str, float]:
+    """{joint: hardware pulse} as sim radians, dropping joints the sim doesn't have."""
+    return {
         name: hardware_units_to_rad(pulse, name)
-        for name, pulse in req.pulses.items()
+        for name, pulse in pulses.items()
         if name in state.simulator.JOINT_NAMES
     }
-    buf = state.simulator.get_geom_poses(preview=joints)
-    return {"poses": memoryview(buf).cast("f").tolist()}

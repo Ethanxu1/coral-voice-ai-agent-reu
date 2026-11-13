@@ -79,6 +79,18 @@
 .dance .big-btn.small { font-size: 30px; padding: 10px 48px 12px; margin-top: 0; animation: none; }
 @keyframes dance-breathe { 50% { transform: scale(1.04); } }
 
+/* Hovering a move's stick figure: CORAL struck in that pose. */
+.dance .pose-preview {
+  position: fixed; z-index: 50; width: 300px; height: 290px; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--game-bg-light); border-radius: 24px; padding: 8px 8px 12px;
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--pal-navy) 22%, transparent);
+  opacity: 0; transform: scale(.94); transition: opacity .12s, transform .12s;
+}
+.dance .pose-preview.show { opacity: 1; transform: none; }
+.dance .pose-preview-robot { position: relative; flex: 1 1 0; width: 100%; min-height: 0; }
+.dance .pose-preview p { margin: 0; font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 22px; color: var(--game-text); }
+
 /* ── How to play (grown-up, from the corner menu) ──────────────────────── */
 .dance .help { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: color-mix(in srgb, var(--pal-sand) 60%, transparent); backdrop-filter: blur(6px); }
 .dance .help-card { background: #fff; border-radius: 30px; padding: 30px 36px; max-width: 640px; display: flex; flex-direction: column; align-items: center; gap: 18px; box-shadow: 0 20px 60px color-mix(in srgb, var(--pal-navy) 20%, transparent); }

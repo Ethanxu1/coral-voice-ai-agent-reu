@@ -256,3 +256,31 @@ def test_awake_or_typed_turn_needs_no_wake_word(client, monkeypatch, text):
     _llm_answers(monkeypatch, json.dumps({"action": "chat", "reply": "Okay!", "changes": []}), seen)
     client.post("/pose-design/turn", json={"text": text, "pulses": ARM_STAND})
     assert seen[0][-1]["content"].endswith('Child said: "lift your right arm higher"')
+
+
+def test_skeletons_are_the_poses_joint_points_and_leave_the_sim_alone(client):
+    """Dance Game icons: one stick figure per pose, from the robot's own
+    geometry (x forward, y the robot's left, z up), drawn standing at the
+    origin whatever the live sim is doing."""
+    targets = state.simulator.get_all_joint_states()
+    arms_out = {"l_sho_roll": 513, "r_sho_roll": 487}
+
+    data = client.post("/pose-design/skeletons", json={"poses": {"stand": {}, "t": arms_out}}).json()
+
+    stand, t = data["skeletons"]["stand"], data["skeletons"]["t"]
+    assert set(stand) == {
+        "head", "l_shoulder", "r_shoulder", "l_elbow", "r_elbow", "l_hand", "r_hand",
+        "l_hip", "r_hip", "l_knee", "r_knee", "l_ankle", "r_ankle",
+    }
+    assert stand["head"][2] > stand["l_shoulder"][2] > stand["l_hip"][2] > stand["l_ankle"][2]
+    assert stand["l_hand"][1] > 0 > stand["r_hand"][1]
+    # Arms out to the sides: the hands are much further apart, and higher.
+    assert t["l_hand"][1] - t["r_hand"][1] > stand["l_hand"][1] - stand["r_hand"][1] + 0.1
+    assert t["l_hand"][2] > stand["l_hand"][2] + 0.05
+    assert t["l_ankle"] == pytest.approx(stand["l_ankle"])
+    assert state.simulator.get_all_joint_states() == targets
+
+
+def test_skeletons_cap_how_many_poses_one_call_asks_for(client):
+    poses = {str(i): {} for i in range(101)}
+    assert client.post("/pose-design/skeletons", json={"poses": poses}).status_code == 422
