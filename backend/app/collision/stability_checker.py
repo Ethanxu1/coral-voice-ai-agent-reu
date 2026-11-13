@@ -95,10 +95,19 @@ class StabilityChecker:
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
         self._stand_joints = {n: float(self.data.qpos[a]) for n, a in self._qpos_addr.items()}
+
+        # The keyframe floats the body ~6 cm above the floor; seeding every
+        # check there drops the robot, and with raised arms the landing tips it
+        # over (2026-11-13). Seed from stand resting on the floor instead, as
+        # the live sim always is.
+        self._rest_qpos: np.ndarray | None = None
+        self._settle({})
+        self._rest_qpos = self.data.qpos.copy()
         mujoco.mj_forward(self.model, self.data)
-        foot = self._foot_body_ids[0]
-        self._stand_foot_z = float(self.data.xpos[foot][2])
-        self._stand_foot_rot = self.data.xmat[foot].reshape(3, 3).copy()
+        # Per foot: the left and right ankle frames differ by ~4°, so a foot
+        # must be matched to its OWN stand orientation (2026-11-13).
+        self._stand_foot_z = {b: float(self.data.xpos[b][2]) for b in self._foot_body_ids}
+        self._stand_foot_rot = {b: self.data.xmat[b].reshape(3, 3).copy() for b in self._foot_body_ids}
 
         # Baseline: where the head settles when simply holding stand.
         self.stand_head_z = self._settle({})
@@ -124,13 +133,13 @@ class StabilityChecker:
         foot = min(self._foot_body_ids, key=lambda b: self.data.xpos[b][2])
         foot_pos = self.data.xpos[foot].copy()
         # World rotation that turns this foot's current orientation into stand's.
-        fix = self._stand_foot_rot @ self.data.xmat[foot].reshape(3, 3).T
+        fix = self._stand_foot_rot[foot] @ self.data.xmat[foot].reshape(3, 3).T
         fix_quat = np.empty(4)
         mujoco.mju_mat2Quat(fix_quat, fix.flatten())
 
         root_pos = self.data.qpos[_ROOT_POS]
         new_root_pos = foot_pos + fix @ (root_pos - foot_pos)
-        new_root_pos[2] += self._stand_foot_z - foot_pos[2]
+        new_root_pos[2] += self._stand_foot_z[foot] - foot_pos[2]
         root_quat = self.data.qpos[_ROOT_QUAT].copy()
         mujoco.mju_mulQuat(self.data.qpos[_ROOT_QUAT], fix_quat, root_quat)
         self.data.qpos[_ROOT_POS] = new_root_pos
@@ -140,13 +149,15 @@ class StabilityChecker:
         target_joints: dict[str, float],
         current_joints: dict[str, float] | None = None,
     ) -> float:
-        """Reset to the stand keyframe (optionally overridden to the robot's
+        """Reset to stand resting on the floor (optionally overridden to the robot's
         current joints), ramp every actuator from the current pose toward
         stand+targets over the ramp window (paced like a real servo dispatch),
         then hold and step under gravity + floor contact for the settle
         window, and return the head's settled world Z."""
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)  # qpos/qvel/ctrl reset
+        if self._rest_qpos is not None:
+            self.data.qpos[:] = self._rest_qpos
         if current_joints:
             for name, val in current_joints.items():
                 addr = self._qpos_addr.get(name)
