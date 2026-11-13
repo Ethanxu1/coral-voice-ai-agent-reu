@@ -92,3 +92,23 @@ def test_dab_to_t_pose_is_not_a_fall(checker):
     lap of repeat [T-Pose, Stand, Dab]) because this move was fall-blocked."""
     result = checker.check_fall(_dance_pose("t-pose"), current_joints=_dance_pose("dab"))
     assert not result["fell"], f"Dab -> T-Pose flagged as a fall: head_z={result['head_z']}"
+
+
+# Stand legs with both arms raised, as a Follow-captured Pose Designer pose
+# starts out (2026-11-13). The live sim holds it, and gliding into it from stand
+# is not a fall.
+ARMS_RAISED = {
+    "l_sho_pitch": 2.17, "l_sho_roll": -1.21, "l_el_pitch": -0.81, "l_el_yaw": -1.61,
+    "r_sho_pitch": 1.42, "r_sho_roll": 1.54, "r_el_pitch": -1.08, "r_el_yaw": 0.45,
+}
+
+
+def test_small_arm_move_from_raised_arms_is_not_a_fall(checker):
+    """Regression (2026-11-13): seeding a start pose turned the lower foot to
+    the LEFT foot's stand orientation — at stand the right foot is lower (float
+    noise) — tilting the body ~4° sideways, so "lift your arm a bit more" in
+    the Pose Designer was blocked as a fall."""
+    assert not checker.check_fall(ARMS_RAISED, current_joints=ARMS_RAISED)["fell"]
+    lifted = {**ARMS_RAISED, "l_sho_pitch": ARMS_RAISED["l_sho_pitch"] + 0.17}
+    result = checker.check_fall(lifted, current_joints=ARMS_RAISED)
+    assert not result["fell"], f"+10° arm lift flagged as a fall: head_z={result['head_z']}"
