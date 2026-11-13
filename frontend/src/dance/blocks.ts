@@ -8,7 +8,8 @@
 
 import * as Blockly from 'blockly/core'
 import { loadCustomPoses } from '../poseDesigner/customPoses'
-import { CUSTOM_EMOJI, DANCE_POSES, SPEED_LABEL, type DancePoseId, type DanceSpeed } from './poses'
+import { DANCE_POSES, SPEED_LABEL, type DancePoseId, type DanceSpeed } from './poses'
+import { ICON_SIZE, poseIcon } from './skeleton'
 
 export const START_BLOCK = 'dance_start'
 const REPEAT_BLOCK = 'dance_repeat'
@@ -29,11 +30,17 @@ const MAX_REPEAT = 20
 
 let defined = false
 
-/** Register the dance block types with Blockly (once). */
+/** A move block's stick-figure icon (see skeleton.ts); hovering it previews the pose. */
+const iconField = (poseId: string) => new Blockly.FieldImage(poseIcon(poseId), ICON_SIZE, ICON_SIZE, '')
+
+/**
+ * Register the dance block types with Blockly (once). Call after
+ * loadPoseIcons(): a block's icon is read when the block is created.
+ */
 export function defineDanceBlocks(): void {
   if (defined) return
   defined = true
-  const speedOptions = Object.entries(SPEED_LABEL).map(([value, text]) => [text, value])
+  const speedOptions = Object.entries(SPEED_LABEL).map(([value, text]) => [text, value]) as Blockly.MenuOption[]
   Blockly.common.defineBlocksWithJsonArray([
     { type: START_BLOCK, message0: 'when ▶ Dance! is pressed', style: 'start_blocks', nextStatement: null },
     {
@@ -46,22 +53,35 @@ export function defineDanceBlocks(): void {
       previousStatement: null,
       nextStatement: null,
     },
-    ...DANCE_POSES.map((p) => ({
-      type: poseBlockType(p.id),
-      message0: `${p.emoji} ${p.label} %1`,
-      args0: [{ type: 'field_dropdown', name: 'SPEED', options: speedOptions }],
-      style: 'move_blocks',
-      previousStatement: null,
-      nextStatement: null,
-    })),
   ])
-  // Defined in code, not JSON, because its pose list is read when the menu opens.
+  // Move blocks are defined in code, not JSON, so each icon is read when the block is made.
+  for (const p of DANCE_POSES) {
+    Blockly.Blocks[poseBlockType(p.id)] = {
+      init(this: Blockly.Block) {
+        this.appendDummyInput()
+          .appendField(iconField(p.id), 'ICON')
+          .appendField(p.label)
+          .appendField(new Blockly.FieldDropdown(speedOptions), 'SPEED')
+        this.setStyle('move_blocks')
+        this.setPreviousStatement(true)
+        this.setNextStatement(true)
+      },
+    }
+  }
+  // The pose list is read when the menu opens; the icon follows the chosen pose.
   Blockly.Blocks[CUSTOM_BLOCK] = {
     init(this: Blockly.Block) {
+      const icon = iconField(String(customPoseOptions()[0][1]))
       this.appendDummyInput()
-        .appendField(CUSTOM_EMOJI)
-        .appendField(new Blockly.FieldDropdown(customPoseOptions), 'POSE')
-        .appendField(new Blockly.FieldDropdown(speedOptions as Blockly.MenuOption[]), 'SPEED')
+        .appendField(icon, 'ICON')
+        .appendField(
+          new Blockly.FieldDropdown(customPoseOptions, (id) => {
+            icon.setValue(poseIcon(id))
+            return id
+          }),
+          'POSE',
+        )
+        .appendField(new Blockly.FieldDropdown(speedOptions), 'SPEED')
       this.setStyle('custom_blocks')
       this.setPreviousStatement(true)
       this.setNextStatement(true)
@@ -126,10 +146,15 @@ function readStack(first: Blockly.Block | null): Step[] {
       steps.push({ kind: 'repeat', blockId: b.id, times: Number(b.getFieldValue('TIMES')), body: readStack(b.getInputTargetBlock('DO')) })
       continue
     }
-    const pose = b.type === CUSTOM_BLOCK ? b.getFieldValue('POSE') : POSE_BY_BLOCK_TYPE.get(b.type)
+    const pose = blockPose(b)
     if (pose) steps.push({ kind: 'pose', blockId: b.id, pose, speed: b.getFieldValue('SPEED') as DanceSpeed })
   }
   return steps
+}
+
+/** The pose a move block plays (a preset id or a CustomPose id), or undefined for other blocks. */
+export function blockPose(block: Blockly.Block): string | undefined {
+  return block.type === CUSTOM_BLOCK ? block.getFieldValue('POSE') || undefined : POSE_BY_BLOCK_TYPE.get(block.type)
 }
 
 /** The program: every step snapped under the start block. */

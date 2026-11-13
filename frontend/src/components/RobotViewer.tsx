@@ -173,6 +173,8 @@ export default function RobotViewer({
   look = 'lab',
   onHeadMove,
   ghost = null,
+  pose,
+  fov = 38,
 }: {
   embedded?: boolean
   look?: ViewerLook
@@ -180,11 +182,21 @@ export default function RobotViewer({
   onHeadMove?: HeadMoveHandler
   /** A pose to preview over the robot, in the /ws/sim frame layout (stage look only). */
   ghost?: Float32Array | null
+  /**
+   * Draw the robot in this pose (the /ws/sim frame layout) instead of following
+   * the live sim; null draws nothing yet. The stream is still used for the meshes.
+   */
+  pose?: Float32Array | null
+  /** Stage look's vertical field of view (degrees); wider fits raised arms in a small box. */
+  fov?: number
 } = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
   const posesRef = useRef<Float32Array | null>(null)
+  const stillRef = useRef<Float32Array | null>(null)
+  stillRef.current = pose ?? null
+  const shownRef = pose === undefined ? posesRef : stillRef
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -266,13 +278,13 @@ export default function RobotViewer({
       )}
 
       {look === 'stage' ? (
-        <Canvas camera={{ position: [0.78, 0.24, 0], fov: 38, near: 0.01, far: 50 }} gl={{ alpha: true }}>
+        <Canvas camera={{ position: [0.78, 0.24, 0], fov, near: 0.01, far: 50 }} gl={{ alpha: true }}>
           <hemisphereLight args={['#FFF1E0', '#C98B6B', 1.4]} />
           <directionalLight position={[2.5, 2.5, 1]} intensity={2} color="#FFE8D2" />
           <directionalLight position={[-2, 1.5, -1]} intensity={0.5} color="#FFB59E" />
           <ContactShadows position={[0.02, 0.001, 0]} scale={0.8} blur={2.4} opacity={0.35} far={0.5} color="#7A2E3A" />
           {geometries.length > 0 && (
-            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} onHeadMove={onHeadMove} />
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={shownRef} look={look} onHeadMove={onHeadMove} />
           )}
           {geometries.length > 0 && ghost && <GhostMeshes geometries={geometries} posesRef={posesRef} ghost={ghost} />}
           <OrbitControls makeDefault target={[0.02, 0.21, 0]} enablePan={false} />
@@ -294,7 +306,7 @@ export default function RobotViewer({
             sectionColor="#4f6a8f"
           />
           {geometries.length > 0 && (
-            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} look={look} />
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={shownRef} look={look} />
           )}
           <OrbitControls makeDefault target={[0, 0.15, 0]} />
         </Canvas>

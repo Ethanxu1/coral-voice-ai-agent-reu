@@ -7,6 +7,7 @@ import DanceWorkspace, { type DanceWorkspaceHandle } from '../dance/DanceWorkspa
 import { hasMoves, type Step } from '../dance/blocks'
 import { danceMove } from '../dance/poses'
 import { playSequence } from '../dance/sequencePlayer'
+import PosePreview, { type PoseHover } from '../dance/PosePreview'
 import './DanceGame.css'
 
 /** For the grown-up: how the blocks work, from the corner menu. */
@@ -40,6 +41,8 @@ export default function DanceGame() {
   /** Live mode (./run.sh -live): offer Simulate (sim only) and Execute (sim + physical robot). */
   const [live, setLive] = useState(false)
   const [failed, setFailed] = useState(false)
+  /** The move block stick figure under the pointer, previewed in 3D. */
+  const [hover, setHover] = useState<PoseHover | null>(null)
   const workspaceRef = useRef<DanceWorkspaceHandle>(null)
   const tokenRef = useRef(0)
 
@@ -111,7 +114,7 @@ export default function DanceGame() {
 
       <main className="dance-main">
         <section className="code-card">
-          <DanceWorkspace ref={workspaceRef} locked={isPlaying} onChange={setProgram} />
+          <DanceWorkspace ref={workspaceRef} locked={isPlaying} onChange={setProgram} onPoseHover={setHover} />
         </section>
 
         <section className="stage">
@@ -143,6 +146,7 @@ export default function DanceGame() {
         </section>
       </main>
 
+      <PosePreview hover={hover} />
       {help && <HowToPlay live={live} onClose={() => setHelp(false)} />}
     </div>
   )

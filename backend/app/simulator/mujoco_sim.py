@@ -336,6 +336,39 @@ class AiNexSimulator:
                 })
         return frames
 
+    # Stick-figure point -> robot link. Hands use the gripper link's centre of
+    # mass (xipos); every other point is the link's joint origin (xpos).
+    SKELETON_LINKS = {
+        "head": "head_tilt_link",
+        **{
+            f"{side}_{point}": f"{side}_{link}_link"
+            for side in ("l", "r")
+            for point, link in (
+                ("shoulder", "sho_pitch"), ("elbow", "el_yaw"), ("hand", "gripper"),
+                ("hip", "hip_pitch"), ("knee", "knee"), ("ankle", "ank_roll"),
+            )
+        },
+    }
+
+    def get_skeleton(self, joints: dict[str, float]) -> dict[str, list[float]]:
+        """Stick-figure points ({name: [x, y, z]}, x forward, y the robot's
+        left, z up) of the robot in its stand pose with `joints` (radians) set,
+        standing upright at the origin. Uses scratch state; the live sim is untouched."""
+        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
+        with self._lock:
+            data = self._preview_data
+            mujoco.mj_resetDataKeyframe(self.model, data, key_id)
+            data.qpos[self._root_qpos] = [0, 0, 0, 1, 0, 0, 0]
+            for name, rad in joints.items():
+                data.qpos[self.model.jnt_qposadr[self._joint_ids[name]]] = rad
+            mujoco.mj_kinematics(self.model, data)
+            points = {}
+            for point, link in self.SKELETON_LINKS.items():
+                body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, link)
+                xyz = data.xipos[body] if point.endswith("_hand") else data.xpos[body]
+                points[point] = [round(float(v), 4) for v in xyz]
+        return points
+
     def get_geom_poses(self, preview: dict[str, float] | None = None) -> bytes:
         """World-space pose of every render geom as a packed float32 buffer.
 

@@ -64,3 +64,12 @@ export async function previewPose(pulses: Record<string, number>): Promise<Float
   const data = await postJSON<{ poses: number[] }>(`${SERVER_BASE}/pose-design/preview`, { pulses }, 'pose preview')
   return new Float32Array(data.poses)
 }
+
+/** Stick-figure points of a pose, {name: [x, y, z]} in metres: x forward, y the robot's left, z up. */
+export type Skeleton = Record<string, [number, number, number]>
+
+/** A stick figure of each pose ({id: pulses}), from the robot's geometry (Dance Game icons). */
+export async function poseSkeletons(poses: Record<string, Record<string, number>>): Promise<Record<string, Skeleton>> {
+  const data = await postJSON<{ skeletons: Record<string, Skeleton> }>(`${SERVER_BASE}/pose-design/skeletons`, { poses }, 'pose skeletons')
+  return data.skeletons
+}
