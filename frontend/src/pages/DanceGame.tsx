@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import RobotViewer from '../components/RobotViewer'
 import { isLiveMode, resetPose } from '../api/robot'
 import { stopSubjectSelection } from '../api/vision'
@@ -6,6 +7,7 @@ import CornerMenu from '../rps/CornerMenu'
 import DanceWorkspace, { type DanceWorkspaceHandle } from '../dance/DanceWorkspace'
 import { hasMoves, type Step } from '../dance/blocks'
 import { danceMove } from '../dance/poses'
+import { loadCustomPoses } from '../poseDesigner/customPoses'
 import { playSequence } from '../dance/sequencePlayer'
 import PosePreview, { type PoseHover } from '../dance/PosePreview'
 import './DanceGame.css'
@@ -17,6 +19,7 @@ function HowToPlay({ live, onClose }: { live: boolean; onClose: () => void }) {
       <div className="help-card" onClick={(e) => e.stopPropagation()}>
         <h2>How to play</h2>
         <ol className="help-steps">
+          <li><span>＋</span><p>Press <b>Add move</b> to make a new move with CORAL. It comes back here on the shelf.</p></li>
           <li><span>🧩</span><p>Drag moves from the shelf and snap them under <b>when ▶ Dance! is pressed</b>.</p></li>
           <li><span>🔁</span><p>Put moves inside <b>repeat</b> to do them again and again.</p></li>
           {live ? (
@@ -45,6 +48,7 @@ export default function DanceGame() {
   const [hover, setHover] = useState<PoseHover | null>(null)
   const workspaceRef = useRef<DanceWorkspaceHandle>(null)
   const tokenRef = useRef(0)
+  const navigate = useNavigate()
 
   // Start from a clean stand; on exit, cancel any dance and stand the sim back up.
   useEffect(() => {
@@ -93,6 +97,9 @@ export default function DanceGame() {
     finish()
   }
 
+  /** Make a new move in the Pose Designer, which comes back here once it's saved. */
+  const handleAddMove = () => navigate('/pose-designer', { state: { from: '/dance-game' } })
+
   const ready = hasMoves(program)
   const pose = move && danceMove(move.pose)
   const bubble = pose
@@ -100,7 +107,9 @@ export default function DanceGame() {
     : failed
       ? "Oops! I couldn't finish that dance"
       : !ready
-        ? 'Snap some moves on to make me dance'
+        ? loadCustomPoses().length === 0
+          ? 'Press + Add move to make my first move'
+          : 'Snap some moves on to make me dance'
         : live
           ? 'Press Simulate or Execute to watch me go'
           : 'Press Dance! to watch me go'
@@ -114,7 +123,7 @@ export default function DanceGame() {
 
       <main className="dance-main">
         <section className="code-card">
-          <DanceWorkspace ref={workspaceRef} locked={isPlaying} onChange={setProgram} onPoseHover={setHover} />
+          <DanceWorkspace ref={workspaceRef} locked={isPlaying} onChange={setProgram} onPoseHover={setHover} onAddMove={handleAddMove} />
         </section>
 
         <section className="stage">

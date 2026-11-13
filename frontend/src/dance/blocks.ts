@@ -8,19 +8,19 @@
 
 import * as Blockly from 'blockly/core'
 import { loadCustomPoses } from '../poseDesigner/customPoses'
-import { DANCE_POSES, SPEED_LABEL, type DancePoseId, type DanceSpeed } from './poses'
+import { SPEED_LABEL, type DanceSpeed } from './poses'
 import { ICON_SIZE, poseIcon } from './skeleton'
 
 export const START_BLOCK = 'dance_start'
 const REPEAT_BLOCK = 'dance_repeat'
-/** A pose made in the Pose Designer; its POSE dropdown holds the CustomPose id. */
+/** A move: a pose made in the Pose Designer; its POSE dropdown holds the CustomPose id. */
 const CUSTOM_BLOCK = 'dance_custom'
-const poseBlockType = (id: DancePoseId) => `dance_pose_${id}`
-const POSE_BY_BLOCK_TYPE = new Map(DANCE_POSES.map((p) => [poseBlockType(p.id), p.id]))
+/** The shelf's "+ Add move" button (see DanceWorkspace's onAddMove). */
+export const ADD_MOVE_CALLBACK = 'ADD_MOVE'
 
 /**
  * One step of a dance program. `blockId` is the Blockly block it came from, for
- * highlighting; `pose` a preset's DancePoseId or a CustomPose id (see danceMove).
+ * highlighting; `pose` a CustomPose id (see danceMove).
  */
 export type Step =
   | { kind: 'pose'; blockId: string; pose: string; speed: DanceSpeed }
@@ -54,20 +54,7 @@ export function defineDanceBlocks(): void {
       nextStatement: null,
     },
   ])
-  // Move blocks are defined in code, not JSON, so each icon is read when the block is made.
-  for (const p of DANCE_POSES) {
-    Blockly.Blocks[poseBlockType(p.id)] = {
-      init(this: Blockly.Block) {
-        this.appendDummyInput()
-          .appendField(iconField(p.id), 'ICON')
-          .appendField(p.label)
-          .appendField(new Blockly.FieldDropdown(speedOptions), 'SPEED')
-        this.setStyle('move_blocks')
-        this.setPreviousStatement(true)
-        this.setNextStatement(true)
-      },
-    }
-  }
+  // Defined in code, not JSON, so the icon is read when the block is made.
   // The pose list is read when the menu opens; the icon follows the chosen pose.
   Blockly.Blocks[CUSTOM_BLOCK] = {
     init(this: Blockly.Block) {
@@ -82,7 +69,7 @@ export function defineDanceBlocks(): void {
           'POSE',
         )
         .appendField(new Blockly.FieldDropdown(speedOptions), 'SPEED')
-      this.setStyle('custom_blocks')
+      this.setStyle('move_blocks')
       this.setPreviousStatement(true)
       this.setNextStatement(true)
     },
@@ -107,7 +94,6 @@ export function danceTheme(): Blockly.Theme {
       start_blocks: { colourPrimary: pal('navy'), colourSecondary: pal('navy-light'), colourTertiary: pal('navy-deep'), hat: 'cap' },
       loop_blocks: { colourPrimary: pal('teal'), colourSecondary: pal('teal-pale'), colourTertiary: pal('navy') },
       move_blocks: { colourPrimary: pal('coral'), colourSecondary: pal('pink'), colourTertiary: pal('coral-deep') },
-      custom_blocks: { colourPrimary: pal('coral-deep'), colourSecondary: pal('pink'), colourTertiary: pal('navy') },
     },
     componentStyles: {
       workspaceBackgroundColour: pal('white'),
@@ -121,18 +107,18 @@ export function danceTheme(): Blockly.Theme {
   })
 }
 
-/** The always-open block shelf: the loop, every move, then the child's own poses, at normal speed. */
+/** The always-open block shelf: the loop, the Add move button, then every move the child made, at normal speed. */
 export function toolbox(): Blockly.utils.toolbox.ToolboxInfo {
-  const custom = loadCustomPoses()
+  const moves = loadCustomPoses()
   return {
     kind: 'flyoutToolbox',
     contents: [
       { kind: 'label', text: 'Loops' },
       { kind: 'block', type: REPEAT_BLOCK },
       { kind: 'label', text: 'Moves' },
-      ...DANCE_POSES.map((p) => ({ kind: 'block', type: poseBlockType(p.id), fields: { SPEED: 'normal' } })),
-      ...(custom.length > 0 ? [{ kind: 'label', text: 'My poses' }] : []),
-      ...custom.map((p) => ({ kind: 'block', type: CUSTOM_BLOCK, fields: { POSE: p.id, SPEED: 'normal' } })),
+      { kind: 'button', text: '＋ Add move', callbackkey: ADD_MOVE_CALLBACK },
+      ...(moves.length === 0 ? [{ kind: 'label', text: 'No moves yet!' }] : []),
+      ...moves.map((p) => ({ kind: 'block', type: CUSTOM_BLOCK, fields: { POSE: p.id, SPEED: 'normal' } })),
     ],
   }
 }
@@ -152,9 +138,9 @@ function readStack(first: Blockly.Block | null): Step[] {
   return steps
 }
 
-/** The pose a move block plays (a preset id or a CustomPose id), or undefined for other blocks. */
+/** The pose a move block plays (a CustomPose id), or undefined for other blocks. */
 export function blockPose(block: Blockly.Block): string | undefined {
-  return block.type === CUSTOM_BLOCK ? block.getFieldValue('POSE') || undefined : POSE_BY_BLOCK_TYPE.get(block.type)
+  return block.type === CUSTOM_BLOCK ? block.getFieldValue('POSE') || undefined : undefined
 }
 
 /** The program: every step snapped under the start block. */
