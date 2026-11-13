@@ -67,3 +67,26 @@ def test_genuinely_unstable_lean_is_still_flagged(checker):
     assert result["fell"], (
         f"expected the lean to be flagged as a fall, got head_z={result['head_z']}"
     )
+
+
+def _dance_pose(pose_id: str) -> dict[str, float]:
+    from app.robot.hardware_angle_utils import hardware_units_to_rad
+    from tests.test_dance_poses import _dance_poses
+
+    return {j: hardware_units_to_rad(p, j) for j, p in _dance_poses()[pose_id].items()}
+
+
+def test_holding_a_bent_knee_pose_is_not_a_fall(checker):
+    """Regression (2026-11-12): starting from Dab (bent knees) used to seed the
+    body at the stand keyframe's base height, so the feet hung in the air, the
+    shadow robot dropped and toppled, and every move out of Dab was blocked."""
+    dab = _dance_pose("dab")
+    result = checker.check_fall(dab, current_joints=dab)
+    assert not result["fell"], f"holding Dab flagged as a fall: head_z={result['head_z']}"
+
+
+def test_dab_to_t_pose_is_not_a_fall(checker):
+    """Regression (2026-11-12): the Dance Game skipped T-Pose after Dab (2nd
+    lap of repeat [T-Pose, Stand, Dab]) because this move was fall-blocked."""
+    result = checker.check_fall(_dance_pose("t-pose"), current_joints=_dance_pose("dab"))
+    assert not result["fell"], f"Dab -> T-Pose flagged as a fall: head_z={result['head_z']}"

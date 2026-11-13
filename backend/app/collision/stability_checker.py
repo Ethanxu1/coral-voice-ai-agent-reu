@@ -27,10 +27,16 @@ from __future__ import annotations
 import os
 
 import mujoco
+import numpy as np
 from app.config import AINEX_MODEL_PATH
 from loguru import logger
 
 _HEAD_BODY_NAME = "head_tilt_link"
+_FOOT_BODY_NAMES = ("l_ank_roll_link", "r_ank_roll_link")
+
+# Free root joint's qpos layout: world position, then orientation quaternion.
+_ROOT_POS = slice(0, 3)
+_ROOT_QUAT = slice(3, 7)
 
 # Simulated seconds to settle under gravity before measuring. 1.5s matches
 # leg_bucket_test's empirically-sufficient settle window.
@@ -82,9 +88,17 @@ class StabilityChecker:
         if self._head_body_id < 0:
             raise RuntimeError(f"body '{_HEAD_BODY_NAME}' not found in {model_path}")
 
+        self._foot_body_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, n) for n in _FOOT_BODY_NAMES
+        ]
+
         key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "stand")
         mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
         self._stand_joints = {n: float(self.data.qpos[a]) for n, a in self._qpos_addr.items()}
+        mujoco.mj_forward(self.model, self.data)
+        foot = self._foot_body_ids[0]
+        self._stand_foot_z = float(self.data.xpos[foot][2])
+        self._stand_foot_rot = self.data.xmat[foot].reshape(3, 3).copy()
 
         # Baseline: where the head settles when simply holding stand.
         self.stand_head_z = self._settle({})
@@ -97,6 +111,29 @@ class StabilityChecker:
     @property
     def fall_threshold_z(self) -> float:
         return self.fall_head_frac * self.stand_head_z
+
+    def _put_feet_on_floor(self) -> None:
+        """Tilt and lift the whole body so the lower foot sits on the floor
+        exactly as a foot does at stand (flat, same height).
+
+        The keyframe's root pose only fits stand's legs: seeded with bent knees
+        (Dab, Warrior) the body stays upright, so the feet hang in the air at
+        an angle, the model drops onto a heel edge, and the settle reports a
+        fall that isn't one (2026-11-12). Real physics leans the torso instead."""
+        mujoco.mj_forward(self.model, self.data)
+        foot = min(self._foot_body_ids, key=lambda b: self.data.xpos[b][2])
+        foot_pos = self.data.xpos[foot].copy()
+        # World rotation that turns this foot's current orientation into stand's.
+        fix = self._stand_foot_rot @ self.data.xmat[foot].reshape(3, 3).T
+        fix_quat = np.empty(4)
+        mujoco.mju_mat2Quat(fix_quat, fix.flatten())
+
+        root_pos = self.data.qpos[_ROOT_POS]
+        new_root_pos = foot_pos + fix @ (root_pos - foot_pos)
+        new_root_pos[2] += self._stand_foot_z - foot_pos[2]
+        root_quat = self.data.qpos[_ROOT_QUAT].copy()
+        mujoco.mju_mulQuat(self.data.qpos[_ROOT_QUAT], fix_quat, root_quat)
+        self.data.qpos[_ROOT_POS] = new_root_pos
 
     def _settle(
         self,
@@ -115,6 +152,7 @@ class StabilityChecker:
                 addr = self._qpos_addr.get(name)
                 if addr is not None:
                     self.data.qpos[addr] = val
+            self._put_feet_on_floor()
 
         start_ctrl = dict(self._stand_joints)
         if current_joints:
