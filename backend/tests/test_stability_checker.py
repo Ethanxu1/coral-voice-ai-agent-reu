@@ -70,10 +70,12 @@ def test_genuinely_unstable_lean_is_still_flagged(checker):
 
 
 def _dance_pose(pose_id: str) -> dict[str, float]:
+    """A former Dance Game preset (removed 2026-11-12), from motions.py, head centred as it was played."""
     from app.robot.hardware_angle_utils import hardware_units_to_rad
-    from tests.test_dance_poses import _dance_poses
+    from app.robot.motions import DAB_PULSE, T_POSE_PULSE
 
-    return {j: hardware_units_to_rad(p, j) for j, p in _dance_poses()[pose_id].items()}
+    pulses = {"dab": DAB_PULSE, "t-pose": T_POSE_PULSE}[pose_id]
+    return {j: hardware_units_to_rad(p, j) for j, p in {**pulses, "head_pan": 500, "head_tilt": 500}.items()}
 
 
 def test_holding_a_bent_knee_pose_is_not_a_fall(checker):

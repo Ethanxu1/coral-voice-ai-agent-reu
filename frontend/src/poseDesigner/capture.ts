@@ -6,9 +6,8 @@ import { isSaveCommand } from '../api/poseDesign'
 import { getJointPulses, move, setPose } from '../api/robot'
 import { mapFeatures } from '../api/vision'
 import { captureUtterance } from '../audio/capture'
-import { DANCE_POSE_BY_ID } from '../dance/poses'
+import { STAND_PULSES as STAND } from '../dance/poses'
 
-const STAND = DANCE_POSE_BY_ID.stand.robotPulses
 /** Cut an utterance off after this long, so a noise that started it can't hold the pose snapshot back for long. */
 const SAVE_UTTERANCE_MAX_MS = 4000
 

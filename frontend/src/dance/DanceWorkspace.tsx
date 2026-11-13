@@ -4,7 +4,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import * as Blockly from 'blockly/core'
 import * as En from 'blockly/msg/en'
-import { START_BLOCK, blockPose, danceTheme, defineDanceBlocks, readProgram, toolbox, type Step } from './blocks'
+import { ADD_MOVE_CALLBACK, START_BLOCK, blockPose, danceTheme, defineDanceBlocks, readProgram, toolbox, type Step } from './blocks'
 import type { PoseHover } from './PosePreview'
 import { loadPoseIcons } from './skeleton'
 
@@ -22,6 +22,8 @@ interface Props {
   onChange: (steps: Step[]) => void
   /** Called when the pointer goes onto a move block's stick figure (null when it leaves). */
   onPoseHover: (hover: PoseHover | null) => void
+  /** Called when the shelf's "+ Add move" button is pressed. */
+  onAddMove: () => void
 }
 
 /**
@@ -43,13 +45,15 @@ function hoveredPose(workspace: Blockly.WorkspaceSvg, target: EventTarget | null
   return { pose, rect: new DOMRect(at.x, at.y, right - at.x, at.height) }
 }
 
-const DanceWorkspace = forwardRef<DanceWorkspaceHandle, Props>(function DanceWorkspace({ locked, onChange, onPoseHover }, ref) {
+const DanceWorkspace = forwardRef<DanceWorkspaceHandle, Props>(function DanceWorkspace({ locked, onChange, onPoseHover, onAddMove }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
   const onPoseHoverRef = useRef(onPoseHover)
   onPoseHoverRef.current = onPoseHover
+  const onAddMoveRef = useRef(onAddMove)
+  onAddMoveRef.current = onAddMove
 
   useEffect(() => {
     let disposed = false
@@ -76,6 +80,7 @@ const DanceWorkspace = forwardRef<DanceWorkspaceHandle, Props>(function DanceWor
       move: { scrollbars: true, drag: true, wheel: true },
     })
     workspaceRef.current = workspace
+    workspace.registerButtonCallback(ADD_MOVE_CALLBACK, () => onAddMoveRef.current())
     Blockly.serialization.blocks.append({ type: START_BLOCK, x: 30, y: 30, deletable: false }, workspace)
     workspace.addChangeListener(Blockly.Events.disableOrphans)
     workspace.addChangeListener((e) => {

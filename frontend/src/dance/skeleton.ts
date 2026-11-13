@@ -7,7 +7,7 @@
 
 import { poseSkeletons, type Skeleton } from '../api/poseDesign'
 import { loadCustomPoses } from '../poseDesigner/customPoses'
-import { CUSTOM_EMOJI, DANCE_POSES, danceMove } from './poses'
+import { CUSTOM_EMOJI, danceMove } from './poses'
 
 /** The icon's size on a block, in px. */
 export const ICON_SIZE = 40
@@ -72,11 +72,11 @@ const icons = new Map<string, string>()
 /** The icon colour: white, to stand out on the coral move blocks (palette.css). */
 const iconColour = () => getComputedStyle(document.documentElement).getPropertyValue('--pal-white').trim() || '#fff'
 
-/** Fetch a stick figure for every preset and Pose Designer pose. Never throws. */
+/** Fetch a stick figure for every Pose Designer pose. Never throws. */
 export async function loadPoseIcons(): Promise<void> {
   const poses: Record<string, Record<string, number>> = {}
-  for (const p of DANCE_POSES) poses[p.id] = p.robotPulses
   for (const p of loadCustomPoses()) poses[p.id] = p.pulses
+  if (Object.keys(poses).length === 0) return
   try {
     const skeletons = await poseSkeletons(poses)
     const colour = iconColour()

@@ -37,6 +37,11 @@
 
 /* Blockly: the shelf's section labels, the playing block, and the locked shelf. */
 .dance .blocklyFlyoutLabelText { fill: var(--pal-navy-soft); font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 18px; }
+/* The shelf's "+ Add move" button (opens the Pose Designer). */
+.dance .blocklyFlyoutButton { cursor: pointer; }
+.dance .blocklyFlyoutButton .blocklyFlyoutButtonBackground { fill: var(--pal-navy); }
+.dance .blocklyFlyoutButton:hover .blocklyFlyoutButtonBackground { fill: var(--pal-navy-light); }
+.dance .blocklyFlyoutButton .blocklyText { fill: var(--pal-white); font-family: 'Fredoka', sans-serif; font-weight: 600; }
 .dance .blocklyHighlighted > .blocklyPath { stroke: var(--pal-gold); stroke-width: 5px; filter: drop-shadow(0 0 6px var(--pal-gold)); }
 .dance .dance-workspace.locked .blocklyFlyout,
 .dance .dance-workspace.locked .blocklyFlyoutScrollbar { opacity: .45; pointer-events: none; transition: opacity .2s; }
