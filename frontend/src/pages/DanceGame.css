@@ -96,6 +96,52 @@
 .dance .pose-preview-robot { position: relative; flex: 1 1 0; width: 100%; min-height: 0; }
 .dance .pose-preview p { margin: 0; font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 22px; color: var(--game-text); }
 
+/* ── Tool menu (top-right of the code card) ──────────────────────────── */
+.dance .tool-menu { position: absolute; top: 8px; right: 8px; z-index: 20; }
+.dance .tool-toggle {
+  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--pal-navy); color: var(--pal-white); box-shadow: 0 4px 0 var(--pal-navy-deep);
+}
+.dance .tool-toggle:hover { background: var(--pal-navy-light); }
+.dance .tool-toggle:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--pal-navy-deep); }
+.dance .tool-pop {
+  position: absolute; top: 42px; right: 0; min-width: 180px;
+  background: var(--pal-white); border-radius: 14px; padding: 6px 0; overflow: hidden;
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--pal-navy) 20%, transparent), 0 0 0 1px color-mix(in srgb, var(--pal-navy) 8%, transparent);
+}
+.dance .tool-item {
+  display: block; width: 100%; text-align: left; padding: 10px 18px; font-weight: 800; font-size: 15px; color: var(--pal-navy);
+  background: none; border-radius: 0;
+}
+.dance .tool-item:hover { background: var(--pal-sand-light); }
+.dance .tool-sep { border: none; border-top: 1px solid var(--pal-navy-pale); margin: 4px 12px; }
+
+/* ── Manage Moves dialog ─────────────────────────────────────────────── */
+.dance .manage-card { max-width: 500px; width: 90vw; }
+.dance .manage-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; width: 100%; max-height: 50vh; overflow-y: auto; }
+.dance .manage-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--game-bg-light); border-radius: 14px; padding: 10px 16px;
+}
+.dance .manage-name { font-weight: 800; font-size: 18px; color: var(--pal-navy); }
+.dance .manage-del {
+  flex: none; font-weight: 800; font-size: 14px; padding: 6px 14px; border-radius: 10px;
+  background: color-mix(in srgb, var(--pal-coral) 15%, transparent); color: var(--pal-coral-deep);
+}
+.dance .manage-del:hover { background: var(--pal-coral); color: #fff; }
+
+/* ── Missing moves / program import dialog ───────────────────────────── */
+.dance .dialog-btns { display: flex; gap: 12px; justify-content: center; }
+.dance .dialog-btns .cancel { background: var(--pal-navy-soft); box-shadow: 0 6px 0 var(--pal-navy-deep); }
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+.dance .dance-toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 70;
+  background: var(--pal-navy); color: var(--pal-white); font-weight: 800; font-size: 17px;
+  padding: 12px 28px; border-radius: 999px; box-shadow: 0 8px 28px color-mix(in srgb, var(--pal-navy) 30%, transparent);
+  animation: dance-pop .35s cubic-bezier(.3,1.6,.6,1);
+}
+
 /* ── How to play (grown-up, from the corner menu) ──────────────────────── */
 .dance .help { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: color-mix(in srgb, var(--pal-sand) 60%, transparent); backdrop-filter: blur(6px); }
 .dance .help-card { background: #fff; border-radius: 30px; padding: 30px 36px; max-width: 640px; display: flex; flex-direction: column; align-items: center; gap: 18px; box-shadow: 0 20px 60px color-mix(in srgb, var(--pal-navy) 20%, transparent); }
