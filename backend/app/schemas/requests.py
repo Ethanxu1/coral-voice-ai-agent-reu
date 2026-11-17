@@ -1,14 +1,8 @@
 """Pydantic request models for the Coral API."""
 
-from pydantic import BaseModel
+from typing import Annotated, Literal
 
-
-class ChatMessage(BaseModel):
-    """Chat message structure."""
-
-    role: str  # "user" or "assistant"
-    content: str
-    commands: list[str] | None = None
+from pydantic import BaseModel, Field, model_validator
 
 
 class ServoMove(BaseModel):
@@ -22,16 +16,28 @@ class MoveRequest(BaseModel):
 
 
 class SetPoseRequest(BaseModel):
-    """A raw pose as {joint_name: hardware_pulse}, e.g. pasted from motions.py."""
+    """A raw pose as {joint_name: hardware_pulse} (the motions.py format)."""
 
-    pulses: dict[str, int]
+    pulses: dict[str, Annotated[int, Field(ge=0, le=1000)]]
     # Pose Tester's "collision check off" mode: apply the pose exactly as
-    # authored, skipping the collision shadow-roll (JOINT_LIMITS still clamp).
+    # authored, skipping the collision/fall gate (joint limits still clamp).
     skip_collision_check: bool = False
+    # False skips only the fall check (Pose Tester, which pins the sim upright).
+    check_fall: bool = True
+    # 0 applies instantly; otherwise the sim glides there over this many ms.
+    duration_ms: int = Field(default=0, ge=0, le=10000)
+    # Rock Paper Scissors: also move the physical robot when the server is in
+    # robot mode. Only for safety-checked, timed glides.
+    to_robot: bool = False
+    # Dance Game: reply only once the sim's joints have physically reached the
+    # pose (or stopped short), not as soon as the motor targets have.
+    wait_until_arrived: bool = False
 
-
-class StateRequest(BaseModel):
-    mode: str
+    @model_validator(mode="after")
+    def _robot_pose_is_checked_and_timed(self) -> "SetPoseRequest":
+        if self.to_robot and (self.skip_collision_check or self.duration_ms == 0):
+            raise ValueError("to_robot needs the collision check and a duration_ms > 0")
+        return self
 
 
 class IntentRequest(BaseModel):
@@ -57,3 +63,40 @@ class PlayPoseRequest(BaseModel):
 
 class ExtractNameRequest(BaseModel):
     text: str
+
+
+PosePulses = dict[str, Annotated[int, Field(ge=0, le=1000)]]
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=500)
+
+
+class PoseDesignTurnRequest(BaseModel):
+    """One spoken (or typed) turn of the Pose Designer conversation."""
+
+    text: str = Field(min_length=1, max_length=500)
+    # The pose being designed, as {joint: hardware_pulse}.
+    pulses: PosePulses
+    # The change proposed last turn and still waiting for a yes/no, as
+    # {control: degrees} (services/pose_design.py CONTROLS).
+    proposal: dict[str, Annotated[float, Field(ge=-180, le=180)]] = {}
+    history: list[ChatTurn] = Field(default=[], max_length=12)
+    # Heard by the mic while CORAL is asleep: only counts with "hey CORAL".
+    needs_wake_word: bool = False
+
+
+class SaveCommandRequest(BaseModel):
+    """Something the child said while CORAL follows them in the Pose Designer."""
+
+    text: str = Field(max_length=500)
+
+
+class PosePreviewRequest(BaseModel):
+    pulses: PosePulses
+
+
+class PoseSkeletonsRequest(BaseModel):
+    # {pose id: pose}: every pose a Dance Game shelf shows, in one call.
+    poses: dict[Annotated[str, Field(max_length=64)], PosePulses] = Field(max_length=100)

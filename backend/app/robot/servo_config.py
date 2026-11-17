@@ -46,8 +46,8 @@ JOINT_NAME_MAP: dict[int, str] = {v: k for k, v in SERVO_ID_MAP.items()}
 
 # Standing-pose pulse values confirmed from hardware (stand.d6a action file).
 # These are the hardware neutral positions — NOT 500 for all joints.
-# Phase 2 angle conversion must use these as per-joint offsets rather than the
-# universal CENTER_UNITS=500 used in sim mode.
+# hardware_angle_utils uses them as per-joint offsets instead of the uniform
+# CENTER_UNITS=500 used in sim mode.
 STAND_PULSE: dict[str, int] = {
     "l_ank_roll":  500,
     "l_ank_pitch": 640,

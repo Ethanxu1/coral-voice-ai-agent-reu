@@ -1,7 +1,14 @@
 """Map MediaPipe pose_world_landmarks + head pose to robot joint targets.
 
-Mirror mode: person's right side (MediaPipe right_*) → robot's left arm/leg,
-and vice versa. This makes the robot feel like a partner facing the user.
+Landmark labels here are MediaPipe's, computed on the camera frame *after*
+it has already been horizontally flipped upstream in pose_estimator.py (so
+the preview reads like a mirror). That pre-flip swaps MediaPipe's left/right
+labels relative to the child's true anatomical sides, so this module swaps
+them back: MediaPipe right_* → robot's left arm/leg, and vice versa. The two
+swaps together net out to a shadow convention — the child's true right side
+drives the robot's true right side, so the robot copies the child directly
+rather than mirroring them. Don't "fix" the swap in this file in isolation;
+it only produces the shadow behavior in combination with the upstream flip.
 
 Arm angles are extracted in the torso-local frame so shoulder pitch and roll
 are decoupled from each other and from any global torso rotation. Leg angles
@@ -18,7 +25,6 @@ hip yaw, and ankles stay at neutral.
 
 from __future__ import annotations
 
-import logging
 import math
 import time
 from typing import Optional
@@ -26,7 +32,6 @@ from typing import Optional
 import numpy as np
 
 from app import config
-from app.robot.angle_utils import rad_to_servo_units
 from app.robot.hardware_angle_utils import HW_STAND_RAD
 from app.robot.interface import ServoCommand
 from app.robot.servo_config import SERVO_ID_MAP
@@ -34,13 +39,11 @@ from app.validation import JOINT_LIMITS
 
 from . import geometry
 
-logger = logging.getLogger(__name__)
-
 # NOTE: OneEuroFilter is imported lazily inside JointAngleSmoother (see __init__)
 # rather than at module load. Pulling it here would drag in pose_estimator ->
-# mediapipe/cv2, but compute_joint_targets / targets_to_servo_commands only need
-# `geometry` (numpy). Keeping the top-level import light lets the Pi robot_server
-# reuse the retargeting without installing the full vision stack.
+# mediapipe/cv2, but compute_joint_targets only needs
+# `geometry` (numpy). Keeping the top-level import light lets the main server
+# reuse the retargeting (follow mode) without loading the full vision stack.
 
 # MediaPipe pose landmark indices (re-exported from geometry for clarity)
 _LM_L_SHOULDER = geometry.LEFT_SHOULDER
@@ -165,6 +168,17 @@ def hips_detected(body_landmarks: list[dict]) -> bool:
     )
 
 
+def shoulders_detected(body_landmarks: list[dict]) -> bool:
+    """True if both shoulders have world coords and pass the visibility gate:
+    enough for hip-less arm retargeting (see _torso_frame_from)."""
+    if len(body_landmarks) <= _LM_R_SHOULDER:
+        return False
+    return all(
+        _has_world(body_landmarks[i]) and _visible(body_landmarks[i])
+        for i in (_LM_L_SHOULDER, _LM_R_SHOULDER)
+    )
+
+
 def knees_confidently_visible(body_landmarks: list[dict]) -> bool:
     """True when BOTH knees clear the stricter knee visibility gate (0.6).
 
@@ -180,21 +194,51 @@ def knees_confidently_visible(body_landmarks: list[dict]) -> bool:
     ) and _visible(body_landmarks[_LM_R_KNEE], _KNEE_VISIBILITY_THRESHOLD)
 
 
-def _torso_frame_from(body: list[dict]):
-    """Build torso frame from world landmarks; returns None if any required
-    landmark is missing world coords or visibility.
+# When True, arm retargeting no longer needs the hips in view: the torso frame is
+# built from the shoulders alone, assuming an upright torso. Off by default — the
+# main demo asks the user to reframe instead. Rock-Paper-Scissors only follows
+# the head and arms, so its pages switch this on while they're open.
+_allow_hipless_arms = False
+
+
+def set_hipless_arms(enabled: bool) -> None:
+    global _allow_hipless_arms
+    _allow_hipless_arms = bool(enabled)
+
+
+def hipless_arms_enabled() -> bool:
+    return _allow_hipless_arms
+
+
+def _torso_frame_from(body: list[dict], allow_hipless: bool):
+    """Build torso frame from world landmarks; returns None if the shoulders (or,
+    unless `allow_hipless`, the hips) are missing world coords or visibility.
     """
-    required = (_LM_L_SHOULDER, _LM_R_SHOULDER, _LM_L_HIP, _LM_R_HIP)
-    for idx in required:
+    for idx in (_LM_L_SHOULDER, _LM_R_SHOULDER):
         lm = body[idx]
         if not _has_world(lm) or not _visible(lm):
             return None
-    return geometry.torso_frame(
-        geometry.world_xyz(body[_LM_L_SHOULDER]),
-        geometry.world_xyz(body[_LM_R_SHOULDER]),
-        geometry.world_xyz(body[_LM_L_HIP]),
-        geometry.world_xyz(body[_LM_R_HIP]),
+
+    l_sho = geometry.world_xyz(body[_LM_L_SHOULDER])
+    r_sho = geometry.world_xyz(body[_LM_R_SHOULDER])
+
+    hips_ok = all(
+        _has_world(body[idx]) and _visible(body[idx]) for idx in (_LM_L_HIP, _LM_R_HIP)
     )
+    if hips_ok:
+        return geometry.torso_frame(
+            l_sho,
+            r_sho,
+            geometry.world_xyz(body[_LM_L_HIP]),
+            geometry.world_xyz(body[_LM_R_HIP]),
+        )
+    if not allow_hipless:
+        return None
+
+    # Hips out of frame: stand in a pair of hips straight below the shoulders
+    # (MediaPipe world Y points down), so the torso's up axis is true vertical.
+    drop = np.array([0.0, 0.5, 0.0])
+    return geometry.torso_frame(l_sho, r_sho, l_sho + drop, r_sho + drop)
 
 
 def _pelvis_frame_from(body: list[dict]):
@@ -224,12 +268,17 @@ def _limb_depth_gated(proximal: dict, distal: dict) -> bool:
 def compute_joint_targets(
     body_landmarks: list[dict],
     head_pose: Optional[dict],
+    allow_hipless: Optional[bool] = None,
 ) -> dict[str, float]:
     """Convert one frame of pose data into robot joint angles in radians.
 
-    Mirror mapping: MediaPipe LEFT (person's left) → robot RIGHT arm/leg; vice
-    versa. Returns a subset of joint names — only those with confident
-    landmarks and non-degenerate viewing geometry.
+    Landmark-label swap: MediaPipe LEFT (person's left) → robot RIGHT arm/leg;
+    vice versa. This undoes the upstream frame flip in pose_estimator.py, so
+    the net real-world result is a shadow convention: the child's true right
+    arm drives the robot's right arm. See the module docstring. Returns a
+    subset of joint names — only those with confident landmarks and
+    non-degenerate viewing geometry. `allow_hipless` overrides the process-wide
+    hip-less arms setting (set_hipless_arms) for this call.
 
     Leg sign conventions (sim frame: X forward, Y left, Z up — pinned by the
     hip body placement in ainex.xml; cross-checked against the STAND_LOW_PULSE
@@ -243,7 +292,9 @@ def compute_joint_targets(
     if len(body_landmarks) > _LM_R_WRIST:
 
         # builds the torso frame used as the local coord system
-        R_torso = _torso_frame_from(body_landmarks)
+        R_torso = _torso_frame_from(
+            body_landmarks, _allow_hipless_arms if allow_hipless is None else allow_hipless
+        )
 
         if R_torso is not None:
             # Person's RIGHT side → robot's LEFT arm
@@ -394,31 +445,6 @@ def compute_joint_targets(
                     targets["r_knee"] = _clamp_to_limits("r_knee", -bend)
 
     return targets
-
-
-def targets_to_servo_commands(
-    targets: dict[str, float], duration_ms: int
-) -> list[ServoCommand]:
-    """Convert joint-name → radians dict to ServoCommands for the *simulator*.
-
-    Uses the uniform 500-centre map (rad=0 ↔ 500), which round-trips correctly
-    through the MuJoCo sim. For the physical robot use
-    targets_to_hardware_servo_commands instead — real servos have asymmetric
-    stand pulses, mirror-mounted direction signs, and damaged-servo limits.
-    """
-    commands: list[ServoCommand] = []
-    for joint, rad in targets.items():
-        servo_id = SERVO_ID_MAP.get(joint)
-        if servo_id is None:
-            continue
-        commands.append(
-            ServoCommand(
-                servo_id=servo_id,
-                position=rad_to_servo_units(rad),
-                duration_ms=duration_ms,
-            )
-        )
-    return commands
 
 
 def targets_to_hardware_servo_commands(

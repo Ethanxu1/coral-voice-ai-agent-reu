@@ -6,10 +6,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Grid } from '@react-three/drei'
+import { ContactShadows, OrbitControls, Grid } from '@react-three/drei'
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
-import { SIM_WS } from '../demo/config'
+import { SIM_WS } from '../config'
 
 interface GeomInfo {
   mesh: string
@@ -32,18 +32,47 @@ function bakeMeshOffset(geo: THREE.BufferGeometry, g: GeomInfo) {
   geo.applyMatrix4(rotInv.multiply(transNeg))
 }
 
+/**
+ * How the viewer looks. `lab` is the plain grey robot on a grid; `stage` is the
+ * Rock Paper Scissors character look: CORAL in its own colour, warm light, a
+ * soft floor, a transparent background (the page paints the room) and a camera
+ * framing the whole robot from the front.
+ */
+export type ViewerLook = 'lab' | 'stage'
+
+/** CORAL's colours on the stage: its shell, and the darker joints and servos. */
+const STAGE_BODY = new THREE.Color('#FF7A59')
+const STAGE_JOINT = new THREE.Color('#7A2E3A')
+const STAGE_HEAD = new THREE.Color('#FFE3D3')
+
+/** A light head, and hands and feet in the darker tone, so they read against the shell. */
+const stageColor = (g: GeomInfo) =>
+  g.mesh.startsWith('head_tilt') ? STAGE_HEAD : /gripper|ank/.test(g.mesh) ? STAGE_JOINT : STAGE_BODY
+
+/** Where the robot's head is on screen, as a share of the canvas (0-1, from the top left). */
+export type HeadMoveHandler = (x: number, y: number) => void
+
+/** Report the head only when it has moved this much (share of the canvas), not every frame. */
+const HEAD_MOVE_EPS = 0.002
+
 function RobotMeshes({
   geoms,
   geometries,
   posesRef,
+  look,
+  onHeadMove,
 }: {
   geoms: GeomInfo[]
   geometries: THREE.BufferGeometry[]
   posesRef: React.MutableRefObject<Float32Array | null>
+  look: ViewerLook
+  onHeadMove?: HeadMoveHandler
 }) {
   const meshRefs = useRef<(THREE.Mesh | null)[]>([])
+  const headIndex = geoms.findIndex((g) => g.mesh.startsWith('head_tilt'))
+  const lastHead = useRef<[number, number] | null>(null)
 
-  useFrame(() => {
+  useFrame(({ camera }) => {
     const poses = posesRef.current
     if (!poses) return
     for (let i = 0; i < geometries.length; i++) {
@@ -51,8 +80,24 @@ function RobotMeshes({
       if (!m) continue
       const o = i * FLOATS_PER_GEOM
       m.position.set(poses[o], poses[o + 1], poses[o + 2])
-      m.quaternion.set(poses[o + 4], poses[o + 5], poses[o + 6], poses[o + 3])
+      // Normalize: under x86 emulation (the Docker backend on Apple silicon) MuJoCo's
+      // mju_mat2Quat returns the right rotation with the wrong length, and three.js
+      // turns a non-unit quaternion into a scaled, stretched mesh.
+      m.quaternion.set(poses[o + 4], poses[o + 5], poses[o + 6], poses[o + 3]).normalize()
     }
+
+    const head = meshRefs.current[headIndex]
+    if (!onHeadMove || !head) return
+    const geo = geometries[headIndex]
+    if (!geo.boundingBox) geo.computeBoundingBox()
+    head.updateWorldMatrix(true, false)
+    const p = geo.boundingBox!.getCenter(new THREE.Vector3()).applyMatrix4(head.matrixWorld).project(camera)
+    const x = (p.x + 1) / 2
+    const y = (1 - p.y) / 2
+    const last = lastHead.current
+    if (last && Math.abs(last[0] - x) < HEAD_MOVE_EPS && Math.abs(last[1] - y) < HEAD_MOVE_EPS) return
+    lastHead.current = [x, y]
+    onHeadMove(x, y)
   })
 
   return (
@@ -60,9 +105,13 @@ function RobotMeshes({
       {geometries.map((geo, i) => (
         <mesh key={i} ref={(el) => (meshRefs.current[i] = el)} geometry={geo}>
           <meshStandardMaterial
-            color={new THREE.Color(geoms[i].rgba[0], geoms[i].rgba[1], geoms[i].rgba[2])}
-            metalness={0.15}
-            roughness={0.6}
+            color={
+              look === 'stage'
+                ? stageColor(geoms[i])
+                : new THREE.Color(geoms[i].rgba[0], geoms[i].rgba[1], geoms[i].rgba[2])
+            }
+            metalness={look === 'stage' ? 0.05 : 0.15}
+            roughness={look === 'stage' ? 0.45 : 0.6}
           />
         </mesh>
       ))}
@@ -70,11 +119,84 @@ function RobotMeshes({
   )
 }
 
-export default function RobotViewer({ embedded = false }: { embedded?: boolean } = {}) {
+/** The ghost's colour: the palette's teal (three.js can't read CSS variables). */
+const GHOST_COLOR = new THREE.Color('#1BA5AC')
+/** A ghost link this close to the real one (metres, or quaternion dot) is unchanged and hidden. */
+const GHOST_SAME_POS = 0.004
+const GHOST_SAME_ROT = 0.9995
+
+/**
+ * A see-through copy of the links that `ghost` (the /ws/sim frame layout) puts
+ * somewhere else than the live robot: a preview of a pose, drawn over CORAL.
+ * Links that wouldn't move are hidden, so only what changes shows.
+ */
+function GhostMeshes({
+  geometries,
+  posesRef,
+  ghost,
+}: {
+  geometries: THREE.BufferGeometry[]
+  posesRef: React.MutableRefObject<Float32Array | null>
+  ghost: Float32Array
+}) {
+  const meshRefs = useRef<(THREE.Mesh | null)[]>([])
+  const liveQuat = useRef(new THREE.Quaternion())
+
+  useFrame(() => {
+    const live = posesRef.current
+    for (let i = 0; i < geometries.length; i++) {
+      const m = meshRefs.current[i]
+      if (!m) continue
+      const o = i * FLOATS_PER_GEOM
+      m.position.set(ghost[o], ghost[o + 1], ghost[o + 2])
+      m.quaternion.set(ghost[o + 4], ghost[o + 5], ghost[o + 6], ghost[o + 3]).normalize()
+      if (!live) continue
+      const dist = Math.hypot(ghost[o] - live[o], ghost[o + 1] - live[o + 1], ghost[o + 2] - live[o + 2])
+      const dot = Math.abs(liveQuat.current.set(live[o + 4], live[o + 5], live[o + 6], live[o + 3]).normalize().dot(m.quaternion))
+      m.visible = dist > GHOST_SAME_POS || dot < GHOST_SAME_ROT
+    }
+  })
+
+  return (
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      {geometries.map((geo, i) => (
+        <mesh key={i} ref={(el) => (meshRefs.current[i] = el)} geometry={geo} renderOrder={1}>
+          <meshStandardMaterial color={GHOST_COLOR} emissive={GHOST_COLOR} emissiveIntensity={0.35} transparent opacity={0.45} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+export default function RobotViewer({
+  embedded = false,
+  look = 'lab',
+  onHeadMove,
+  ghost = null,
+  pose,
+  fov = 38,
+}: {
+  embedded?: boolean
+  look?: ViewerLook
+  /** Called when the robot's head moves on screen (e.g. to point something at it). */
+  onHeadMove?: HeadMoveHandler
+  /** A pose to preview over the robot, in the /ws/sim frame layout (stage look only). */
+  ghost?: Float32Array | null
+  /**
+   * Draw the robot in this pose (the /ws/sim frame layout) instead of following
+   * the live sim; null draws nothing yet. The stream is still used for the meshes.
+   */
+  pose?: Float32Array | null
+  /** Stage look's vertical field of view (degrees); wider fits raised arms in a small box. */
+  fov?: number
+} = {}) {
   const [geoms, setGeoms] = useState<GeomInfo[]>([])
   const [geometries, setGeometries] = useState<THREE.BufferGeometry[]>([])
   const [status, setStatus] = useState('connecting…')
   const posesRef = useRef<Float32Array | null>(null)
+  const stillRef = useRef<Float32Array | null>(null)
+  stillRef.current = pose ?? null
+  const shownRef = pose === undefined ? posesRef : stillRef
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -155,26 +277,40 @@ export default function RobotViewer({ embedded = false }: { embedded?: boolean }
         </div>
       )}
 
-      <Canvas camera={{ position: [0.5, 0.35, 0.6], fov: 45, near: 0.01, far: 50 }}>
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[3, 5, 2]} intensity={1.2} />
-        <directionalLight position={[-3, 3, -2]} intensity={0.4} />
-        <Grid
-          args={[4, 4]}
-          cellSize={0.1}
-          cellThickness={0.6}
-          sectionSize={0.5}
-          sectionThickness={1}
-          infiniteGrid
-          fadeDistance={8}
-          cellColor="#3a3a44"
-          sectionColor="#4f6a8f"
-        />
-        {geometries.length > 0 && (
-          <RobotMeshes geoms={geoms} geometries={geometries} posesRef={posesRef} />
-        )}
-        <OrbitControls makeDefault target={[0, 0.15, 0]} />
-      </Canvas>
+      {look === 'stage' ? (
+        <Canvas camera={{ position: [0.78, 0.24, 0], fov, near: 0.01, far: 50 }} gl={{ alpha: true }}>
+          <hemisphereLight args={['#FFF1E0', '#C98B6B', 1.4]} />
+          <directionalLight position={[2.5, 2.5, 1]} intensity={2} color="#FFE8D2" />
+          <directionalLight position={[-2, 1.5, -1]} intensity={0.5} color="#FFB59E" />
+          <ContactShadows position={[0.02, 0.001, 0]} scale={0.8} blur={2.4} opacity={0.35} far={0.5} color="#7A2E3A" />
+          {geometries.length > 0 && (
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={shownRef} look={look} onHeadMove={onHeadMove} />
+          )}
+          {geometries.length > 0 && ghost && <GhostMeshes geometries={geometries} posesRef={posesRef} ghost={ghost} />}
+          <OrbitControls makeDefault target={[0.02, 0.21, 0]} enablePan={false} />
+        </Canvas>
+      ) : (
+        <Canvas camera={{ position: [0.5, 0.35, 0.6], fov: 45, near: 0.01, far: 50 }}>
+          <ambientLight intensity={0.7} />
+          <directionalLight position={[3, 5, 2]} intensity={1.2} />
+          <directionalLight position={[-3, 3, -2]} intensity={0.4} />
+          <Grid
+            args={[4, 4]}
+            cellSize={0.1}
+            cellThickness={0.6}
+            sectionSize={0.5}
+            sectionThickness={1}
+            infiniteGrid
+            fadeDistance={8}
+            cellColor="#3a3a44"
+            sectionColor="#4f6a8f"
+          />
+          {geometries.length > 0 && (
+            <RobotMeshes geoms={geoms} geometries={geometries} posesRef={shownRef} look={look} />
+          )}
+          <OrbitControls makeDefault target={[0, 0.15, 0]} />
+        </Canvas>
+      )}
     </div>
   )
 }

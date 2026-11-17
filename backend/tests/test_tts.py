@@ -78,9 +78,10 @@ class TestGenerateSpeech:
         assert result == b"fake-mp3-bytes"
         assert len(fake_openai.audio.speech.calls) == 1
         call = fake_openai.audio.speech.calls[0]
-        assert call["model"] == "tts-1"
-        assert call["voice"] == "nova"
+        assert call["model"] == "tts-1-hd"
+        assert call["voice"] == "coral"
         assert call["input"] == "Hello there!"
+        assert call["speed"] == 1.05
 
     def test_empty_text_returns_none(self, fake_openai):
         assert generate_speech("") is None

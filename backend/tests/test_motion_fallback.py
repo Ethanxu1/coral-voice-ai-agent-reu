@@ -1,6 +1,5 @@
 """Tests for the deterministic motion fallback planner."""
 
-import math
 
 import pytest
 

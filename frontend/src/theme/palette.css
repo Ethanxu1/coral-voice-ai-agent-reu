@@ -1,0 +1,43 @@
+/* Shared colour palette for CORAL's games. Every game reads its colours from
+   here, so changing a value below recolours all of them consistently.
+   For a see-through tint use color-mix, e.g.
+   color-mix(in srgb, var(--pal-navy) 15%, transparent). */
+:root {
+  /* The palette */
+  --pal-coral: #EE6B6E;
+  --pal-pink: #F6A5AA;
+  --pal-sand: #E8DED1;
+  --pal-teal: #1BA5AC;
+  --pal-navy: #0F4C75;
+
+  /* Lighter / darker shades of the palette */
+  --pal-coral-deep: #C94C50;
+  --pal-sand-light: #F4EEE6;
+  --pal-sand-mid: #EEE6DB;
+  --pal-navy-deep: #0B3556;
+  --pal-navy-light: #1A5E8C;
+  --pal-navy-soft: #4A6F8A;
+  --pal-navy-pale: #A9C3D6;
+  --pal-teal-pale: #BFE6E8;
+  --pal-white: #FFFFFF;
+
+  /* Colours that aren't from the palette but keep a fixed meaning */
+  --pal-gold: #FBBF24;   /* win star */
+  --pal-slate: #94A3B8;  /* loss frown */
+  --pal-skin: #FFD9C2;   /* drawn faces */
+
+  /* Roles shared across games */
+  --game-bg: var(--pal-sand);
+  --game-bg-light: var(--pal-sand-light);
+  --game-text: var(--pal-navy-deep);
+  --game-text-soft: var(--pal-navy-soft);
+  --game-robot: var(--pal-coral);
+  --game-robot-deep: var(--pal-coral-deep);
+  --game-player: var(--pal-teal);
+  --game-good: var(--pal-teal);
+
+  /* Rock-paper-scissors moves */
+  --move-rock: var(--pal-coral);
+  --move-paper: var(--pal-teal);
+  --move-scissors: var(--pal-pink);
+}

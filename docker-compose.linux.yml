@@ -1,0 +1,14 @@
+# Linux override (run.sh adds it automatically): the backend shares the host's
+# network so it reaches the host vision server on localhost. Host firewalls
+# (e.g. ufw) block container -> host traffic on the Docker bridge, and this
+# keeps every service on loopback instead of exposing vision on the LAN.
+
+services:
+  backend:
+    network_mode: host
+    ports: !reset []
+    extra_hosts: !reset []
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-coral}:${POSTGRES_PASSWORD:-coral}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-coral}
+      VISION_BASE: http://localhost:8001
+      CORAL_HOST: 127.0.0.1

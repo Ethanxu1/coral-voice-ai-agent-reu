@@ -12,7 +12,6 @@ from typing import Optional
 
 from app.schemas.motion_plan import Direction, MotionPlan, PlainWaypoint, PrimitiveName
 
-
 _ANGLE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg|°)")
 _SIDE_RE = re.compile(r"\b(left|right|both)\b")
 _DIR_RE = re.compile(r"\b(left|right|up|down|in|out)\b")
@@ -147,12 +146,3 @@ def plan_for_description(description: str) -> Optional[MotionPlan]:
     if not waypoints:
         return None
     return MotionPlan(action="motion", waypoints=waypoints)
-
-
-def plan_for_saved_pose(pose_name: str) -> MotionPlan:
-    """Return the execute_saved_pose plan for a named saved pose."""
-    return MotionPlan(
-        action="execute_saved_pose",
-        pose_name=pose_name,
-        verbal_response=f"Executing your saved pose '{pose_name}'.",
-    )

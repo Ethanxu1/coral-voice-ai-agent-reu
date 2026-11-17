@@ -45,26 +45,6 @@
   gap: 10px;
 }
 
-.rd-topbar-right .stream-source-toggle {
-  margin-top: 0;
-}
-
-.rd-topbar-right .stream-source-label {
-  color: #6B625D;
-}
-
-.rd-topbar-right .stream-source-switch button {
-  background: rgba(45, 41, 38, 0.08);
-  border-color: rgba(45, 41, 38, 0.12);
-  color: #2D2926;
-}
-
-.rd-topbar-right .stream-source-switch button.active {
-  background: #2D2926;
-  border-color: #2D2926;
-  color: #fff;
-}
-
 .rd-topbar-btn {
   display: flex;
   align-items: center;
@@ -158,11 +138,6 @@
   width: 9px; height: 9px; border-radius: 50%;
   background: #3FA76B; box-shadow: 0 0 8px #3FA76B;
 }
-.rd-sim-label {
-  position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
-  font-family: ui-monospace, Menlo, monospace; font-size: 11px;
-  letter-spacing: .12em; color: rgba(255,255,255,.25); white-space: nowrap; z-index: 2;
-}
 
 /* camera pip */
 .rd-pip {
@@ -195,69 +170,6 @@
 }
 
 /* robot illustration */
-.rd-robot {
-  position: absolute; left: 50%; top: 50%;
-  transform: translate(-50%, -54%);
-  display: flex; flex-direction: column; align-items: center;
-  pointer-events: none; z-index: 2;
-}
-.rd-robot-neck-wrap { display: flex; flex-direction: column; align-items: center; }
-.rd-robot-antenna {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: #17BEBB; box-shadow: 0 0 12px #17BEBB; margin-bottom: 2px;
-}
-.rd-robot-neck {
-  width: 14px; height: 14px;
-  background: linear-gradient(to bottom, #E8E4F0, #CEC9DC); border-radius: 4px;
-}
-.rd-robot-head {
-  width: 88px; height: 72px;
-  background: linear-gradient(160deg, #F0EDF8 0%, #DDD8EC 100%);
-  border-radius: 22px;
-  display: flex; align-items: center; justify-content: center; gap: 14px;
-  box-shadow: 0 6px 18px rgba(100,90,130,.28); margin-top: 2px;
-}
-.rd-robot-eye {
-  width: 22px; height: 22px; border-radius: 50%;
-  background: radial-gradient(circle at 38% 38%, #2EDBD8, #0FA8AB);
-  box-shadow: 0 0 12px rgba(23,190,187,.65);
-}
-.rd-robot-torso-wrap {
-  position: relative; display: flex; align-items: flex-start; margin-top: 4px;
-}
-.rd-robot-torso {
-  width: 80px; height: 76px;
-  background: linear-gradient(170deg, #ECEAF6 0%, #D4D0E5 100%);
-  border-radius: 20px; display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 16px rgba(100,90,130,.22);
-}
-.rd-robot-chest {
-  width: 48px; height: 34px; background: #2C2740; border-radius: 12px;
-  display: flex; align-items: center; justify-content: center; gap: 5px;
-}
-.rd-robot-bar {
-  width: 6px; border-radius: 3px; background: #FF6B4A;
-}
-.rd-robot-arm {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  position: absolute; top: 8px;
-}
-.rd-robot-arm-left { left: -22px; }
-.rd-robot-arm-right { right: -22px; }
-.rd-robot-joint {
-  width: 20px; height: 20px; border-radius: 50%;
-  background: radial-gradient(circle at 38% 38%, #FF6B4A, #d04a28);
-  box-shadow: 0 4px 10px rgba(255,107,74,.45);
-}
-.rd-robot-limb {
-  width: 14px; height: 42px; border-radius: 7px;
-  background: linear-gradient(to bottom, #E8E4F0, #CEC9DC);
-}
-.rd-robot-legs { display: flex; gap: 12px; margin-top: 4px; }
-.rd-robot-leg {
-  width: 22px; height: 30px; border-radius: 7px 7px 10px 10px;
-  background: linear-gradient(to bottom, #DDD8EC, #C8C3D8);
-}
 
 .rd-camera-panel .tui-stream {
   position: absolute;
@@ -359,22 +271,6 @@
 }
 
 /* No camera placeholder */
-.rd-camera-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: rgba(255,255,255,0.3);
-  font-size: 14px;
-}
-
-.rd-camera-icon {
-  font-size: 48px;
-  opacity: 0.3;
-}
 
 /* Captured badge on camera */
 .rd-captured-badge {
@@ -1222,7 +1118,6 @@
   box-shadow: 0 6px 20px rgba(224, 90, 43, 0.5);
 }
 
-
 .rd-camera-panel .tui-live-badge {
   position: absolute;
   top: 14px;
@@ -1235,10 +1130,6 @@
   color: #fff;
   letter-spacing: 0.06em;
   z-index: 3;
-}
-
-.rd-freeze-badge {
-  background: rgba(60, 55, 75, 0.85) !important;
 }
 
 /* ── Subject-select modal ───────────────────────────────────────────────────── */

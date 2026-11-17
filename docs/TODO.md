@@ -13,5 +13,13 @@ Current goals
 Add chat feedback so robot can talk back.
 
 
-Bugs to fix
-1. I think there is an error with saving poses, it's not saving the final position of the robot at the time that I tell it to save, which means whatever the simulator is in. And also, I think that everything should only be performed in the simulator until the user has saved the pose, or the user wants to demonstrate and tell the robot to perform a pose before it reflects on the physical robot.
+Bugs: 
+- server readiness indicator
+
+
+Activity redesign: give each of the 4 demo activities (Copycat, dance-off, mirror game, animation activity) an honest one-to-one mapping to an AILQ dimension (cognitive/affective/behavioural/ethical), instead of the vague "each activity maps to a learning objective" claim that isn't actually true of how they were designed
+  - Copycat -> cognitive: after each round, briefly surface the reasoning stepper (vision -> classification -> decision) so the round teaches how CORAL decided, not just win/loss
+  - Dance-off -> ethical: facilitator should explicitly narrate *why* CORAL refuses an unsafe move ("that's not safe, so I won't do it") instead of just saying it "can/cannot do" a move — ties directly to the assessment's obedience/fallibility items
+  - Mirror game -> affective: add a debrief question after the game ("what was it like pretending to be the AI trying to copy someone?") so it becomes a perspective-taking/curiosity moment instead of just a capture-speed demo
+  - Animation activity -> behavioral self-efficacy: build in a deliberate "oops, this step looks wrong — can you fix it?" moment so the child both commands and corrects a mistake, matching the self-efficacy items
+  - context: came out of a 2026-09-29 review of the CORAL Research Paper draft (Activity and Learning Objectives Design section); not yet implemented in the app

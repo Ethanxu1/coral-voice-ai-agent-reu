@@ -3,30 +3,12 @@
 
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { beginHardwareDispatch } from './hardwareDispatchStatus'
-import {
-  captureUtterance,
-  classifyIntent,
-  extractName,
-  killSpeech,
-  listPoses,
-  mapFeatures,
-  move,
-  openActionSession,
-  playPose,
-  playShutter,
-  resetPose,
-  saveCurrentPose,
-  sendAudioForTranscript,
-  setRobotState,
-  sleep,
-  startSubjectSelection,
-  stopSubjectSelection,
-  subscribeSubjectSelection,
-  type ActionResult,
-  type MoveSafety,
-  type ServoCommand,
-  type SubjectSelectionState,
-} from './api'
+import { type ActionResult, openActionSession, sendAudioForTranscript } from '../api/actionSession'
+import { classifyIntent, extractName, listPoses, move, type MoveSafety, playPose, resetPose, saveCurrentPose, type ServoCommand } from '../api/robot'
+import { mapFeatures, type MapFeaturesResult, startSubjectSelection, stopSubjectSelection, type SubjectSelectionState, subscribeSubjectSelection } from '../api/vision'
+import { captureUtterance } from '../audio/capture'
+import { killSpeech, playShutter } from '../audio/speech'
+import { sleep } from '../utils/sleep'
 
 
 export type RefinedStage =
@@ -258,7 +240,7 @@ export function useRefinedDemoMachine() {
   }, [])
 
   // Silence Coral if the tab/page is hidden mid-speech, and on unmount (e.g.
-  // navigating away via "← Back"). Ported from the retired useDemoMachine.
+  // navigating away via "← Back").
   useEffect(() => {
     const onHide = () => { killSpeech() }
     window.addEventListener('pagehide', onHide)
@@ -683,6 +665,34 @@ export function useRefinedDemoMachine() {
     // the verdict into the chat. If the fall check tripped, the server
     // executed 0% of the move — returns false so the caller can bail out of
     // the capture flow instead of pretending the pose landed.
+    // Count down, snap the camera, and retarget the child's pose. Returns null
+    // (after telling the child) when no full body was visible.
+    const snapPose = async (): Promise<MapFeaturesResult | null> => {
+      addMsg(sysMsg('Starting countdown…'))
+      dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
+      for (const n of [3, 2, 1]) {
+        dispatch({ countdown: n })
+        await sleep(1000)
+        active()
+      }
+      dispatch({ countdown: null })
+      dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
+      playShutter()
+      const mapResult = await mapFeatures()
+      active()
+      await sleep(800)
+      active()
+      dispatch({ flash: false })
+      if (!mapResult.poseDetected) {
+        addMsg(agentMsg(
+          mapResult.detail || "I couldn't see your full body. Try stepping back!",
+          ['Try again', 'Follow my movement'],
+        ))
+        return null
+      }
+      return mapResult
+    }
+
     const moveWithSafetyCheck = async (commands: ServoCommand[]): Promise<boolean> => {
       dispatch({ safetyChecking: true, orbState: 'thinking', statusText: 'Running safety check…' })
       let result
@@ -942,7 +952,6 @@ export function useRefinedDemoMachine() {
           active()
           danceOrderRef.current = savedPoses
           dispatch({ stage: 'EXIT_CONFIRM', savedPoses, danceOrder: savedPoses, replayIdx: null })
-          await setRobotState('IDLE')
           await resetPose().catch(() => {})
           active()
           await sleep(700)
@@ -1011,7 +1020,6 @@ export function useRefinedDemoMachine() {
               active()
               danceOrderRef.current = savedPoses
               dispatch({ stage: 'EXIT_CONFIRM', savedPoses, danceOrder: savedPoses, replayIdx: null })
-              await setRobotState('IDLE')
               await resetPose().catch(() => {})
               active()
               await sleep(700)
@@ -1021,30 +1029,9 @@ export function useRefinedDemoMachine() {
             if (li === 'capture') {
               dispatch({ stage: 'LISTENING', savedPoses })
               // Process capture inline here instead of breaking out
-              addMsg(sysMsg('Starting countdown…'))
-              await setRobotState('DEMO_LOCKED')
               active()
-              dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
-              for (const n of [3, 2, 1]) {
-                dispatch({ countdown: n })
-                await sleep(1000)
-                active()
-              }
-              dispatch({ countdown: null })
-              dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
-              playShutter()
-              const mapResult = await mapFeatures()
-              active()
-              await sleep(800)
-              active()
-              dispatch({ flash: false })
-              await setRobotState('IDLE')
-              active()
-              if (!mapResult.poseDetected) {
-                addMsg(agentMsg(
-                  mapResult.detail || "I couldn't see your full body. Try stepping back!",
-                  ['Try again', 'Follow my movement'],
-                ))
+              const mapResult = await snapPose()
+              if (!mapResult) {
                 dispatch({ stage: 'LIBRARY', savedPoses })
                 continue
               }
@@ -1172,35 +1159,9 @@ export function useRefinedDemoMachine() {
             active()
             addMsg(sysMsg('Pose frozen!'))
           } else {
-            addMsg(sysMsg('Starting countdown…'))
-
-            await setRobotState('DEMO_LOCKED')
             active()
-
-            dispatch({ stage: 'COUNTDOWN', countdown: 3, orbState: 'countdown', statusText: 'Get ready…' })
-            for (const n of [3, 2, 1]) {
-              dispatch({ countdown: n })
-              await sleep(1000)
-              active()
-            }
-            dispatch({ countdown: null })
-
-            dispatch({ stage: 'CAPTURED', flash: true, statusText: 'Got your pose!' })
-            playShutter()
-            const mapResult = await mapFeatures()
-            active()
-            await sleep(800)
-            active()
-            dispatch({ flash: false })
-
-            await setRobotState('IDLE')
-            active()
-
-            if (!mapResult.poseDetected) {
-              addMsg(agentMsg(
-                mapResult.detail || "I couldn't see your full body. Try stepping back!",
-                ['Try again', 'Follow my movement'],
-              ))
+            const mapResult = await snapPose()
+            if (!mapResult) {
               dispatch({ stage: currentStage })
               continue
             }
@@ -1338,7 +1299,6 @@ export function useRefinedDemoMachine() {
     selectionUnsubRef.current?.()
     selectionUnsubRef.current = null
     revokeAudioUrls()
-    setRobotState('IDLE')
     stopSubjectSelection()
     dispatch({ ...INIT })
   }, [abortCurrentCapture, stopCurrentAudio, revokeAudioUrls])
@@ -1362,7 +1322,6 @@ export function useRefinedDemoMachine() {
     const names = await listPoses()
     danceOrderRef.current = names
     dispatch({ stage: 'EXIT_CONFIRM', savedPoses: names, danceOrder: names, replayIdx: null })
-    await setRobotState('IDLE')
     await resetPose().catch(() => {})
     await sleep(700)
     startDance()

@@ -20,7 +20,7 @@ class ServoFeedback:
 class RobotController(ABC):
     """Abstract interface for robot backends (simulator and physical hardware).
 
-    Implementations: SimController (MuJoCo), AiNexHardwareController (HTTP → robot_server).
+    Implementations: SimController (MuJoCo), AiNexHardwareController (HTTP → Pi servo server).
     """
 
     @abstractmethod

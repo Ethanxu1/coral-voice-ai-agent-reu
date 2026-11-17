@@ -11,25 +11,18 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
+from app.config import LLM_MODEL
+from app.llm.normalize_speech import normalize_for_regex
+from app.llm.prompts import load_prompt
+from app.schemas.intent import (
+    Intent,
+)
 from langfuse import observe
 from langfuse.openai import openai
 from loguru import logger
 from pydantic import TypeAdapter, ValidationError
-
-from app.llm.config import LLM_MODEL
-from app.llm.normalize_speech import normalize_for_regex
-from app.schemas.intent import (
-    ClarificationIntent,
-    ConversationIntent,
-    ImmediateIntent,
-    Intent,
-    MotionIntent,
-)
-
-PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Confidence thresholds. High-confidence regex results are returned directly;
 # lower-confidence results are either clarified or sent to the LLM fallback.
@@ -483,13 +476,6 @@ def _threshold_for_type(intent_type: str) -> float:
 # LLM fallback
 # ---------------------------------------------------------------------------
 
-def _load_prompt() -> str:
-    prompt_path = PROMPTS_DIR / "intent_classifier.md"
-    if prompt_path.exists():
-        return prompt_path.read_text(encoding="utf-8")
-    return "You are an intent classifier for a voice-controlled robot. Respond with JSON only."
-
-
 def _build_intent_json_schema() -> dict[str, Any]:
     """Build a single-object JSON Schema that OpenAI structured outputs accepts.
 
@@ -571,7 +557,7 @@ def _llm_classify(
     model: str = LLM_MODEL,
 ) -> dict[str, Any]:
     """Fallback to the LLM classifier when regex confidence is too low."""
-    system_prompt = _load_prompt()
+    system_prompt = load_prompt("intent_classifier")
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
     if history:
         messages.extend(history)

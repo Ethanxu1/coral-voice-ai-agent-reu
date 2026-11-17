@@ -9,12 +9,16 @@ permits.
 
 Uses mj_forward (kinematics + collision detection, no integration) so a
 20-step rollout costs well under a millisecond on AiNex.
+
+plan_path() goes further: when the straight motion would collide, it looks for
+a route around through one or two intermediate poses (see its docstring).
 """
 
 import mujoco
+from app.config import AINEX_MODEL_PATH
+from app.robot.hardware_angle_utils import hardware_units_to_rad
+from app.robot.motions import T_POSE_PULSE
 from loguru import logger
-
-import app.resource_path as resource_path
 
 # Geom pairs whose contact is expected/harmless and must never count as a
 # self-collision. The feet's outer pads (l_foot2/r_foot2) touch in normal
@@ -25,23 +29,41 @@ _IGNORED_CONTACT_PAIRS: frozenset[frozenset[str]] = frozenset({
 })
 
 
+Pose = dict[str, float]
+
+# Arm joints (shoulders and elbows): the limbs plan_path moves out of the way.
+_ARM_JOINT_PREFIXES = ("l_sho", "l_el", "r_sho", "r_el")
+
+
+def _path_length(path: list[Pose]) -> float:
+    """Total joint travel along a path of poses (radians, summed over joints)."""
+    return sum(sum(abs(b[j] - a[j]) for j in b) for a, b in zip(path, path[1:]))
+
+
 class CollisionChecker:
+    # Number of bisection iterations used to refine the contact boundary once
+    # the coarse step-scan has bracketed it. Cheap (one mj_forward per
+    # iteration) and shrinks the bracket to a small fraction of the
+    # trajectory regardless of num_steps.
+    _BISECTION_ITERS = 12
+
     def __init__(
         self,
         model_path: str | None = None,
         num_steps: int = 20,
-        buffer_steps: int = 2,
+        buffer_fraction: float = 0.02,
     ):
         if model_path is None:
-            model_path = str(resource_path.repo_root() / "assets" / "ainex" / "ainex.xml")
+            model_path = str(AINEX_MODEL_PATH)
 
         self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
         self.num_steps = num_steps
-        # Extra safety back-off: after locating the first colliding step, back
-        # off this many additional interpolation steps. With num_steps=20 and
-        # buffer_steps=2, motion stops ~10% of the way BEFORE first contact.
-        self.buffer_steps = buffer_steps
+        # Extra safety back-off, as a fraction of the whole trajectory, held
+        # back past the true (bisection-refined) contact boundary. Unlike a
+        # step count, this margin doesn't grow if num_steps is made coarser
+        # or finer.
+        self.buffer_fraction = buffer_fraction
 
         self._qpos_addr: dict[str, int] = {}
         for i in range(self.model.njnt):
@@ -50,11 +72,20 @@ class CollisionChecker:
             if name and jtype == mujoco.mjtJoint.mjJNT_HINGE:
                 self._qpos_addr[name] = int(self.model.jnt_qposadr[i])
 
+        stand = self.stand_joints()
+        arms = [j for j in stand if j.startswith(_ARM_JOINT_PREFIXES)]
+        # Clear arm positions plan_path can route through: arms down at the
+        # sides (stand) and arms straight out (T-pose).
+        self._arm_hubs: list[Pose] = [
+            {j: stand[j] for j in arms},
+            {j: hardware_units_to_rad(T_POSE_PULSE[j], j) for j in arms if j in T_POSE_PULSE},
+        ]
+
         self._apply_stand_keyframe()
         logger.info(
             f"CollisionChecker ready — {len(self._qpos_addr)} joints, "
-            f"{num_steps} steps per rollout, {buffer_steps}-step safety buffer "
-            f"(~{100 * buffer_steps / num_steps:.0f}% extra back-off)"
+            f"{num_steps} steps per rollout, "
+            f"{100 * buffer_fraction:.0f}% safety buffer past the true contact point"
         )
 
     def _apply_stand_keyframe(self) -> None:
@@ -85,6 +116,19 @@ class CollisionChecker:
         self._apply_stand_keyframe()
         self._apply_joints(joints)
         mujoco.mj_forward(self.model, self.data)
+
+    def _pose_new_contacts(
+        self,
+        t: float,
+        moving: dict[str, tuple[float, float]],
+        expected_pairs: set[frozenset[str]],
+    ) -> set[frozenset[str]]:
+        """Set joints to interpolation fraction `t`, resolve kinematics, and
+        return any contact pairs not already present at the starting pose."""
+        for j, (start, end) in moving.items():
+            self.data.qpos[self._qpos_addr[j]] = start + t * (end - start)
+        mujoco.mj_forward(self.model, self.data)
+        return self._contact_pairs() - expected_pairs
 
     def _contact_pairs(self) -> set[frozenset[str]]:
         pairs: set[frozenset[str]] = set()
@@ -127,19 +171,24 @@ class CollisionChecker:
 
         for step in range(1, self.num_steps + 1):
             t = step / self.num_steps
-            for j, (start, end) in moving.items():
-                self.data.qpos[self._qpos_addr[j]] = start + t * (end - start)
-            mujoco.mj_forward(self.model, self.data)
-
-            new_pairs = self._contact_pairs() - expected_pairs
+            new_pairs = self._pose_new_contacts(t, moving, expected_pairs)
             if new_pairs:
-                safe_step = max(0, step - 1 - self.buffer_steps)
-                safe_fraction = safe_step / self.num_steps
+                lo, hi = (step - 1) / self.num_steps, t
+                bad_pairs = new_pairs
+                for _ in range(self._BISECTION_ITERS):
+                    mid = (lo + hi) / 2
+                    mid_pairs = self._pose_new_contacts(mid, moving, expected_pairs)
+                    if mid_pairs:
+                        hi, bad_pairs = mid, mid_pairs
+                    else:
+                        lo = mid
+
+                safe_fraction = max(0.0, lo - self.buffer_fraction)
                 safe_joints = dict(target_joints)
                 for j, (start, end) in moving.items():
                     safe_joints[j] = start + safe_fraction * (end - start)
                 bad: list[str] = []
-                for pair in new_pairs:
+                for pair in bad_pairs:
                     names = sorted(pair)
                     if len(names) >= 2:
                         bad.append(f"{names[0]}<->{names[1]}")
@@ -148,3 +197,66 @@ class CollisionChecker:
                 return safe_joints, safe_fraction, bad
 
         return dict(target_joints), 1.0, []
+
+    def plan_path(self, current_joints: Pose, target_joints: Pose) -> list[Pose] | None:
+        """A self-collision-free route from ``current_joints`` to ``target_joints``.
+
+        Returns the poses to move through in order, each a full joint dict, the
+        last one being the target: just ``[target]`` when the straight motion is
+        clear. When it isn't, tries routes through intermediate poses, the way a
+        person would untangle the move:
+          1. reorder: move one joint first or last (twist, then fold the elbow);
+          2. tuck: move the arms down to the sides (stand) on the way;
+          3. via an arm hub (arms at the sides, or straight out), where each half
+             may use 1-2 itself.
+        Every leg is checked with check_trajectory; the shortest clear route wins.
+        Returns None when the target itself is in contact (no route can reach
+        it) or no route is found; the caller then stops at the last safe point.
+        """
+        start = dict(current_joints)
+        goal = {**start, **target_joints}
+        self.render_pose(start)
+        start_contacts = self._contact_pairs()
+        self.render_pose(goal)
+        if self._contact_pairs() - start_contacts:
+            return None
+        path = self._plan_direct(start, goal) or self._plan_via_hubs(start, goal)
+        return path[1:] if path else None
+
+    def _clear(self, a: Pose, b: Pose) -> bool:
+        return self.check_trajectory(a, b)[1] >= 1.0
+
+    def _plan_direct(self, start: Pose, goal: Pose) -> list[Pose] | None:
+        """Straight, else the shortest clear reorder/tuck route; start included."""
+        if self._clear(start, goal):
+            return [start, goal]
+        clear = [
+            path for path in self._detours(start, goal)
+            if all(self._clear(a, b) for a, b in zip(path, path[1:]))
+        ]
+        return min(clear, key=_path_length) if clear else None
+
+    def _detours(self, start: Pose, goal: Pose) -> list[list[Pose]]:
+        """Candidate routes through one or two intermediate poses."""
+        detours = []
+        for j in (j for j in goal if abs(goal[j] - start[j]) > 1e-6):
+            detours.append([start, {**start, j: goal[j]}, goal])  # j first
+            detours.append([start, {**goal, j: start[j]}, goal])  # j last
+        tucked = self._arm_hubs[0]
+        detours += [
+            [start, {**start, **tucked}, goal],
+            [start, {**goal, **tucked}, goal],
+            [start, {**start, **tucked}, {**goal, **tucked}, goal],
+        ]
+        return detours
+
+    def _plan_via_hubs(self, start: Pose, goal: Pose) -> list[Pose] | None:
+        """Shortest route through an arm hub, each half planned directly."""
+        routes = []
+        for hub in self._arm_hubs:
+            middle = {**goal, **hub}
+            first = self._plan_direct(start, middle)
+            second = first and self._plan_direct(middle, goal)
+            if second:
+                routes.append(first + second[1:])
+        return min(routes, key=_path_length) if routes else None

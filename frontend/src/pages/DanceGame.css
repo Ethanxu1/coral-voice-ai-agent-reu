@@ -1,0 +1,154 @@
+/* Dance Game, in the same look as Rock-Paper-Scissors Play (RpsGame.css): the
+   sand room, CORAL on its stage, Fredoka for anything a child reads. Scoped
+   under .dance; colours come from the shared palette (src/theme/palette.css).
+   The Blockly blocks take their colours from the same palette in dance/blocks.ts. */
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@600;700;800&display=swap');
+
+.dance {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+  position: relative;
+  color: var(--game-text);
+  font-family: 'Nunito', sans-serif;
+  background:
+    radial-gradient(ellipse 50% 55% at 72% 45%, var(--pal-sand-light) 0%, transparent 70%),
+    linear-gradient(180deg, var(--pal-sand-mid) 0%, var(--pal-sand) 100%);
+}
+.dance * { box-sizing: border-box; }
+.dance button { font-family: inherit; cursor: pointer; border: none; }
+.dance h1, .dance h2 { margin: 0; }
+
+/* ── Top: the title, grown-up menu in the corner ───────────────────────── */
+.dance .top { display: flex; justify-content: center; align-items: center; min-height: 84px; padding: 14px 24px 0; position: relative; z-index: 40; }
+.dance .top h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 42px; color: var(--pal-navy); }
+.dance .corner-menu { position: absolute; top: 16px; right: 18px; }
+
+/* ── Blocks (left) and CORAL's stage (right) ───────────────────────────── */
+.dance .dance-main { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; padding: 10px 32px 28px; min-height: 0; }
+
+.dance .code-card {
+  position: relative; min-height: 0; border-radius: 28px; overflow: hidden;
+  background: var(--pal-white);
+  box-shadow: 0 8px 0 color-mix(in srgb, var(--pal-navy) 8%, transparent), 0 18px 40px color-mix(in srgb, var(--pal-navy) 10%, transparent);
+}
+.dance .dance-workspace { position: absolute; inset: 0; }
+
+/* Blockly: the shelf's section labels, the playing block, and the locked shelf. */
+.dance .blocklyFlyoutLabelText { fill: var(--pal-navy-soft); font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 18px; }
+/* The shelf's "+ Add move" button (opens the Pose Designer). */
+.dance .blocklyFlyoutButton { cursor: pointer; }
+.dance .blocklyFlyoutButton .blocklyFlyoutButtonBackground { fill: var(--pal-navy); }
+.dance .blocklyFlyoutButton:hover .blocklyFlyoutButtonBackground { fill: var(--pal-navy-light); }
+.dance .blocklyFlyoutButton .blocklyText { fill: var(--pal-white); font-family: 'Fredoka', sans-serif; font-weight: 600; }
+.dance .blocklyHighlighted > .blocklyPath { stroke: var(--pal-gold); stroke-width: 5px; filter: drop-shadow(0 0 6px var(--pal-gold)); }
+.dance .dance-workspace.locked .blocklyFlyout,
+.dance .dance-workspace.locked .blocklyFlyoutScrollbar { opacity: .45; pointer-events: none; transition: opacity .2s; }
+
+.dance .stage { position: relative; min-height: 0; display: flex; flex-direction: column; align-items: center; }
+.dance .robot { position: relative; flex: 1 1 0; min-height: 0; width: 100%; }
+.dance .robot .floor { position: absolute; left: 10%; right: 10%; bottom: 0; height: 30%; border-radius: 50%; background: radial-gradient(ellipse at center, var(--pal-pink) 0%, color-mix(in srgb, var(--pal-pink) 55%, transparent) 45%, transparent 72%); }
+.dance .robot.dancing .floor { animation: dance-glow 1.2s ease-in-out infinite; }
+@keyframes dance-glow { 50% { transform: scale(1.08); opacity: .8; } }
+
+/* CORAL's speech bubble: a hint while building, the current move while dancing. */
+.dance .bubble {
+  position: relative; z-index: 5; max-width: 96%; text-align: center;
+  background: #fff; color: var(--game-text); border-radius: 28px; padding: 14px 28px;
+  font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: clamp(24px, 2.4vw, 36px); line-height: 1.15;
+  box-shadow: 0 8px 0 color-mix(in srgb, var(--pal-coral-deep) 25%, transparent), 0 16px 34px color-mix(in srgb, var(--pal-navy) 12%, transparent);
+  animation: dance-pop .35s cubic-bezier(.3,1.6,.6,1);
+}
+.dance .bubble::after { content: ''; position: absolute; bottom: -16px; left: 50%; margin-left: -16px; border: 16px solid transparent; border-top-color: #fff; border-bottom: 0; }
+.dance .bubble.move { color: var(--game-robot-deep); font-size: clamp(30px, 3vw, 46px); }
+@keyframes dance-pop { from { transform: scale(.6); opacity: 0; } }
+
+.dance .big-btn {
+  flex: none; margin-top: 18px;
+  font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 48px; color: #fff;
+  background: var(--game-robot); padding: 14px 72px 18px; border-radius: 999px;
+  box-shadow: 0 10px 0 var(--game-robot-deep), 0 22px 40px color-mix(in srgb, var(--pal-coral-deep) 35%, transparent);
+  animation: dance-breathe 2s ease-in-out infinite;
+}
+.dance .big-btn:active { transform: translateY(6px); box-shadow: 0 4px 0 var(--game-robot-deep); }
+.dance .big-btn:disabled { background: var(--pal-navy-pale); box-shadow: 0 10px 0 var(--pal-navy-soft); animation: none; cursor: default; transform: none; }
+.dance .big-btn.stop { background: var(--pal-navy); box-shadow: 0 10px 0 var(--pal-navy-deep), 0 22px 40px color-mix(in srgb, var(--pal-navy) 30%, transparent); animation: none; }
+.dance .big-btn.stop:active { box-shadow: 0 4px 0 var(--pal-navy-deep); }
+/* Live mode: Simulate (sim only) and Execute (sim + physical robot) side by side. */
+.dance .btn-row { flex: none; display: flex; gap: 18px; }
+.dance .big-btn.pair { font-size: 36px; padding: 12px 36px 16px; }
+.dance .big-btn.execute { background: var(--pal-teal); box-shadow: 0 10px 0 color-mix(in srgb, var(--pal-teal) 65%, var(--pal-navy-deep)), 0 22px 40px color-mix(in srgb, var(--pal-teal) 35%, transparent); }
+.dance .big-btn.execute:active { box-shadow: 0 4px 0 color-mix(in srgb, var(--pal-teal) 65%, var(--pal-navy-deep)); }
+.dance .big-btn.execute:disabled { background: var(--pal-navy-pale); box-shadow: 0 10px 0 var(--pal-navy-soft); }
+.dance .big-btn.small { font-size: 30px; padding: 10px 48px 12px; margin-top: 0; animation: none; }
+@keyframes dance-breathe { 50% { transform: scale(1.04); } }
+
+/* Hovering a move's stick figure: CORAL struck in that pose. */
+.dance .pose-preview {
+  position: fixed; z-index: 50; width: 300px; height: 290px; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center;
+  background: var(--game-bg-light); border-radius: 24px; padding: 8px 8px 12px;
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--pal-navy) 22%, transparent);
+  opacity: 0; transform: scale(.94); transition: opacity .12s, transform .12s;
+}
+.dance .pose-preview.show { opacity: 1; transform: none; }
+.dance .pose-preview-robot { position: relative; flex: 1 1 0; width: 100%; min-height: 0; }
+.dance .pose-preview p { margin: 0; font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 22px; color: var(--game-text); }
+
+/* ── Tool menu (top-right of the code card) ──────────────────────────── */
+.dance .tool-menu { position: absolute; top: 8px; right: 8px; z-index: 20; }
+.dance .tool-toggle {
+  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--pal-navy); color: var(--pal-white); box-shadow: 0 4px 0 var(--pal-navy-deep);
+}
+.dance .tool-toggle:hover { background: var(--pal-navy-light); }
+.dance .tool-toggle:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--pal-navy-deep); }
+.dance .tool-pop {
+  position: absolute; top: 42px; right: 0; min-width: 180px;
+  background: var(--pal-white); border-radius: 14px; padding: 6px 0; overflow: hidden;
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--pal-navy) 20%, transparent), 0 0 0 1px color-mix(in srgb, var(--pal-navy) 8%, transparent);
+}
+.dance .tool-item {
+  display: block; width: 100%; text-align: left; padding: 10px 18px; font-weight: 800; font-size: 15px; color: var(--pal-navy);
+  background: none; border-radius: 0;
+}
+.dance .tool-item:hover { background: var(--pal-sand-light); }
+.dance .tool-sep { border: none; border-top: 1px solid var(--pal-navy-pale); margin: 4px 12px; }
+
+/* ── Manage Moves dialog ─────────────────────────────────────────────── */
+.dance .manage-card { max-width: 500px; width: 90vw; }
+.dance .manage-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; width: 100%; max-height: 50vh; overflow-y: auto; }
+.dance .manage-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--game-bg-light); border-radius: 14px; padding: 10px 16px;
+}
+.dance .manage-name { font-weight: 800; font-size: 18px; color: var(--pal-navy); }
+.dance .manage-del {
+  flex: none; font-weight: 800; font-size: 14px; padding: 6px 14px; border-radius: 10px;
+  background: color-mix(in srgb, var(--pal-coral) 15%, transparent); color: var(--pal-coral-deep);
+}
+.dance .manage-del:hover { background: var(--pal-coral); color: #fff; }
+
+/* ── Missing moves / program import dialog ───────────────────────────── */
+.dance .dialog-btns { display: flex; gap: 12px; justify-content: center; }
+.dance .dialog-btns .cancel { background: var(--pal-navy-soft); box-shadow: 0 6px 0 var(--pal-navy-deep); }
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+.dance .dance-toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); z-index: 70;
+  background: var(--pal-navy); color: var(--pal-white); font-weight: 800; font-size: 17px;
+  padding: 12px 28px; border-radius: 999px; box-shadow: 0 8px 28px color-mix(in srgb, var(--pal-navy) 30%, transparent);
+  animation: dance-pop .35s cubic-bezier(.3,1.6,.6,1);
+}
+
+/* ── How to play (grown-up, from the corner menu) ──────────────────────── */
+.dance .help { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: color-mix(in srgb, var(--pal-sand) 60%, transparent); backdrop-filter: blur(6px); }
+.dance .help-card { background: #fff; border-radius: 30px; padding: 30px 36px; max-width: 640px; display: flex; flex-direction: column; align-items: center; gap: 18px; box-shadow: 0 20px 60px color-mix(in srgb, var(--pal-navy) 20%, transparent); }
+.dance .help-card h2 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 40px; }
+.dance .help-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.dance .help-steps li { display: flex; align-items: center; gap: 14px; background: var(--game-bg-light); border-radius: 18px; padding: 12px 18px; font-size: 19px; font-weight: 700; }
+.dance .help-steps li span { font-size: 30px; width: 40px; text-align: center; flex: none; }
+.dance .help-steps p { margin: 0; }
+.dance .help-steps b { color: var(--pal-navy); }
+.dance .help-note { margin: 0; font-size: 16px; font-weight: 700; color: var(--game-text-soft); text-align: center; }

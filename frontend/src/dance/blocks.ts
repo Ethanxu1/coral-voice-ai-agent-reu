@@ -1,0 +1,155 @@
+// The Dance Game's Blockly blocks, and reading the workspace back as a program.
+//
+// Blockly owns dragging, snapping, nesting and the toolbox. This file only says
+// what the blocks look like and turns the stack under the start block into
+// Steps that sequencePlayer.ts walks. Only blocks connected under the start
+// block play; Blockly greys out loose ones (Events.disableOrphans) so a child
+// can see which.
+
+import * as Blockly from 'blockly/core'
+import { loadCustomPoses } from '../poseDesigner/customPoses'
+import { SPEED_LABEL, type DanceSpeed } from './poses'
+import { ICON_SIZE, poseIcon } from './skeleton'
+
+export const START_BLOCK = 'dance_start'
+const REPEAT_BLOCK = 'dance_repeat'
+/** A move: a pose made in the Pose Designer; its POSE dropdown holds the CustomPose id. */
+const CUSTOM_BLOCK = 'dance_custom'
+/** The shelf's "+ Add move" button (see DanceWorkspace's onAddMove). */
+export const ADD_MOVE_CALLBACK = 'ADD_MOVE'
+
+/**
+ * One step of a dance program. `blockId` is the Blockly block it came from, for
+ * highlighting; `pose` a CustomPose id (see danceMove).
+ */
+export type Step =
+  | { kind: 'pose'; blockId: string; pose: string; speed: DanceSpeed }
+  | { kind: 'repeat'; blockId: string; times: number; body: Step[] }
+
+const MAX_REPEAT = 20
+
+let defined = false
+
+/** A move block's stick-figure icon (see skeleton.ts); hovering it previews the pose. */
+const iconField = (poseId: string) => new Blockly.FieldImage(poseIcon(poseId), ICON_SIZE, ICON_SIZE, '')
+
+/**
+ * Register the dance block types with Blockly (once). Call after
+ * loadPoseIcons(): a block's icon is read when the block is created.
+ */
+export function defineDanceBlocks(): void {
+  if (defined) return
+  defined = true
+  const speedOptions = Object.entries(SPEED_LABEL).map(([value, text]) => [text, value]) as Blockly.MenuOption[]
+  Blockly.common.defineBlocksWithJsonArray([
+    { type: START_BLOCK, message0: 'when ▶ Dance! is pressed', style: 'start_blocks', nextStatement: null },
+    {
+      type: REPEAT_BLOCK,
+      message0: 'repeat %1 times',
+      args0: [{ type: 'field_number', name: 'TIMES', value: 2, min: 1, max: MAX_REPEAT, precision: 1 }],
+      message1: '%1',
+      args1: [{ type: 'input_statement', name: 'DO' }],
+      style: 'loop_blocks',
+      previousStatement: null,
+      nextStatement: null,
+    },
+  ])
+  // Defined in code, not JSON, so the icon is read when the block is made.
+  // The pose list is read when the menu opens; the icon follows the chosen pose.
+  Blockly.Blocks[CUSTOM_BLOCK] = {
+    init(this: Blockly.Block) {
+      const icon = iconField(String(customPoseOptions()[0][1]))
+      this.appendDummyInput()
+        .appendField(icon, 'ICON')
+        .appendField(
+          new Blockly.FieldDropdown(customPoseOptions, (id) => {
+            icon.setValue(poseIcon(id))
+            return id
+          }),
+          'POSE',
+        )
+        .appendField(new Blockly.FieldDropdown(speedOptions), 'SPEED')
+      this.setStyle('move_blocks')
+      this.setPreviousStatement(true)
+      this.setNextStatement(true)
+    },
+  }
+}
+
+/** The POSE dropdown's choices: every saved Pose Designer pose. */
+function customPoseOptions(): Blockly.MenuOption[] {
+  const poses = loadCustomPoses()
+  return poses.length > 0 ? poses.map((p) => [p.name, p.id]) : [['?', '']]
+}
+
+/** A palette colour from src/theme/palette.css (Blockly needs real colour values, not var()). */
+const pal = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(`--pal-${name}`).trim()
+
+/** CORAL's palette as a Blockly theme: moves in coral, loops in teal, the start block in navy. */
+export function danceTheme(): Blockly.Theme {
+  return Blockly.Theme.defineTheme('coral-dance', {
+    name: 'coral-dance',
+    base: Blockly.Themes.Zelos,
+    blockStyles: {
+      start_blocks: { colourPrimary: pal('navy'), colourSecondary: pal('navy-light'), colourTertiary: pal('navy-deep'), hat: 'cap' },
+      loop_blocks: { colourPrimary: pal('teal'), colourSecondary: pal('teal-pale'), colourTertiary: pal('navy') },
+      move_blocks: { colourPrimary: pal('coral'), colourSecondary: pal('pink'), colourTertiary: pal('coral-deep') },
+    },
+    componentStyles: {
+      workspaceBackgroundColour: pal('white'),
+      flyoutBackgroundColour: pal('sand-light'),
+      flyoutOpacity: 1,
+      scrollbarColour: pal('navy-pale'),
+      insertionMarkerColour: pal('navy'),
+      selectedGlowColour: pal('gold'),
+    },
+    fontStyle: { family: "'Fredoka', 'Nunito', sans-serif", weight: '600', size: 15 },
+  })
+}
+
+/** The always-open block shelf: the loop, the Add move button, then every move the child made, at normal speed. */
+export function toolbox(): Blockly.utils.toolbox.ToolboxInfo {
+  const moves = loadCustomPoses()
+  return {
+    kind: 'flyoutToolbox',
+    contents: [
+      { kind: 'label', text: 'Loops' },
+      { kind: 'block', type: REPEAT_BLOCK },
+      { kind: 'label', text: 'Moves' },
+      { kind: 'button', text: '＋ Add move', callbackkey: ADD_MOVE_CALLBACK },
+      ...(moves.length === 0 ? [{ kind: 'label', text: 'No moves yet!' }] : []),
+      ...moves.map((p) => ({ kind: 'block', type: CUSTOM_BLOCK, fields: { POSE: p.id, SPEED: 'normal' } })),
+    ],
+  }
+}
+
+/** Steps for a stack of blocks starting at `first`, skipping any a child disabled. */
+function readStack(first: Blockly.Block | null): Step[] {
+  const steps: Step[] = []
+  for (let b = first; b; b = b.getNextBlock()) {
+    if (!b.isEnabled()) continue
+    if (b.type === REPEAT_BLOCK) {
+      steps.push({ kind: 'repeat', blockId: b.id, times: Number(b.getFieldValue('TIMES')), body: readStack(b.getInputTargetBlock('DO')) })
+      continue
+    }
+    const pose = blockPose(b)
+    if (pose) steps.push({ kind: 'pose', blockId: b.id, pose, speed: b.getFieldValue('SPEED') as DanceSpeed })
+  }
+  return steps
+}
+
+/** The pose a move block plays (a CustomPose id), or undefined for other blocks. */
+export function blockPose(block: Blockly.Block): string | undefined {
+  return block.type === CUSTOM_BLOCK ? block.getFieldValue('POSE') || undefined : undefined
+}
+
+/** The program: every step snapped under the start block. */
+export function readProgram(workspace: Blockly.Workspace): Step[] {
+  const start = workspace.getBlocksByType(START_BLOCK)[0]
+  return readStack(start?.getNextBlock() ?? null)
+}
+
+/** True if the program has at least one move to play (a repeat with nothing inside doesn't count). */
+export function hasMoves(steps: Step[]): boolean {
+  return steps.some((s) => s.kind === 'pose' || hasMoves(s.body))
+}

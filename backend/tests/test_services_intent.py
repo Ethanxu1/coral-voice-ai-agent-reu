@@ -6,9 +6,12 @@ import pytest
 
 from app.services.intent import (
     SavePoseDialog,
+    _SaveStage,
     classify_system_intent,
+    handle_save_dialog,
     try_handle_system_intent,
 )
+from app.state import state
 
 
 class FakeWebSocket:
@@ -76,11 +79,12 @@ def anyio_backend():
 
 class TestTryHandleSystemIntent:
     @pytest.mark.anyio
+    @patch("app.services.tts.generate_speech", return_value=b"fake-mp3-bytes")
     @patch("app.services.intent.list_pose_names", return_value=["Right arm up", "superhero"])
     @patch("app.services.intent.get_pose", return_value={"l_sho_pitch": 1.0})
     @patch("app.services.intent._execute_on_hardware_if_connected", new_callable=AsyncMock)
     async def test_play_pose_fuzzy_match_and_memory_log(
-        self, mock_exec, mock_get_pose, mock_list, websocket, save_dialog, memory
+        self, mock_exec, mock_get_pose, mock_list, mock_speech, websocket, save_dialog, memory
     ):
         handled = await try_handle_system_intent(
             "can you perform right arm up?",
@@ -90,8 +94,12 @@ class TestTryHandleSystemIntent:
         )
         assert handled is True
         mock_exec.assert_awaited_once_with({"l_sho_pitch": 1.0})
-        assert len(websocket.sent) == 1
+        # A spoken system-intent reply must be followed by TTS audio, same as
+        # a regular chat_response — not just silently sent as text.
+        assert len(websocket.sent) == 2
         assert "Playing your saved pose: Right arm up" in websocket.sent[0]["content"]
+        assert websocket.sent[1]["type"] == "audio_response"
+        assert websocket.sent[1]["audio_base64"]
         # Memory should record the user request and assistant response.
         assert len(memory.short_term) == 2
         assert memory.short_term[0]["role"] == "user"
@@ -145,3 +153,75 @@ class TestTryHandleSystemIntent:
         assert len(memory.short_term) == 2
         assert "save this pose" in memory.short_term[0]["content"]
         assert memory.short_term[1]["role"] == "assistant"
+
+    @pytest.mark.anyio
+    @patch("app.services.tts.generate_speech", return_value=b"fake-mp3-bytes")
+    async def test_save_current_pose_reply_has_audio(
+        self, mock_speech, websocket, save_dialog, memory
+    ):
+        with patch("app.services.intent._get_robot_state", return_value={"l_sho_pitch": 0.5}):
+            await try_handle_system_intent("save this pose", websocket, save_dialog, memory=memory)
+        assert len(websocket.sent) == 2
+        assert websocket.sent[0]["type"] == "chat_response"
+        assert websocket.sent[1] == {
+            "type": "audio_response",
+            "audio_base64": "ZmFrZS1tcDMtYnl0ZXM=",
+            "format": "mp3",
+        }
+
+    @pytest.mark.anyio
+    @patch("app.services.tts.generate_speech", return_value=b"fake-mp3-bytes")
+    async def test_capture_pose_reply_has_audio(self, mock_speech, websocket, save_dialog, memory):
+        state.follow_controller = MagicMock()
+        state.follow_controller.trigger_capture_and_mimic = AsyncMock()
+        try:
+            handled = await try_handle_system_intent(
+                "capture my pose", websocket, save_dialog, memory=memory
+            )
+        finally:
+            state.follow_controller = None
+        assert handled is True
+        assert len(websocket.sent) == 2
+        assert "Capturing your pose" in websocket.sent[0]["content"]
+        assert websocket.sent[1]["type"] == "audio_response"
+
+    @pytest.mark.anyio
+    @patch("app.services.tts.generate_speech", return_value=None)
+    async def test_system_intent_reply_survives_tts_failure(
+        self, mock_speech, websocket, save_dialog, memory
+    ):
+        """A TTS failure must not crash the turn or block the text reply —
+        same graceful-degradation contract as the main chat_response path."""
+        with patch("app.services.intent._get_robot_state", return_value={"l_sho_pitch": 0.5}):
+            handled = await try_handle_system_intent(
+                "save this pose", websocket, save_dialog, memory=memory
+            )
+        assert handled is True
+        assert len(websocket.sent) == 1
+        assert websocket.sent[0]["type"] == "chat_response"
+
+
+class TestHandleSaveDialogAudio:
+    @pytest.mark.anyio
+    @patch("app.services.tts.generate_speech", return_value=b"fake-mp3-bytes")
+    async def test_awaiting_confirm_yes_reply_has_audio(self, mock_speech, websocket, save_dialog):
+        save_dialog.stage = _SaveStage.AWAITING_CONFIRM
+        consumed = await handle_save_dialog("yes", save_dialog, websocket)
+        assert consumed is True
+        assert len(websocket.sent) == 2
+        assert websocket.sent[0]["content"] == "What would you like to name this pose?"
+        assert websocket.sent[1]["type"] == "audio_response"
+
+    @pytest.mark.anyio
+    @patch("app.services.tts.generate_speech", return_value=b"fake-mp3-bytes")
+    async def test_awaiting_name_reply_has_audio(self, mock_speech, websocket, save_dialog):
+        save_dialog.stage = _SaveStage.AWAITING_NAME
+        save_dialog.pending_joints = {"l_sho_pitch": 0.5}
+        with patch("app.services.intent.save_pose"), patch(
+            "app.services.intent._execute_on_hardware_if_connected", new_callable=AsyncMock
+        ):
+            consumed = await handle_save_dialog("Buddy", save_dialog, websocket)
+        assert consumed is True
+        assert len(websocket.sent) == 2
+        assert websocket.sent[0]["content"] == "Saved as Buddy."
+        assert websocket.sent[1]["type"] == "audio_response"

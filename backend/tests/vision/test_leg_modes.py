@@ -3,7 +3,6 @@
 Covers the three building blocks the /map-features endpoint composes:
   - strip_legs / leg_pulses_to_targets (shared plumbing)
   - legacy_leg_pulses (mode 2: the deliberately-wrong atan2 mapping)
-  - classify_leg_pulses (mode 3: canned pose lookup by class)
 """
 
 from __future__ import annotations
@@ -60,15 +59,17 @@ def test_leg_pulses_to_targets_stand_maps_to_calibrated_anchor():
         assert targets[joint] == pytest.approx(HW_STAND_RAD.get(joint, 0.0), abs=1e-9), joint
 
 
-def test_classify_leg_targets_within_joint_limits():
+def test_canned_pose_leg_targets_within_joint_limits():
     """JOINT_LIMITS is now DERIVED from HW_SERVO_LIMITS (the hardware pulse
-    ranges), and the canned classify poses were authored inside those ranges —
+    ranges), and the canned poses were authored inside those ranges —
     so their leg targets must fall within the sim limits. Guards the sim ==
     hardware clamp agreement: a canned pose exceeding a sim limit means the
     two tables have drifted apart again."""
     from app.validation import JOINT_LIMITS
 
-    targets = leg_modes.leg_pulses_to_targets(leg_modes.classify_leg_pulses("dab"))
+    dab = motions.get_motion("dab")[0][0]
+    pulses = {j: int(dab.get(j, STAND_PULSE[j])) for j in leg_modes.LEG_JOINTS}
+    targets = leg_modes.leg_pulses_to_targets(pulses)
     exceeded = [
         j for j, rad in targets.items()
         if j in JOINT_LIMITS and not JOINT_LIMITS[j].is_valid(rad)
@@ -138,43 +139,7 @@ def test_legacy_pulses_stay_in_tested_ranges():
     assert 400 <= pulses["r_hip_roll"] <= 600
 
 
-# ── Mode 3: classify → canned pose ───────────────────────────────────────────
-
-
-@pytest.mark.parametrize("class_name", [
-    "dab", "hand-raised", "muscles", "superhero", "t-pose", "thinker", "warrior2",
-])
-def test_classify_returns_all_leg_servos_from_pose(class_name):
-    pulses = leg_modes.classify_leg_pulses(class_name)
-    assert set(pulses) == set(leg_modes.LEG_JOINTS)
-    pose = motions.get_motion(class_name)[0][0]
-    for joint in leg_modes.LEG_JOINTS:
-        if joint in pose:
-            assert pulses[joint] == pose[joint], joint
-
-
-def test_classify_warrior2_takes_wide_stance():
-    """warrior2's canned pose has a real leg stance (knees/hips off stand),
-    so the leg pulses differ from a plain stand."""
-    pulses = leg_modes.classify_leg_pulses("warrior2")
-    stand = {j: STAND_PULSE[j] for j in leg_modes.LEG_JOINTS}
-    assert pulses != stand
-
-
-def test_classify_unknown_class_is_stand():
-    pulses = leg_modes.classify_leg_pulses("not-a-pose")
-    assert pulses == {j: STAND_PULSE[j] for j in leg_modes.LEG_JOINTS}
-
-
-def test_classify_leg_targets_convert_cleanly():
-    """End-to-end for mode 3 legs: class → pulses → sim radians, all finite."""
-    pulses = leg_modes.classify_leg_pulses("warrior2")
-    targets = leg_modes.leg_pulses_to_targets(pulses)
-    assert set(targets) == set(leg_modes.LEG_JOINTS)
-    assert all(math.isfinite(v) for v in targets.values())
-
-
-# ── Mode 4: buckets ──────────────────────────────────────────────────────────
+# ── Mode 3: buckets ──────────────────────────────────────────────────────────
 
 
 def _lmk(x: float, vis: float = 1.0) -> dict:
