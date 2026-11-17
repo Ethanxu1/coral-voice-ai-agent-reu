@@ -10,7 +10,7 @@ import CornerMenu from '../rps/CornerMenu'
 import { startFollowing, stopFollowing } from '../rps/useRobotFollow'
 import { copyPoseFromCamera, poseFromRobot, waitForSaveCommand } from '../poseDesigner/capture'
 import { MAX_NAME_LENGTH, saveCustomPose } from '../poseDesigner/customPoses'
-import { useDesignConversation, type MicState } from '../poseDesigner/useDesignConversation'
+import { useDesignConversation, type ListenWindow, type MicState } from '../poseDesigner/useDesignConversation'
 import { sleep } from '../utils/sleep'
 import './DanceGame.css'
 import './PoseDesigner.css'
@@ -30,8 +30,27 @@ const MIC_TEXT: Record<MicState, string> = {
   off: "I can't hear you. Check the microphone, or type below.",
 }
 
+/** While a proposal waits, listening means CORAL wants an answer to it. */
+const FOLLOW_UP_TEXT = 'Say yes, no, or what to change'
+
 const INTRO =
   "Here's your pose! Say “hey CORAL”, then tell me what to change, like “lift your right arm higher”. Say “I'm done” when you like it."
+
+/**
+ * Over CORAL while it's listening: a pulsing ring that follows the mic level
+ * (so "hey CORAL" visibly registered), and a bar that runs down until CORAL
+ * stops listening (hidden once the child starts talking).
+ */
+function ListeningBadge({ level, window, speaking, hint }: { level: number; window: ListenWindow | null; speaking: boolean; hint: string | null }) {
+  return (
+    <div className="pd-listening" style={{ '--level': Math.min(1, level / 40) } as React.CSSProperties}>
+      <span className="ring" />
+      <b>👂 I'm listening…</b>
+      {hint && <small>{hint}</small>}
+      {window && !speaking && <i key={window.id} className="bar" style={{ animationDuration: `${window.ms}ms` }} />}
+    </div>
+  )
+}
 
 function HowToPlay({ onClose }: { onClose: () => void }) {
   return (
@@ -41,7 +60,7 @@ function HowToPlay({ onClose }: { onClose: () => void }) {
         <ol className="help-steps">
           <li><span>📸</span><p><b>Copy my pose</b> takes a picture of you; <b>Follow me</b> lets CORAL copy you live until you say <b>save this pose</b>.</p></li>
           <li><span>🗣️</span><p>Say <b>hey CORAL</b>. When CORAL is listening, tell it what to change: "lift your right arm higher". The see-through CORAL shows the change.</p></li>
-          <li><span>👍</span><p>Say <b>yes</b> (or tap 👍) to make the change, or tell CORAL to do it differently. Say <b>I'm done</b> to name your pose. If CORAL stops listening, say <b>hey CORAL</b> again.</p></li>
+          <li><span>👍</span><p>Right after CORAL shows a change, just say <b>yes</b>, <b>no</b>, or how to change it ("a bit higher"), no <b>hey CORAL</b> needed. Say <b>I'm done</b> to name your pose. If CORAL stops listening, say <b>hey CORAL</b> again.</p></li>
         </ol>
         <p className="help-note">Left and right are CORAL's own. Only the arms can change. Saved poses show up in the Dance Game.</p>
         <button className="big-btn small" onClick={onClose}>OK</button>
@@ -251,7 +270,12 @@ export default function PoseDesigner() {
 
       {step === 'refine' && (
         <main className="pd-main refine">
-          <section className="stage">{robot}</section>
+          <section className="stage">
+            {robot}
+            {talk.mic === 'listening' && (
+              <ListeningBadge level={talk.level} window={talk.listenWindow} speaking={talk.speaking} hint={talk.proposal ? FOLLOW_UP_TEXT : null} />
+            )}
+          </section>
           <section className="pd-talk">
             <div key={talk.coral} className="bubble">{talk.coral || '…'}</div>
             {talk.proposal && (
@@ -272,7 +296,7 @@ export default function PoseDesigner() {
             )}
             <div className={`pd-mic ${talk.mic}`}>
               <span className="dot" style={{ '--level': Math.min(1, talk.level / 40) } as React.CSSProperties} />
-              {MIC_TEXT[talk.mic]}
+              {talk.mic === 'listening' && talk.proposal ? `${MIC_TEXT.listening} ${FOLLOW_UP_TEXT}` : MIC_TEXT[talk.mic]}
               {talk.heard && <span className="heard">You said: “{talk.heard}”</span>}
             </div>
             <form className="pd-type" onSubmit={sendTyped}>

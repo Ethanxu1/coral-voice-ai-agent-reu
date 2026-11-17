@@ -57,7 +57,8 @@
 /* Who's talking: a dot that pulses with the mic level while listening. */
 .pd .pd-mic { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; color: var(--game-text-soft); }
 .pd .pd-mic .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--pal-navy-pale); transition: transform .08s; }
-.pd .pd-mic.listening .dot { background: var(--pal-coral); transform: scale(calc(1 + var(--level, 0))); }
+.pd .pd-mic .dot { transform: scale(calc(1 + var(--level, 0))); }
+.pd .pd-mic.listening .dot { background: var(--pal-coral); }
 .pd .pd-mic .heard { flex-basis: 100%; font-weight: 700; font-size: 17px; color: var(--game-text); }
 
 .pd .pd-type { display: flex; gap: 10px; }
@@ -73,3 +74,24 @@
 .pd .pd-name label { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 36px; color: var(--pal-navy); }
 .pd .pd-name input { flex: none; font-family: 'Fredoka', sans-serif; font-weight: 600; font-size: 34px; padding: 14px 20px; border-width: 3px; }
 .pd .pd-name input:focus, .pd .pd-type input:focus { outline: none; border-color: var(--pal-teal); }
+
+/* CORAL is listening (after "hey CORAL", or waiting for an answer to a proposal). */
+.pd .pd-listening {
+  position: absolute; top: 4%; left: 50%; transform: translateX(-50%); z-index: 2;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; overflow: hidden;
+  padding: 14px 34px 18px; border-radius: 28px; background: var(--pal-white); border: 4px solid var(--pal-coral);
+  box-shadow: 0 8px 0 var(--pal-coral-deep), 0 0 0 calc(var(--level, 0) * 22px) color-mix(in srgb, var(--pal-coral) 30%, transparent);
+  transition: box-shadow .08s; animation: dance-pop .35s cubic-bezier(.3,1.6,.6,1);
+}
+.pd .pd-listening b { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 32px; color: var(--pal-coral-deep); }
+.pd .pd-listening small { font-weight: 800; font-size: 18px; color: var(--game-text-soft); }
+.pd .pd-listening .ring {
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  border: 3px solid var(--pal-coral); animation: pd-ring 1.4s ease-out infinite;
+}
+.pd .pd-listening .bar {
+  position: absolute; left: 0; bottom: 0; height: 6px; width: 100%; background: var(--pal-coral);
+  transform-origin: left; animation: pd-run-down linear forwards;
+}
+@keyframes pd-ring { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.15); } }
+@keyframes pd-run-down { to { transform: scaleX(0); } }
