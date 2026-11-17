@@ -46,3 +46,33 @@ export function saveCustomPose(name: string, pulses: Record<string, number>): Cu
   localStorage.setItem(STORAGE_KEY, JSON.stringify([...loadCustomPoses(), pose]))
   return pose
 }
+
+/** Delete a pose by id. Returns true if it existed. */
+export function deleteCustomPose(id: string): boolean {
+  const poses = loadCustomPoses()
+  const filtered = poses.filter((p) => p.id !== id)
+  if (filtered.length === poses.length) return false
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered))
+  return true
+}
+
+/** Import poses, skipping any whose name (case-insensitive) already exists. Returns the count imported. */
+export function importCustomPoses(incoming: { name: string; pulses: Record<string, number> }[]): number {
+  const existing = loadCustomPoses()
+  const existingNames = new Set(existing.map((p) => p.name.toLowerCase()))
+  const toAdd: CustomPose[] = []
+  for (const p of incoming) {
+    const trimmed = p.name.trim().slice(0, MAX_NAME_LENGTH)
+    if (!trimmed || existingNames.has(trimmed.toLowerCase())) continue
+    if (!p.pulses || typeof p.pulses !== 'object' || !Object.values(p.pulses).every(isPulse)) continue
+    toAdd.push({
+      id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      name: trimmed,
+      pulses: p.pulses,
+    })
+    existingNames.add(trimmed.toLowerCase())
+  }
+  if (toAdd.length === 0) return 0
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...existing, ...toAdd]))
+  return toAdd.length
+}

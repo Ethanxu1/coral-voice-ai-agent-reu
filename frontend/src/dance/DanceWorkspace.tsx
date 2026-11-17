@@ -13,6 +13,12 @@ Blockly.setLocale(En as unknown as Record<string, string>)
 export interface DanceWorkspaceHandle {
   /** Light up the block that is playing now (null clears it). */
   highlight: (blockId: string | null) => void
+  /** Serialize the workspace for export. */
+  serializeWorkspace: () => object | null
+  /** Replace the workspace with a serialized state (import). */
+  loadWorkspace: (state: object) => void
+  /** Reload the toolbox after poses change (import/delete). */
+  refreshToolbox: () => void
 }
 
 interface Props {
@@ -112,6 +118,19 @@ const DanceWorkspace = forwardRef<DanceWorkspaceHandle, Props>(function DanceWor
 
   useImperativeHandle(ref, () => ({
     highlight: (blockId) => workspaceRef.current?.highlightBlock(blockId),
+    serializeWorkspace: () => {
+      const ws = workspaceRef.current
+      return ws ? Blockly.serialization.workspaces.save(ws) : null
+    },
+    loadWorkspace: (state: object) => {
+      const ws = workspaceRef.current
+      if (!ws) return
+      ws.clear()
+      Blockly.serialization.workspaces.load(state as any, ws)
+    },
+    refreshToolbox: () => {
+      workspaceRef.current?.updateToolbox(toolbox())
+    },
   }), [])
 
   return <div className={`dance-workspace ${locked ? 'locked' : ''}`} ref={hostRef} />
